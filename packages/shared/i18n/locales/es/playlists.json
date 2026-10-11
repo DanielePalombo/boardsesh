@@ -34,6 +34,47 @@
       "loadMoreError": "No se pudieron cargar todas tus listas.",
       "noResults": "Ninguna lista coincide con \"{{query}}\""
     },
+    "community": {
+      "searchPlaceholder": "Buscar playlists",
+      "madeByLabel": "Creadas por",
+      "madeBy": {
+        "everyone": "Todos",
+        "mine": "Mías"
+      },
+      "sortLabel": "Ordenar",
+      "sort": {
+        "popular": "Populares",
+        "recent": "Nuevas"
+      },
+      "sizeLabel": "Tamaño",
+      "size": {
+        "any": "Cualquiera",
+        "short": "Corta",
+        "session": "Sesión",
+        "big": "Larga"
+      },
+      "sizeBand": {
+        "short": "Hasta 10 bloques",
+        "session": "11–30 bloques",
+        "big": "31+ bloques"
+      },
+      "resultCount_one": "{{count}} playlist",
+      "resultCount_other": "{{count}} playlists",
+      "loadMoreError": "No se pudieron cargar más playlists.",
+      "errors": {
+        "loadTitle": "No se pudieron cargar las playlists",
+        "loadDescription": "Revisa tu conexión e inténtalo de nuevo."
+      },
+      "empty": {
+        "title": "Aún no hay playlists aquí",
+        "description": "Haz pública una de las tuyas y la verá toda la crew."
+      },
+      "noMatches": {
+        "title": "Nada encaja con esos filtros",
+        "description": "Afloja algún filtro para ver más.",
+        "clearFilters": "Borrar filtros"
+      }
+    },
     "pin": {
       "pin": "Fijar",
       "unpin": "Desfijar",

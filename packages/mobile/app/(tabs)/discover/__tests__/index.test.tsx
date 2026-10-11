@@ -408,6 +408,8 @@ vi.mock('../../../../src/components/playlist/PlaylistShelf', () => ({
     keyExtractor,
     loading,
     isLoadingMore,
+    actionLabel,
+    onActionPress,
   }: {
     items: PlaylistItem[];
     renderItem: (entry: { item: PlaylistItem; index: number }) => ReactNode;
@@ -415,11 +417,16 @@ vi.mock('../../../../src/components/playlist/PlaylistShelf', () => ({
     keyExtractor: (item: PlaylistItem, index: number) => string;
     loading?: boolean;
     isLoadingMore?: boolean;
+    actionLabel?: string;
+    onActionPress?: () => void;
   }) =>
     createElement(
       'section',
       { 'data-scroll-section': title, 'data-loading': loading, 'data-loading-more': isLoadingMore },
       createElement('h2', null, title),
+      actionLabel && onActionPress
+        ? createElement('button', { 'aria-label': `${title} ${actionLabel}`, onClick: onActionPress }, actionLabel)
+        : null,
       items.map((item, index) => createElement('div', { key: keyExtractor(item, index) }, renderItem({ item, index }))),
     ),
 }));
@@ -808,6 +815,27 @@ describe('DiscoverLibrary error handling', () => {
     expect(getByText('library.smart.projects.title')).toBeTruthy();
     expect(getByText('library.smart.likedClimbs.title')).toBeTruthy();
     expect(getByText('Setter picks library.communityByline')).toBeTruthy();
+  });
+
+  it("opens the full community list from the shelf's See all", () => {
+    communityHook.popular = [
+      {
+        uuid: 'community',
+        name: 'Setter picks',
+        climbCount: 7,
+        creatorId: 'creator-2',
+        creatorName: 'Jess',
+      },
+    ];
+
+    const { getByLabelText } = renderHub();
+    fireEvent.click(getByLabelText('library.sections.community library.allPlaylists.seeAll'));
+    expect(router.push).toHaveBeenLastCalledWith('/(tabs)/discover/community');
+  });
+
+  it('hides the community See all while the shelf is empty', () => {
+    const { queryByLabelText } = renderHub();
+    expect(queryByLabelText('library.sections.community library.allPlaylists.seeAll')).toBeNull();
   });
 
   it('orders for-you smart cards in the mobile product order', () => {

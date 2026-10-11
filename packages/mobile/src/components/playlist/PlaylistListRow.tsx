@@ -22,6 +22,11 @@ export type PlaylistListRowProps = {
   /** Index into the preview's fallback colour palette. */
   index?: number;
   /**
+   * Replaces the climb-count line, e.g. the community byline "Marco - 12 climbs".
+   * Omitted, the row shows the count alone.
+   */
+  meta?: string;
+  /**
    * Called with this row's `uuid`. Passing the uuid back (rather than a
    * per-row closure) lets the parent supply one stable callback for the whole
    * list, so `React.memo` here actually prevents re-renders on page appends.
@@ -46,12 +51,13 @@ export const PlaylistListRow = memo(function PlaylistListRow({
   color,
   icon,
   index = 0,
+  meta,
   onPressUuid,
 }: PlaylistListRowProps) {
   const { t } = useTranslation('playlists');
   const { systemColors } = useTheme();
 
-  const countLabel = t('detail.climbCount', { count: climbCount ?? 0 });
+  const metaLabel = meta ?? t('detail.climbCount', { count: climbCount ?? 0 });
 
   const handlePress = useCallback(() => {
     hapticLight();
@@ -64,7 +70,7 @@ export const PlaylistListRow = memo(function PlaylistListRow({
       feedback="opacity"
       opacityTo={0.7}
       accessibilityRole="button"
-      accessibilityLabel={`${name}, ${countLabel}`}
+      accessibilityLabel={`${name}, ${metaLabel}`}
     >
       <View style={styles.row}>
         <PlaylistPreviewSquare color={color} icon={icon} index={index} size={THUMB_SIZE} />
@@ -73,7 +79,7 @@ export const PlaylistListRow = memo(function PlaylistListRow({
             {name}
           </Text>
           <Text variant="subheadline" numberOfLines={1} style={styles.meta}>
-            {countLabel}
+            {metaLabel}
           </Text>
         </View>
         <Icon name="chevron.right" size={14} color={systemColors.tertiaryLabel} />
