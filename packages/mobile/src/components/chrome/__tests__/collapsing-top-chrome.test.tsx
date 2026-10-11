@@ -2,13 +2,23 @@
 vi.mock('../../SheetTopBar', () => ({ SheetTopBar: () => null }));
 vi.mock('../../../hooks/use-native-root-header', () => ({ useNativeRootHeader: () => ctrl.nativeHeader }));
 vi.mock('../../chrome/NativeRootHeader', () => ({
-  NativeRootHeader: ({ centerContent, children }: { centerContent?: ReactNode; children?: ReactNode }) =>
-    createElement(
+  NativeRootHeader: ({
+    centerContent,
+    children,
+    scrollEdge,
+  }: {
+    centerContent?: ReactNode;
+    children?: ReactNode;
+    scrollEdge?: unknown;
+  }) => {
+    ctrl.nativeScrollEdge = scrollEdge;
+    return createElement(
       'div',
       null,
       createElement('div', { 'data-native-center': 'true' }, centerContent),
       createElement('div', { 'data-native-controls': 'true' }, children),
-    ),
+    );
+  },
 }));
 vi.mock('../../../hooks/use-device-layout', () => ({
   useDeviceLayout: () => ({ isPad: false, widthClass: 'compact' }),
@@ -42,6 +52,8 @@ const ctrl = vi.hoisted(() => ({
   setActiveBoard: vi.fn(),
   variant: 'liquidGlass' as 'liquidGlass' | 'material',
   nativeHeader: false,
+  // The scroll-edge store the native header was handed.
+  nativeScrollEdge: undefined as unknown,
 }));
 const haptics = vi.hoisted(() => ({ light: vi.fn() }));
 
@@ -170,6 +182,7 @@ vi.mock('../../user-drawer/UserAvatarToolbarAction', () => ({
 vi.mock('../../Badge', () => ({ Badge: () => createElement('span', { 'data-badge-dot': 'true' }) }));
 
 import { CollapsingTopChrome } from '../CollapsingTopChrome';
+import { createScrollEdgeBackdrop } from '../../../hooks/use-scroll-edge-backdrop';
 
 function makeProps(over: Partial<Parameters<typeof CollapsingTopChrome>[0]> = {}) {
   return {
@@ -208,6 +221,7 @@ describe('CollapsingTopChrome', () => {
     ctrl.bluetooth = null;
     ctrl.variant = 'liquidGlass';
     ctrl.nativeHeader = false;
+    ctrl.nativeScrollEdge = undefined;
     haptics.light.mockClear();
   });
 
@@ -234,6 +248,24 @@ describe('CollapsingTopChrome', () => {
     expect(container.querySelectorAll('button')).toHaveLength(1);
     fireEvent.click(climbButton);
     expect(onOpenClimb).toHaveBeenCalledOnce();
+  });
+
+  it("hands the native header the screen's scroll-edge store, untouched", () => {
+    ctrl.nativeHeader = true;
+    const scrollEdge = createScrollEdgeBackdrop();
+    const { rerender } = render(
+      <CollapsingTopChrome {...makeProps({ scrollEdge })}>
+        <span>Filter chips</span>
+      </CollapsingTopChrome>,
+    );
+    expect(ctrl.nativeScrollEdge).toBe(scrollEdge);
+
+    rerender(
+      <CollapsingTopChrome {...makeProps()}>
+        <span>Filter chips</span>
+      </CollapsingTopChrome>,
+    );
+    expect(ctrl.nativeScrollEdge).toBeUndefined();
   });
 
   it('renders the board glyph for the active board, labelled with the board', () => {

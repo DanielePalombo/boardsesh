@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Appbar } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../providers/theme-provider';
+import type { ScrollEdgeBackdrop } from '../../hooks/use-scroll-edge-backdrop';
 import { createVariantComponent } from '../../theme/variants';
 import { spacing } from '../../theme/tokens';
 import { SegmentedControl } from '../SegmentedControl';
@@ -23,6 +24,17 @@ export type ProfileTopChromeProps = {
   onHeightChange: (height: number) => void;
   /** Controls below the tabs, included in the same measured header. */
   children?: ReactNode;
+  /**
+   * Liquid Glass only: keep the painted band behind the header instead of letting
+   * it float over the list. Logbook sets it: its `children` include a bare text
+   * heading, which a blur alone does not keep readable over scrolling rows.
+   * Material's header is always opaque.
+   */
+  opaqueControls?: boolean;
+  /** Liquid Glass only: the screen's `useScrollEdgeBackdrop().backdrop`. The blur
+   *  behind a floating header shows only while the sub-tab's list is scrolled
+   *  under it. */
+  scrollEdge?: ScrollEdgeBackdrop;
 };
 
 export const ProfileTopChrome = createVariantComponent('ProfileTopChrome', {
@@ -97,7 +109,14 @@ function ProfileTopChromeMaterial({ activeTab, onSelectTab, onHeightChange, chil
   );
 }
 
-function ProfileTopChromeGlass({ activeTab, onSelectTab, onHeightChange, children }: ProfileTopChromeProps) {
+function ProfileTopChromeGlass({
+  activeTab,
+  onSelectTab,
+  onHeightChange,
+  children,
+  opaqueControls,
+  scrollEdge,
+}: ProfileTopChromeProps) {
   const { t } = useTranslation('you');
 
   const dashboardTitle = t('metadata.dashboard.title');
@@ -111,7 +130,12 @@ function ProfileTopChromeGlass({ activeTab, onSelectTab, onHeightChange, childre
   );
 
   return (
-    <CollapsingLargeTitleHeader onHeightChange={onHeightChange} leftActions={leftActions}>
+    <CollapsingLargeTitleHeader
+      onHeightChange={onHeightChange}
+      leftActions={leftActions}
+      opaqueControls={opaqueControls}
+      scrollEdge={scrollEdge}
+    >
       {/* The native iOS segmented control brings its own track/background, so it
           renders directly — wrapping it in the old GlassSurface track doubled the
           border. The padded segmentStack positions it under the large title. */}

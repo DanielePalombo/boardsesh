@@ -1,4 +1,5 @@
 import { useNativeRootHeader } from '../../hooks/use-native-root-header';
+import type { ScrollEdgeBackdrop } from '../../hooks/use-scroll-edge-backdrop';
 import { type ReactNode, useCallback } from 'react';
 import { type LayoutChangeEvent, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -31,6 +32,13 @@ type CollapsingLargeTitleHeaderProps = {
   /** Extra controls rendered below the islands row (e.g. a search or segmented
    *  control row). Measured into the reported chrome height. */
   children?: ReactNode;
+  /** Under the UIKit header, keep the painted band behind `children` instead of
+   *  letting them float over the list (see `NativeRootHeader`). Nothing else
+   *  reads it: the floating islands have always sat over the list. */
+  opaqueControls?: boolean;
+  /** Under the UIKit header, the screen's `useScrollEdgeBackdrop().backdrop`: the
+   *  blur behind `children` shows only while the list is scrolled under them. */
+  scrollEdge?: ScrollEdgeBackdrop;
 };
 
 /**
@@ -48,6 +56,8 @@ export function CollapsingLargeTitleHeader({
   leftActions,
   rightActions,
   children,
+  opaqueControls,
+  scrollEdge,
 }: CollapsingLargeTitleHeaderProps) {
   const { systemColors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -69,6 +79,8 @@ export function CollapsingLargeTitleHeader({
         leftActionsStandalone={Boolean(leftActions)}
         rightActions={rightActions}
         centerContent={centerContent}
+        opaqueControls={opaqueControls}
+        scrollEdge={scrollEdge}
         onHeightChange={onHeightChange}
       >
         {children}

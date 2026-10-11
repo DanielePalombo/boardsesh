@@ -10,11 +10,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 
+import type { ScrollEdgeBackdrop } from '../../../../src/hooks/use-scroll-edge-backdrop';
+
 const ctrl = vi.hoisted(() => ({
   profileId: 'user-own-123' as string | undefined,
   measureProfile: undefined as ((height: number) => void) | undefined,
   measureLogbook: undefined as ((height: number) => void) | undefined,
   logbookHeightChange: vi.fn(),
+  // The scroll-edge store the mounted top chrome was handed, and the one each
+  // mounted sub-tab's list was handed.
+  chromeScrollEdge: undefined as ScrollEdgeBackdrop | undefined,
+  listScrollEdge: {} as Record<string, ScrollEdgeBackdrop | undefined>,
 }));
 
 const rendered = vi.hoisted(() => ({
@@ -59,17 +65,22 @@ vi.mock('../../../../src/components/you/ProfileTopChrome', () => ({
     onSelectTab,
     onHeightChange,
     children,
+    opaqueControls,
+    scrollEdge,
   }: {
     activeTab: string;
     onSelectTab: (key: string) => void;
     onHeightChange: (height: number) => void;
     children?: ReactNode;
+    opaqueControls?: boolean;
+    scrollEdge?: ScrollEdgeBackdrop;
   }) => {
+    ctrl.chromeScrollEdge = scrollEdge;
     if (activeTab === 'logbook') ctrl.measureLogbook = onHeightChange;
     else ctrl.measureProfile = onHeightChange;
     return createElement(
       'div',
-      { 'data-chrome': 'true', 'data-active-tab': activeTab },
+      { 'data-chrome': 'true', 'data-active-tab': activeTab, 'data-opaque-controls': String(opaqueControls === true) },
       ['progress', 'sessions', 'logbook', 'climbs', 'social'].map((key) =>
         createElement('button', { key, 'data-select-tab': key, onClick: () => onSelectTab(key) }, key),
       ),
@@ -81,13 +92,23 @@ vi.mock('../../../../src/components/you/YouFilterSheet', () => ({
   YouFilterSheet: () => createElement('div', { 'data-filter-sheet': 'true' }),
 }));
 vi.mock('../../../../src/components/you/ProgressTab', () => ({
-  ProgressTab: ({ userId, topInset }: { userId: string | undefined; topInset: number }) => {
+  ProgressTab: ({
+    userId,
+    topInset,
+    scrollEdge,
+  }: {
+    userId: string | undefined;
+    topInset: number;
+    scrollEdge?: ScrollEdgeBackdrop;
+  }) => {
+    ctrl.listScrollEdge.progress = scrollEdge;
     rendered.progress.push({ userId, topInset });
     return createElement('div', { 'data-tab': 'progress' });
   },
 }));
 vi.mock('../../../../src/components/you/SessionsTab', () => ({
-  SessionsTab: ({ userId }: { userId: string | undefined }) => {
+  SessionsTab: ({ userId, scrollEdge }: { userId: string | undefined; scrollEdge?: ScrollEdgeBackdrop }) => {
+    ctrl.listScrollEdge.sessions = scrollEdge;
     rendered.sessions.push({ userId });
     return createElement('div', { 'data-tab': 'sessions' });
   },
@@ -109,13 +130,15 @@ vi.mock('../../../../src/components/you/LogbookTab', () => ({
   },
 }));
 vi.mock('../../../../src/components/you/ProfileClimbsTab', () => ({
-  ProfileClimbsTab: ({ userId }: { userId: string | undefined }) => {
+  ProfileClimbsTab: ({ userId, scrollEdge }: { userId: string | undefined; scrollEdge?: ScrollEdgeBackdrop }) => {
+    ctrl.listScrollEdge.climbs = scrollEdge;
     rendered.climbs.push({ userId });
     return createElement('div', { 'data-tab': 'climbs' });
   },
 }));
 vi.mock('../../../../src/components/you/SocialTab', () => ({
-  SocialTab: ({ userId }: { userId: string | undefined }) => {
+  SocialTab: ({ userId, scrollEdge }: { userId: string | undefined; scrollEdge?: ScrollEdgeBackdrop }) => {
+    ctrl.listScrollEdge.social = scrollEdge;
     rendered.social.push({ userId });
     return createElement('div', { 'data-tab': 'social' });
   },
@@ -129,6 +152,8 @@ describe('YouScreen (own profile)', () => {
     ctrl.measureProfile = undefined;
     ctrl.measureLogbook = undefined;
     ctrl.logbookHeightChange.mockClear();
+    ctrl.chromeScrollEdge = undefined;
+    ctrl.listScrollEdge = {};
     rendered.progress = [];
     rendered.sessions = [];
     rendered.logbook = [];
@@ -174,5 +199,93 @@ describe('YouScreen (own profile)', () => {
     expect(container.querySelector('[data-logbook-controls]')).toBeNull();
     expect(container.querySelector('[data-tab="logbook"]')).toBeNull();
     expect(rendered.progress.at(-1)?.topInset).toBe(72);
+  });
+
+  // The segmented control floats over the list on iOS 26. Logbook's header also
+  // holds a bare text heading, search and sort chips, so it keeps its band.
+  it('keeps the Logbook header opaque and lets every other sub-tab float', () => {
+    const { container } = render(<YouScreen />);
+    const opaqueControls = () => container.querySelector('[data-chrome]')?.getAttribute('data-opaque-controls');
+
+    for (const floatingTab of ['progress', 'sessions', 'climbs', 'social']) {
+      fireEvent.click(container.querySelector(`[data-select-tab="${floatingTab}"]`)!);
+      expect(opaqueControls()).toBe('false');
+    }
+    fireEvent.click(container.querySelector('[data-select-tab="logbook"]')!);
+    expect(opaqueControls()).toBe('true');
+  });
+
+  // The blur behind the floating segmented control shows only while the visible
+  // sub-tab's list is scrolled under it. The lists write that to a store the
+  // screen holds, and the blur (inside the top chrome) reads it.
+  describe('the scroll-edge store', () => {
+    const SUB_TABS_WITH_FLOATING_HEADER = ['progress', 'sessions', 'climbs', 'social'];
+    const selectTab = (container: HTMLElement, tab: string) =>
+      fireEvent.click(container.querySelector(`[data-select-tab="${tab}"]`)!);
+    const scrollEvent = (offsetY: number) =>
+      ({ nativeEvent: { contentOffset: { x: 0, y: offsetY } } }) as Parameters<
+        ScrollEdgeBackdrop['listProps']['onScroll']
+      >[0];
+
+    it('hands the floating chrome one store for the life of the screen', () => {
+      const { container } = render(<YouScreen />);
+      const store = ctrl.chromeScrollEdge;
+      expect(store).toBeDefined();
+
+      for (const tab of SUB_TABS_WITH_FLOATING_HEADER) {
+        selectTab(container, tab);
+        expect(ctrl.chromeScrollEdge).toBe(store);
+      }
+    });
+
+    // Material, Android, the web, iOS before 26, Reduce Transparency: the header
+    // is opaque, no blur mounts, and the lists carry no scroll listeners.
+    it('gives the lists nothing until a blur is mounted to hear them', () => {
+      const { container } = render(<YouScreen />);
+
+      for (const tab of SUB_TABS_WITH_FLOATING_HEADER) {
+        selectTab(container, tab);
+        expect(tab in ctrl.listScrollEdge).toBe(true);
+        expect(ctrl.listScrollEdge[tab]).toBeUndefined();
+      }
+    });
+
+    it.each(SUB_TABS_WITH_FLOATING_HEADER)('wires the %s list to the store once a blur is listening', (tab) => {
+      const { container } = render(<YouScreen />);
+      act(() => {
+        ctrl.chromeScrollEdge?.attachBackdrop();
+      });
+
+      selectTab(container, tab);
+
+      expect(ctrl.listScrollEdge[tab]).toBe(ctrl.chromeScrollEdge);
+    });
+
+    // The screen holds the sub-tab and its list. Re-rendering it for each frame
+    // of a scroll, or for each height a collapsing title reports, re-renders
+    // every row with it.
+    it('does not re-render the screen for a scroll, a flip, or the bar changing height', () => {
+      render(<YouScreen />);
+      const store = ctrl.chromeScrollEdge!;
+      act(() => {
+        store.attachBackdrop();
+      });
+      const rendersWired = rendered.progress.length;
+
+      act(() => {
+        for (const topOffset of [-158, -146, -120, -106]) store.setTopOffset(topOffset);
+        for (const offsetY of [-106, 40, 600, -106, 900]) store.listProps.onScroll(scrollEvent(offsetY));
+      });
+
+      expect(store.isScrolledUnder()).toBe(true);
+      expect(rendered.progress).toHaveLength(rendersWired);
+    });
+
+    // Logbook keeps its painted band, so nothing subscribes and nothing is wired.
+    it('leaves the Logbook chrome out of it', () => {
+      const { container } = render(<YouScreen />);
+      selectTab(container, 'logbook');
+      expect(ctrl.chromeScrollEdge).toBeUndefined();
+    });
   });
 });

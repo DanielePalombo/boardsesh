@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 vi.mock('../../SheetTopBar', () => ({ SheetTopBar: () => null }));
-vi.mock('../../../hooks/use-native-root-header', () => ({ useNativeRootHeader: () => false }));
-vi.mock('../../chrome/NativeRootHeader', () => ({ NativeRootHeader: () => null }));
+vi.mock('../../../hooks/use-native-root-header', () => ({ useNativeRootHeader: () => nativeChrome.enabled }));
+vi.mock('../../chrome/NativeRootHeader', () => ({
+  NativeRootHeader: ({ scrollEdge }: { scrollEdge?: unknown }) => {
+    nativeChrome.scrollEdge = scrollEdge;
+    return null;
+  },
+}));
 vi.mock('../../../hooks/use-device-layout', () => ({
   useDeviceLayout: () => ({ isPad: false, widthClass: 'compact' }),
 }));
@@ -28,6 +33,10 @@ type BluetoothCtx = {
   disconnect: () => Promise<void>;
   armUndoWallChangeToast: () => void;
 } | null;
+
+// The UIKit header path (iOS on Liquid Glass), off unless a test turns it on, and
+// the scroll-edge store the native header was handed.
+const nativeChrome = vi.hoisted(() => ({ enabled: false, scrollEdge: undefined as unknown }));
 
 const ctrl = vi.hoisted(() => ({
   board: null as BoardLabelFields | null,
@@ -377,6 +386,7 @@ vi.mock('../../queue-control/WallStatusCapsule', () => ({
 }));
 
 import { ClimbTopChrome } from '../ClimbTopChrome';
+import { createScrollEdgeBackdrop } from '../../../hooks/use-scroll-edge-backdrop';
 
 function makeProps(over: Partial<Parameters<typeof ClimbTopChrome>[0]> = {}) {
   return {
@@ -434,8 +444,19 @@ describe('ClimbTopChrome', () => {
     ctrl.wallClimb = null;
     ctrl.focusEffects.length = 0;
     ctrl.setBoardAngle.mockClear();
+    nativeChrome.enabled = false;
+    nativeChrome.scrollEdge = undefined;
     haptics.light.mockClear();
     haptics.selection.mockClear();
+  });
+
+  // The blur behind the floating filter rows shows only while rows are under
+  // them. The list says so through a store, which reaches the header untouched.
+  it("hands the UIKit header the screen's scroll-edge store", () => {
+    nativeChrome.enabled = true;
+    const scrollEdge = createScrollEdgeBackdrop();
+    render(<ClimbTopChrome {...makeProps({ scrollEdge })} />);
+    expect(nativeChrome.scrollEdge).toBe(scrollEdge);
   });
 
   it('renders no board capsule when there is no active board', () => {

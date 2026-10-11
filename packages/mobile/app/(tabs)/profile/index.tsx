@@ -8,6 +8,7 @@ import type { BottomSheet } from '@expo/ui/community/bottom-sheet';
 import { useProfile, useYouProfileData } from '../../../src/lib/graphql/hooks';
 import { useTheme } from '../../../src/providers/theme-provider';
 import { useNativeRootHeader } from '../../../src/hooks/use-native-root-header';
+import { useScrollEdgeBackdrop } from '../../../src/hooks/use-scroll-edge-backdrop';
 import { ProfileTopChrome, type ProfileTabKey } from '../../../src/components/you/ProfileTopChrome';
 import { YouFilterSheet } from '../../../src/components/you/YouFilterSheet';
 import { ProgressTab } from '../../../src/components/you/ProgressTab';
@@ -75,13 +76,27 @@ export default function YouScreen() {
     setActiveTab(key);
   }, []);
 
+  // Whether the visible sub-tab's list is under the floating segmented control:
+  // the blur behind it shows only then. A store the lists write and the blur
+  // reads, so neither a scroll nor the bar changing height re-renders this screen
+  // and the sub-tab under it. `list` is undefined until a blur is mounted, which
+  // keeps the lists under every opaque header free of scroll listeners.
+  const scrollEdge = useScrollEdgeBackdrop();
+
   const openFilters = useCallback(() => {
     filterSheetRef.current?.snapToIndex(0);
   }, []);
 
   const renderLogbookHeader = useCallback(
     (controls: ReactNode, onHeightChange: (height: number) => void) => (
-      <ProfileTopChrome activeTab="logbook" onSelectTab={handleSelectTab} onHeightChange={onHeightChange}>
+      // Opaque for now: the Logbook heading is bare text, so this block cannot
+      // float over its rows the way the other sub-tabs' segmented control does.
+      <ProfileTopChrome
+        activeTab="logbook"
+        onSelectTab={handleSelectTab}
+        onHeightChange={onHeightChange}
+        opaqueControls
+      >
         {controls}
       </ProfileTopChrome>
     ),
@@ -95,16 +110,33 @@ export default function YouScreen() {
       ) : (
         <ReadableColumn style={styles.page}>
           {activeTab === 'progress' ? (
-            <ProgressTab data={youData} topInset={chromeHeight} userId={userId} onOpenFilters={openFilters} />
+            <ProgressTab
+              data={youData}
+              topInset={chromeHeight}
+              userId={userId}
+              onOpenFilters={openFilters}
+              scrollEdge={scrollEdge.list}
+            />
           ) : null}
-          {activeTab === 'sessions' ? <SessionsTab userId={userId} topInset={chromeHeight} /> : null}
-          {activeTab === 'climbs' ? <ProfileClimbsTab userId={userId} topInset={chromeHeight} /> : null}
-          {activeTab === 'social' ? <SocialTab userId={userId} topInset={chromeHeight} /> : null}
+          {activeTab === 'sessions' ? (
+            <SessionsTab userId={userId} topInset={chromeHeight} scrollEdge={scrollEdge.list} />
+          ) : null}
+          {activeTab === 'climbs' ? (
+            <ProfileClimbsTab userId={userId} topInset={chromeHeight} scrollEdge={scrollEdge.list} />
+          ) : null}
+          {activeTab === 'social' ? (
+            <SocialTab userId={userId} topInset={chromeHeight} scrollEdge={scrollEdge.list} />
+          ) : null}
         </ReadableColumn>
       )}
 
       {activeTab !== 'logbook' ? (
-        <ProfileTopChrome activeTab={activeTab} onSelectTab={handleSelectTab} onHeightChange={setChromeHeight} />
+        <ProfileTopChrome
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+          onHeightChange={setChromeHeight}
+          scrollEdge={scrollEdge.backdrop}
+        />
       ) : null}
 
       <YouFilterSheet

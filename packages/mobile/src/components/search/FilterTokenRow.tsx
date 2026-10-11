@@ -30,7 +30,13 @@ function TokenPill({ token }: { token: FilterToken }) {
       }}
       accessibilityRole="button"
       accessibilityLabel={t('mobile.search.removeFilterAria', { filter: token.label })}
-      style={[styles.pill, { borderColor: systemColors.separator }]}
+      // An opaque fill: on iOS 26 the row floats over the scrolling list, and a
+      // border alone leaves the label sitting on whatever is behind it. The fill
+      // is on every path, so the pill is one thing wherever it is drawn: on the
+      // Material band it is the band's own colour and does not show; on the iOS
+      // band (before iOS 26, Reduce Transparency, Increase Contrast) it shows as
+      // a quiet grey pill on the page colour.
+      style={[styles.pill, { borderColor: systemColors.separator, backgroundColor: systemColors.secondaryBackground }]}
       hitSlop={6}
     >
       <Text variant="caption1" numberOfLines={1} style={styles.pillLabel}>
