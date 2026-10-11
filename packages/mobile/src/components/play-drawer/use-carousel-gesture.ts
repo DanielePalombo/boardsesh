@@ -1,17 +1,26 @@
-import { useEffect, useMemo, useRef, type ComponentType, type RefObject } from 'react';
+import { useEffect, useMemo, type ComponentType, type RefObject } from 'react';
 import { Gesture, type GestureType } from 'react-native-gesture-handler';
-import { useSharedValue, withSpring, runOnJS, type SharedValue } from 'react-native-reanimated';
+import {
+  cancelAnimation,
+  runOnJS,
+  runOnUI,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { SWIPE_THRESHOLD, DIRECTION_THRESHOLD, VERTICAL_LOCK_RATIO, SWIPE_OFFSCREEN_PAD } from '@boardsesh/play-view';
 import { carouselCommitDirection } from './carousel-commit';
+import type { SwipePager } from './use-swipe-pager';
 import { springs } from '../../theme/animations';
 import { hapticMedium } from '../../lib/haptics';
 
 type UseCarouselGestureOptions = {
-  onSwipeNext: () => void;
-  onSwipePrevious: () => void;
-  canSwipeNext: boolean;
-  canSwipePrevious: boolean;
-  /** Width the slide-off is measured in (the contained board width). */
+  /**
+   * Which page is in the middle, the offset every swiping surface rides, and
+   * the way a step reaches the JS thread. See use-swipe-pager.
+   */
+  pager: SwipePager;
+  /** Width the incoming board enters by (the contained board width). */
   boardWidth: number;
   /** Full screen width — the card flings to ±(screenWidth + pad) so it fully
    *  clears the viewport on release, past its letterbox margins. */
@@ -22,50 +31,45 @@ type UseCarouselGestureOptions = {
    *  vertical scrolling start immediately while horizontal swipes still drive
    *  the carousel. */
   scrollRef?: RefObject<ComponentType | undefined | null>;
-  /** Optional external translateX. Pass one so a sibling rendered OUTSIDE this
-   *  carousel (the play-drawer header) can swipe off the exact same value as the
-   *  board. Falls back to an internal shared value. */
-  externalTranslateX?: SharedValue<number>;
-  /** Optional external isAnimating flag. When provided, the gesture does NOT reset
-   *  translateX/isAnimating after the fling — the host owns that, resetting once
-   *  the new climb has actually rendered (so the incoming peek covers the swap and
-   *  there's no flash). Falls back to an internal flag + self-reset when absent. */
-  externalIsAnimating?: SharedValue<boolean>;
-  /** When true (Reduce Motion), commit the swap instantly with no slide-off /
-   *  spring snap-back. The gesture still works; only the animation is dropped. */
-  reduceMotion?: boolean;
 };
 
 type UseCarouselGestureReturn = {
   gesture: GestureType;
-  translateX: SharedValue<number>;
-  isAnimating: SharedValue<boolean>;
 };
 
-// Delay-navigation: matches web — swap climb at CLIP_EXIT_DURATION while the
-// outgoing card finishes its EXIT_DURATION slide-off behind the peek board.
+/**
+ * The horizontal swipe between climbs.
+ *
+ * A committing release flings the board off, and the frame it is gone the
+ * pager's anchor moves to the neighbour's page and the offset returns to 0, so
+ * the next swipe can start at once. A swipe that starts before the fling has
+ * landed takes over from it; see `landFling`. None of that asks the JS thread
+ * anything. The pager tells it while the fling runs (`tellUntoldStep`), and it
+ * follows.
+ *
+ * Under the system's Reduce Motion setting Reanimated ends a spring the moment
+ * it is assigned, so a release changes the climb with no slide and a let-go
+ * drag is back in the middle at once. Nothing here has to ask for that.
+ */
 export function useCarouselGesture({
-  onSwipeNext,
-  onSwipePrevious,
-  canSwipeNext,
-  canSwipePrevious,
+  pager,
   boardWidth,
   screenWidth,
   enabled = true,
   isZoomedSV,
   scrollRef,
-  externalTranslateX,
-  externalIsAnimating,
-  reduceMotion = false,
 }: UseCarouselGestureOptions): UseCarouselGestureReturn {
-  // Use the caller's shared values when provided so the header can ride the same
-  // swipe and the host can own the post-render reset; otherwise own them.
-  // useSharedValue must run unconditionally.
-  const internalTranslateX = useSharedValue(0);
-  const translateX = externalTranslateX ?? internalTranslateX;
-  const internalIsAnimating = useSharedValue(false);
-  const isAnimating = externalIsAnimating ?? internalIsAnimating;
-  const hostDrivesReset = externalIsAnimating != null;
+  const {
+    translateX,
+    isAnimating,
+    anchorPage,
+    flingDirection,
+    uiSteps,
+    jsState,
+    resetGeneration,
+    untoldStep,
+    tellUntoldStep,
+  } = pager;
   const hasTriggeredHaptic = useSharedValue(false);
 
   // Mirror enabled into a shared value so the gesture useMemo doesn't rebuild
@@ -75,78 +79,43 @@ export function useCarouselGesture({
     enabledSV.value = enabled;
   }, [enabled, enabledSV]);
 
-  // Mirror Reduce Motion into a shared value for the same reason — flipping it
-  // shouldn't rebuild the gesture.
-  const reduceMotionSV = useSharedValue(reduceMotion);
-  useEffect(() => {
-    reduceMotionSV.value = reduceMotion;
-  }, [reduceMotion, reduceMotionSV]);
-
-  // Mirror the slide-off distance (board width) into a shared value so the
+  // The incoming board's travel (board width) lives in a shared value so the
   // post-layout change from screenWidth to the contained board width doesn't
-  // rebuild the gesture mid-session.
-  const boardWidthSV = useSharedValue(boardWidth);
+  // rebuild the gesture mid-session. It is the pager's, because the header
+  // scales its own travel by it.
+  const boardWidthSV = pager.slideWidth;
   useEffect(() => {
     boardWidthSV.value = boardWidth;
   }, [boardWidth, boardWidthSV]);
 
   // Fling distance rides the FULL screen width (+ pad) so the card fully clears
-  // the viewport, while the spring snap-back still uses board width. Mirrored for
-  // the same reason as boardWidth — a layout change must not rebuild the gesture.
+  // the viewport. Mirrored for the same reason as boardWidth — a layout change
+  // must not rebuild the gesture.
   const screenWidthSV = useSharedValue(screenWidth);
   useEffect(() => {
     screenWidthSV.value = screenWidth;
   }, [screenWidth, screenWidthSV]);
 
-  // Mirror swipe availability into shared values for the same reason — these
-  // flip at queue boundaries (and on queue mutations during the commit window),
-  // and recomposing the gesture then would hit the same iOS RNGH wedge.
-  const canSwipeNextSV = useSharedValue(canSwipeNext);
-  useEffect(() => {
-    canSwipeNextSV.value = canSwipeNext;
-  }, [canSwipeNext, canSwipeNextSV]);
-  const canSwipePreviousSV = useSharedValue(canSwipePrevious);
-  useEffect(() => {
-    canSwipePreviousSV.value = canSwipePrevious;
-  }, [canSwipePrevious, canSwipePreviousSV]);
+  // A carousel taken down under a finger gets no `onEnd`. The offset is the
+  // pager's and outlives it: left where the drag was, the header would sit off
+  // centre and the drawer's pull-down would stand aside for a swipe that is no
+  // longer happening. A fling is left alone; it lands by itself.
+  useEffect(
+    () => () => {
+      runOnUI(() => {
+        'worklet';
+        if (flingDirection.value !== 0) return;
+        cancelAnimation(translateX);
+        translateX.value = 0;
+      })();
+    },
+    [flingDirection, translateX],
+  );
 
-  const callbacksRef = useRef({ onSwipeNext, onSwipePrevious });
-  callbacksRef.current = { onSwipeNext, onSwipePrevious };
-
-  // The JS callbacks below are captured ONCE by the gesture memo (it composes a
-  // single time per mount) — they must only close over refs and shared values.
-  // Route any new render-scoped value through callbacksRef.
+  // Captured ONCE by the gesture memo (it composes a single time per mount):
+  // it must only close over refs and shared values.
   const triggerHaptic = () => {
     hapticMedium();
-  };
-
-  // Reduce Motion: the worklet already snapped translateX to 0, so just fire the
-  // navigation callback with no slide-off.
-  const commitImmediate = (direction: 'next' | 'previous') => {
-    if (direction === 'next') {
-      callbacksRef.current.onSwipeNext();
-    } else {
-      callbacksRef.current.onSwipePrevious();
-    }
-  };
-
-  // Fired from the fling's spring completion — i.e. once the outgoing card is
-  // fully OFF-SCREEN and the incoming peek board has slid to centre. We commit the
-  // navigation here, but DON'T reset translateX yet when a host is wired up: the
-  // host keeps the (frozen) peek covering centre and resets translateX only after
-  // the new climb has actually rendered, so the swap is invisible. Resetting here
-  // (the standalone fallback) hides the peek a frame before the new content lands,
-  // which flickers the old climb back at centre.
-  const commitAtEnd = (direction: 'next' | 'previous') => {
-    if (direction === 'next') {
-      callbacksRef.current.onSwipeNext();
-    } else {
-      callbacksRef.current.onSwipePrevious();
-    }
-    if (!hostDrivesReset) {
-      translateX.value = 0;
-      isAnimating.value = false;
-    }
   };
 
   // Lock direction on first significant move. Once locked horizontal, the gesture
@@ -160,8 +129,66 @@ export function useCarouselGesture({
   const directionLock = useSharedValue<0 | 1 | -1>(0); // 0=undecided, 1=horizontal, -1=vertical
   const startTouchX = useSharedValue(0);
   const startTouchY = useSharedValue(0);
+  // Where the drag's offset started, and the finger travel already spent when it
+  // did. Both 0 for a swipe from rest; a swipe that takes over a fling starts
+  // from where that fling had got to.
+  const dragBase = useSharedValue(0);
+  const dragOrigin = useSharedValue(0);
+  // The pager's reset count when this drag last took its bearings. When the
+  // pager abandons the page under a drag to follow the JS thread, the drag
+  // starts over from the finger's position rather than add to an offset that
+  // belonged to the old page.
+  const dragGeneration = useSharedValue(0);
 
   const gesture = useMemo(() => {
+    /** Whether the page one step that way is mounted. The JS thread mounts one each side of ITS middle page. */
+    const canStep = (direction: 1 | -1) => {
+      'worklet';
+      const state = jsState.value;
+      const target = anchorPage.value + direction;
+      return target >= state.center - (state.hasPrevious ? 1 : 0) && target <= state.center + (state.hasNext ? 1 : 0);
+    };
+
+    /**
+     * End the fling now: the neighbour's page becomes the anchor.
+     *
+     * At the fling's own end the offset simply returns to 0, on the same frame,
+     * so nothing moves. When a new swipe cuts the fling short, `carry` keeps the
+     * incoming board where it is: if it has not reached the middle yet, then in
+     * the new anchor's terms it is still that far off centre, and the outgoing
+     * board beside it stays put too.
+     *
+     * Two cases are not carried exactly. Once the incoming board has stopped,
+     * the outgoing one is dropped a few frames before it would have left; that
+     * shows only beside a letterboxed board, whose margins it was still
+     * crossing. And a fling cut short before it has crossed the middle, which
+     * takes a touch that activates within a frame or two of the last release,
+     * puts the board it was leaving in the middle.
+     */
+    const landFling = (carry: boolean) => {
+      'worklet';
+      const direction = flingDirection.value;
+      if (direction === 0) return;
+      // A swipe that cut the fling short got here before the incoming board did.
+      tellUntoldStep();
+      const remaining =
+        direction > 0
+          ? Math.max(0, boardWidthSV.value + translateX.value)
+          : Math.min(0, -boardWidthSV.value + translateX.value);
+      flingDirection.value = 0;
+      isAnimating.value = false;
+      anchorPage.value += direction;
+      // Assigning cancels the spring; its callback then reports unfinished and does nothing.
+      translateX.value = carry ? remaining : 0;
+    };
+
+    const takeOverFling = (translationX: number) => {
+      'worklet';
+      landFling(true);
+      dragBase.value = translateX.value;
+      dragOrigin.value = translationX;
+    };
+
     const pan = Gesture.Pan()
       .manualActivation(true)
       .maxPointers(1)
@@ -213,70 +240,78 @@ export function useCarouselGesture({
           state.activate();
         }
       })
-      .onStart(() => {
+      .onStart((event) => {
         'worklet';
         hasTriggeredHaptic.value = false;
+        dragGeneration.value = resetGeneration.value;
+        if (isAnimating.value) {
+          takeOverFling(event.translationX);
+        } else {
+          dragBase.value = 0;
+          dragOrigin.value = 0;
+        }
       })
       .onUpdate((event) => {
         'worklet';
-        if (isAnimating.value) return;
+        if (dragGeneration.value !== resetGeneration.value) {
+          dragGeneration.value = resetGeneration.value;
+          dragBase.value = 0;
+          dragOrigin.value = event.translationX;
+        }
+        // What the finger has done in THIS swipe, and where that puts the page.
+        // They differ for a swipe that took over a fling: it starts with the
+        // offset still on the far side of 0.
+        const travel = event.translationX - dragOrigin.value;
+        let offset = dragBase.value + travel;
 
-        let offset = event.translationX;
-
-        if (offset < 0 && !canSwipeNextSV.value) offset = 0;
-        if (offset > 0 && !canSwipePreviousSV.value) offset = 0;
+        if (offset < 0 && !canStep(1)) offset = 0;
+        if (offset > 0 && !canStep(-1)) offset = 0;
 
         translateX.value = offset;
 
-        if (Math.abs(offset) >= SWIPE_THRESHOLD && !hasTriggeredHaptic.value) {
+        if (Math.abs(travel) >= SWIPE_THRESHOLD && !hasTriggeredHaptic.value && canStep(travel < 0 ? 1 : -1)) {
           hasTriggeredHaptic.value = true;
           runOnJS(triggerHaptic)();
         }
       })
       .onEnd((event) => {
         'worklet';
-        if (isAnimating.value) return;
-
         const offset = translateX.value;
-        const skipAnimation = reduceMotionSV.value;
         const velocity = event.velocityX ?? 0;
-        const commitDirection = carouselCommitDirection(offset, velocity, SWIPE_THRESHOLD);
+        // Judged on the finger's own travel, like the haptic: a hard flick must
+        // count however little of a taken-over offset it had undone by
+        // finger-up.
+        //
+        // The handler's `success` argument is deliberately not consulted, as it
+        // never was. It is false for a touch the system cancelled, and a swipe
+        // that was far enough along still changes the climb then. Gating on it
+        // was tried and is wrong for a second reason: strokes sent back to back
+        // by the UI test driver end unsuccessfully, all but the last, and nine
+        // of ten scripted swipes sprang back.
+        const travel = event.translationX - dragOrigin.value;
+        const commitDirection = carouselCommitDirection(travel, velocity, SWIPE_THRESHOLD);
+        const direction = commitDirection === 'next' ? 1 : commitDirection === 'previous' ? -1 : 0;
 
-        if (commitDirection === 'next' && canSwipeNextSV.value) {
-          if (skipAnimation) {
-            translateX.value = 0;
-            runOnJS(commitImmediate)('next');
-          } else {
-            isAnimating.value = true;
-            // Fling fully off-screen (Tinder throw) — past the screen edge so the
-            // tilt/letterbox clears. Commit on COMPLETION (card off-screen, peek at
-            // centre) so the translateX reset is an invisible hand-off, not a snap.
-            translateX.value = withSpring(
-              -(screenWidthSV.value + SWIPE_OFFSCREEN_PAD),
-              { ...springs.interactive, velocity, overshootClamping: true },
-              (finished) => {
-                'worklet';
-                if (finished) runOnJS(commitAtEnd)('next');
-              },
-            );
-          }
-        } else if (commitDirection === 'previous' && canSwipePreviousSV.value) {
-          if (skipAnimation) {
-            translateX.value = 0;
-            runOnJS(commitImmediate)('previous');
-          } else {
-            isAnimating.value = true;
-            translateX.value = withSpring(
-              screenWidthSV.value + SWIPE_OFFSCREEN_PAD,
-              { ...springs.interactive, velocity, overshootClamping: true },
-              (finished) => {
-                'worklet';
-                if (finished) runOnJS(commitAtEnd)('previous');
-              },
-            );
-          }
-        } else {
-          translateX.value = skipAnimation ? 0 : withSpring(0, { ...springs.interactive, velocity });
+        if (direction !== 0 && canStep(direction)) {
+          uiSteps.value += 1;
+          untoldStep.value = uiSteps.value;
+          isAnimating.value = true;
+          flingDirection.value = direction;
+          // Fling fully off-screen (Tinder throw) — past the screen edge so the
+          // letterbox clears. The anchor moves on COMPLETION (card off-screen,
+          // incoming board in the middle), in the same frame the offset resets.
+          translateX.value = withSpring(
+            -direction * (screenWidthSV.value + SWIPE_OFFSCREEN_PAD),
+            { ...springs.interactive, velocity, overshootClamping: true },
+            (finished) => {
+              'worklet';
+              if (finished) landFling(false);
+            },
+          );
+          return;
+        }
+        if (offset !== 0) {
+          translateX.value = withSpring(0, { ...springs.interactive, velocity });
         }
       })
       // manualActivation hands the touch lifecycle to these worklets, so a touch
@@ -296,21 +331,28 @@ export function useCarouselGesture({
       });
     return scrollRef ? pan.simultaneousWithExternalGesture(scrollRef) : pan;
   }, [
-    canSwipeNextSV,
-    canSwipePreviousSV,
     boardWidthSV,
     screenWidthSV,
     translateX,
     isAnimating,
+    anchorPage,
+    flingDirection,
+    uiSteps,
+    jsState,
+    resetGeneration,
     hasTriggeredHaptic,
     isZoomedSV,
     enabledSV,
-    reduceMotionSV,
     directionLock,
     startTouchX,
     startTouchY,
+    dragBase,
+    dragOrigin,
+    dragGeneration,
+    untoldStep,
+    tellUntoldStep,
     scrollRef,
   ]);
 
-  return { gesture, translateX, isAnimating };
+  return { gesture };
 }

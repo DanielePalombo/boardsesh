@@ -185,8 +185,8 @@ inside a hook that every row calls.
 ## 5. Worklet gestures: gate `runOnJS(setState)`, mirror read JS values into shared values
 
 **Rule:** A gesture worklet must not `runOnJS(setState)` on every frame — gate the cross-thread hop
-on a value _change_ (a boolean edge, a threshold crossing). JS values the worklet reads (flags like
-`enabled`, `reduceMotion`) must be **mirrored into shared values** via a `useEffect`, not listed in
+on a value _change_ (a boolean edge, a threshold crossing). JS values the worklet reads (a flag like
+`enabled`, a measured width) must be **mirrored into shared values** via a `useEffect`, not listed in
 the gesture `useMemo`'s dependency array.
 
 **Why:** `onUpdate`/`onTouchesMove` fire ~60×/sec on the UI thread. A `runOnJS` per frame floods
@@ -198,13 +198,24 @@ it can read on the UI thread.
 
 **Example in this repo — `packages/mobile/src/components/play-drawer/use-carousel-gesture.ts`:**
 
-- `enabled` and `reduceMotion` are mirrored into `enabledSV` / `reduceMotionSV` shared values via
-  `useEffect` (lines 44–56). The gesture `useMemo` reads `enabledSV.value` / `reduceMotionSV.value`
-  inside the worklet and does **not** list `enabled`/`reduceMotion` in its deps, so flipping either
-  flag never recomposes the gesture.
-- The haptic `runOnJS(triggerHaptic)()` (line 170) fires once per drag — gated behind
+- `enabled`, the board width and the screen width are mirrored into shared values via `useEffect`.
+  The gesture `useMemo` reads `enabledSV.value` and the widths inside the worklet and does **not**
+  list the props in its deps, so a flag that flips or a layout that changes never recomposes the
+  gesture. Reduce Motion needs no flag of its own: under the system setting Reanimated ends a spring
+  the moment it is assigned, so a release changes the climb with no slide.
+- The haptic `runOnJS(triggerHaptic)()` fires once per drag — gated behind
   `!hasTriggeredHaptic.value`, a shared-value latch flipped on the threshold crossing — not on every
   `onUpdate` frame.
+- A swipe does not wait for the JS thread to show the next board or to take the next touch. Which
+  climb is in the middle is a shared value (`anchorPage` in `use-swipe-pager.ts`) that the release
+  animation moves on the frame the outgoing board is gone; the JS thread is told once, when the
+  incoming board has stopped in the middle, and changes the climb while the rest of the fling runs.
+  The previous design asked the JS thread which neighbour to draw when a swipe changed sides, and
+  waited for it to swap the climb before taking another touch: on an iPhone 13 Pro every swipe
+  forward began with the wrong holds on the incoming board, and swipes were ignored for 160 to 230 ms
+  after each release. One wait is left: the page after the next exists only once the JS thread has
+  rendered the step before, so a second flick the same way that is let go inside those 30 to 66 ms
+  springs back (#6351). See rule 9.
 - `packages/mobile/src/components/ClimbListRow.tsx` follows the same pattern: the swipe-commit
   haptic is gated by `useAnimatedReaction` on the `>= COMMIT_THRESHOLD` boolean edge (lines 39–43),
   so `runOnJS(hapticLight)` fires once per arm, not per frame.
@@ -237,7 +248,7 @@ gesture must resolve taps itself. Two non-obvious choices there:
   either axis activates), so single-axis drags pan fine.
 - **Built once, reads everything live.** The composed gesture's `useMemo` deps are only stable
   shared values + the pan; render-scoped values (the hit-target list, the JS callbacks) are read
-  through a `useRef` (same `callbacksRef` pattern as rule 5), so it never recomposes mid-session.
+  through a `useRef` written on every render (`callbacksRef`), so it never recomposes mid-session.
   The screen→board inverse transform runs in the worklet off `scaleSV`/`translateXSV`/`translateYSV`
   (mirrored container size for the center origin), then `runOnJS` resolves the nearest element once.
 
@@ -449,6 +460,77 @@ dispatches when nothing else is queued and native is empty, so warming the climb
 cost a render somebody is waiting on more than the one prefetch already inside native. A play-board render that is still waiting after 6s fires
 the `render_stalled` event (`docs/board-render-analytics.md`), which is how to tell whether a slow
 render is stuck in our queue or stuck in native.
+
+---
+
+## 9. A swipe between items is settled on the UI thread: keep the neighbours mounted, key them by page
+
+**Rule:** When a gesture swaps one heavy surface for the next (the play drawer's swipe between
+climbs), mount the neighbours ahead of time, give each a key that does not change when it becomes
+the current one, and let a shared value on the UI thread say which is in the middle. The JS thread
+follows the swipe. The one thing it still decides is how far ahead a swipe may go: one page either
+side of the climb it has rendered, because those are the boards it has mounted.
+
+**Why:** A release animation that ends by asking the JS thread to swap content has three costs, all
+measured on an iPhone 13 Pro before this rule (`docs/mobile-visible-performance.md`, swipe
+reference numbers):
+
+- **The wrong content first.** One spare surface cannot hold both neighbours, so the JS thread has
+  to be asked which one a swipe is heading for. Until it answers, the incoming board shows the
+  other neighbour's holds (8 to 36 ms), and holds that were not decoded yet then fade up on a board
+  that is already sliding.
+- **A dead window.** The carousel ignored touches from finger-up until the JS thread had swapped
+  the climb: 160 to 230 ms. At six swipes a second half of them did nothing.
+- **Renders nobody needed.** Mirroring the swipe's direction and its "committing" flag into React
+  state re-rendered the whole drawer four to seven times per swipe.
+
+**How, in `packages/mobile/src/components/play-drawer/`:**
+
+- `use-swipe-pager.ts` gives every mounted climb a page number that it keeps for as long as it is
+  mounted. `SwipeBoardCarousel` and `SwipeableHeader` key their three slots by page, so the board
+  that was the neighbour becomes the current one by a prop change. Its images are never remounted.
+- Every slot has the same view structure, whatever its role. A wrapper that only the current slot
+  has would remount the subtree the moment the role moved; an animated style that only the current
+  slot has (the zoom) would leave its last transform behind on a slot that stopped being current.
+- `pageOffset` places each page from `anchorPage` and the swipe offset in a worklet: opacity and
+  transform, nothing else. Two pages that are both drawn never overlap, so there is no z-order to
+  keep, and there must not be one that changes. In Fabric a `zIndex` that changes re-inserts the
+  native view among its siblings, and iOS cancels a touch that began on a view that was taken out:
+  a swipe that started during a fling was cut off 3 ms later until the slots stopped animating
+  `zIndex`. For the same reason no slot takes touches at all; they fall through to the stand-in
+  below, or to the container.
+- The accessibility element is one fixed stand-in the size of the board, not a slot. The slots
+  change places on every swipe, and focus that sat on one would be left on a hidden view. It takes
+  touches, so a screen reader's explore-by-touch finds it, and it is the container's first child, so
+  no board added or dropped after it can change where it sits among its siblings.
+- The UI thread numbers each step it takes (`uiSteps`); the JS thread writes back the last step it
+  has rendered, in one shared value with the page it has in the middle. While they differ the UI
+  thread leaves the JS thread alone. When they agree and the pages do not (a Next button, a queue
+  tap, a crew member's change, a step the queue refused) the UI thread goes where the JS thread is.
+- A swipe that starts while the last fling is still running takes it over (`landFling` with
+  `carry`): the anchor moves at once and the offset keeps the incoming board where it was, with the
+  outgoing one beside it. Once the incoming board has stopped in the middle the outgoing one is
+  dropped instead, a few frames early; that shows only in the margins of a letterboxed board.
+- The JS thread is told about a step once the incoming board has stopped in the middle, about two
+  thirds of the way through the fling. Changing the climb costs the UI thread a frame now and then
+  (the new neighbour's board is mounted, the rest of the drawer updates). Told at finger-up, that
+  frame fell while both boards were moving; told only at landing, the next swipe waits 50 ms longer
+  for its page.
+- The JS thread takes the steps one per committed render (`requestStep`). Two can be waiting when
+  it has been busy, and the queue's navigation reads state that only a render brings up to date.
+- Everything a step needs is the pager's, created in the drawer: the offset, the step a fling is
+  carrying (`untoldStep`), the reaction that tells the JS thread, and the Next and Previous
+  callbacks (`useSwipeNavigation`). `DeferredBoard` takes the carousel down while the drawer
+  measures itself again, and a fling outlives it. Kept in the carousel, the step was lost with it
+  and the callbacks were those of a render that was gone. A drag gets no release when its carousel
+  goes, so the gesture's unmount returns the offset to rest.
+
+**Do not** pass anything that only the current slot should have by changing the tree. `playSurface`
+moves between mounted boards now, which is why `useNativeClimbRender` reads it through a ref when
+it arms the paint watchdog: a board that becomes the play surface after its holds painted has
+nothing left to wait for. `LayeredClimbImage` reports one image replacing another as the new one
+only; a "nothing is mounted" in between made the watchdog forget an `onLoad` that had arrived ahead
+of the report, and wait four seconds for a paint that had happened.
 
 ---
 
