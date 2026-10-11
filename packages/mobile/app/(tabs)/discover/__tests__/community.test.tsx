@@ -39,7 +39,8 @@ const viewer = vi.hoisted(() => ({
   profileLoading: false,
   profileFetching: false,
   boardLoading: false,
-  refetchProfile: vi.fn(),
+  // Pending like a real in-flight refetch, so the pull spinner has something to wait on.
+  refetchProfile: vi.fn(() => new Promise<void>(() => {})),
 }));
 
 // Keep the real filter mapping; only the network hook is stubbed, so the test
@@ -62,7 +63,15 @@ vi.mock('react-native', () => ({
   View: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
   RefreshControl: ({ refreshing, onRefresh }: { refreshing?: boolean; onRefresh?: () => void }) =>
     createElement('button', { 'data-refresh-control': String(!!refreshing), onClick: onRefresh }, 'pull-to-refresh'),
-  FlatList: ({
+  StyleSheet: {
+    create: (styles: Record<string, unknown>) => styles,
+    hairlineWidth: 1,
+  },
+  Platform: { OS: 'ios' },
+}));
+
+vi.mock('@shopify/flash-list', () => ({
+  FlashList: ({
     data,
     renderItem,
     ListEmptyComponent,
@@ -87,11 +96,6 @@ vi.mock('react-native', () => ({
       ListFooterComponent,
       createElement('button', { 'aria-label': 'end-reached', onClick: onEndReached }, 'end'),
     ),
-  StyleSheet: {
-    create: (styles: Record<string, unknown>) => styles,
-    hairlineWidth: 1,
-  },
-  Platform: { OS: 'ios' },
 }));
 
 vi.mock('../../../../src/theme/tokens', () => ({
@@ -345,15 +349,21 @@ describe('CommunityPlaylistsScreen states', () => {
     expect(hook.refetch).not.toHaveBeenCalled();
   });
 
-  it('retries the profile on a pull and spins while it refetches', () => {
+  it('retries the profile on a pull and spins while it refetches', async () => {
     viewer.profileId = null;
     const { container, rerender, queryByText } = render(<CommunityPlaylistsScreen />);
-    fireEvent.click(container.querySelector('[data-refresh-control]') as HTMLElement);
+    const refreshState = () => container.querySelector('[data-refresh-control]')?.getAttribute('data-refresh-control');
+    await act(async () => {
+      fireEvent.click(container.querySelector('[data-refresh-control]') as HTMLElement);
+    });
     expect(viewer.refetchProfile).toHaveBeenCalledTimes(1);
     expect(hook.refetch).not.toHaveBeenCalled();
+    // The pull spinner waits on the profile request, not just one microtask.
+    expect(refreshState()).toBe('true');
 
     viewer.profileFetching = true;
     rerender(<CommunityPlaylistsScreen />);
+    expect(refreshState()).toBe('true');
     expect(queryByText('library.community.errors.loadTitle')).toBeNull();
     expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
   });

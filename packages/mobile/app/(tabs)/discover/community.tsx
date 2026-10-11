@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { RefreshControl, StyleSheet, View } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import {
@@ -124,9 +125,12 @@ export default function CommunityPlaylistsScreen() {
     refetch,
   } = useCommunityPlaylists({ input, pageSize: PAGE_SIZE, enabled: ready });
   // With no profile the list hook is idle, so a pull retries the profile.
+  // Returns the profile promise so the pull spinner waits for it; the list's
+  // own refetch flips `isLoading` synchronously, which the spinner already reads.
   const refreshScreen = useCallback(() => {
-    if (profileFailed) void refetchProfile();
-    else refetch();
+    if (profileFailed) return refetchProfile();
+    refetch();
+    return undefined;
   }, [profileFailed, refetch, refetchProfile]);
   const pullRefresh = usePullRefresh(refreshScreen, isLoading || profileFetching);
 
@@ -306,7 +310,7 @@ export default function CommunityPlaylistsScreen() {
           ) : null}
         </View>
 
-        <FlatList
+        <FlashList
           data={playlists}
           keyExtractor={playlistKey}
           renderItem={renderItem}
