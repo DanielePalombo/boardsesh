@@ -35,21 +35,13 @@ export type UseCommunityPlaylistsResult = {
    * refresh (the previous rows stay, and so does their pagination).
    */
   hasError: boolean;
-  /** Pages 2+ failed three times in a row; `retryLoadMore` re-arms them. */
+  /** A page after the first failed; pagination stops until `retryLoadMore`. */
   hasLoadMoreError: boolean;
   /** Fetches the next page. One page per call, never a drain. */
   loadMore: () => void;
   retryLoadMore: () => void;
   refetch: () => void;
 };
-
-const MAX_LOAD_MORE_FAILURES = 3;
-/**
- * After a failed page, end-reach waits this long before trying again. A list
- * sitting at its end can fire end-reach again as soon as the footer spinner
- * goes away, which would spend all three attempts in well under a second.
- */
-export const COMMUNITY_LOAD_MORE_RETRY_DELAY_MS = 2000;
 
 /** Appends rows whose uuid isn't on screen yet, de-duplicating the page itself too. */
 function appendUnique(previous: DiscoverablePlaylist[], incoming: DiscoverablePlaylist[]): DiscoverablePlaylist[] {
@@ -73,9 +65,10 @@ function appendUnique(previous: DiscoverablePlaylist[], incoming: DiscoverablePl
  *    for an older input is discarded, so fast typing can't land stale rows.
  *  - Offset pages can shift between requests (a playlist gains a pin and moves
  *    up), so appended rows are de-duplicated by uuid.
- *  - A failed page holds end-reach off for `COMMUNITY_LOAD_MORE_RETRY_DELAY_MS`;
- *    three consecutive failures stop pagination and raise `hasLoadMoreError`
- *    instead of retrying forever on every end-reach.
+ *  - A failed page stops pagination and raises `hasLoadMoreError` at once, so
+ *    the screen shows its retry. Silent auto-retries don't work here: a list
+ *    parked at its end only fires end-reach again after the climber scrolls
+ *    away and back, so a quiet failure would look like the end of the list.
  *  - A failed refresh keeps the rows and their pagination and raises
  *    `hasError`, so the screen can offer a retry beside them.
  */
@@ -109,8 +102,6 @@ export function useCommunityPlaylists({
   const hasMoreRef = useRef(false);
   const isFetchingRef = useRef(false);
   const activeFetchIdRef = useRef(0);
-  const loadMoreFailCountRef = useRef(0);
-  const loadMoreBlockedUntilRef = useRef(0);
 
   const fetchPage = useCallback(
     async (page: number, isInitial: boolean) => {
@@ -143,8 +134,6 @@ export function useCommunityPlaylists({
         setHasMore(more);
         hasMoreRef.current = more;
         pageRef.current = page + 1;
-        loadMoreFailCountRef.current = 0;
-        loadMoreBlockedUntilRef.current = 0;
         setHasError(false);
         setHasLoadMoreError(false);
       } catch (err: unknown) {
@@ -153,13 +142,9 @@ export function useCommunityPlaylists({
         if (isInitial) {
           setHasError(true);
         } else {
-          loadMoreFailCountRef.current += 1;
-          loadMoreBlockedUntilRef.current = Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS;
-          if (loadMoreFailCountRef.current >= MAX_LOAD_MORE_FAILURES) {
-            setHasMore(false);
-            hasMoreRef.current = false;
-            setHasLoadMoreError(true);
-          }
+          setHasMore(false);
+          hasMoreRef.current = false;
+          setHasLoadMoreError(true);
         }
       } finally {
         if (activeFetchIdRef.current === fetchId) {
@@ -175,8 +160,6 @@ export function useCommunityPlaylists({
   const resetState = useCallback(() => {
     pageRef.current = 0;
     hasMoreRef.current = false;
-    loadMoreFailCountRef.current = 0;
-    loadMoreBlockedUntilRef.current = 0;
     setPlaylists([]);
     setTotalCount(0);
     setHasMore(false);
@@ -202,14 +185,11 @@ export function useCommunityPlaylists({
 
   const loadMore = useCallback(() => {
     if (isFetchingRef.current || !hasMoreRef.current) return;
-    if (Date.now() < loadMoreBlockedUntilRef.current) return;
     void fetchPage(pageRef.current, false);
   }, [fetchPage]);
 
   const retryLoadMore = useCallback(() => {
     if (isFetchingRef.current) return;
-    loadMoreFailCountRef.current = 0;
-    loadMoreBlockedUntilRef.current = 0;
     setHasLoadMoreError(false);
     setHasMore(true);
     hasMoreRef.current = true;

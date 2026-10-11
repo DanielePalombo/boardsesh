@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { PlaylistsAdapterProvider, type ExecutePlaylistsGraphQL, type PlaylistsAdapter } from '../adapter';
 import { noopRecentsAdapter } from '../recents-adapter';
-import { useCommunityPlaylists, COMMUNITY_LOAD_MORE_RETRY_DELAY_MS } from '../use-community-playlists';
+import { useCommunityPlaylists } from '../use-community-playlists';
 import type { CommunityPlaylistsInput } from '../community-playlist-filters';
 import type {
   DiscoverablePlaylist,
@@ -59,10 +59,6 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const BASE_INPUT: CommunityPlaylistsInput = { boardType: 'kilter', layoutId: 8, sortBy: 'popular' };
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe('useCommunityPlaylists', () => {
   it('fetches page 0 of the given input as a single stream', async () => {
@@ -176,52 +172,29 @@ describe('useCommunityPlaylists', () => {
     consoleError.mockRestore();
   });
 
-  it('stops paginating after three failed pages and re-arms on retryLoadMore', async () => {
+  it('stops paginating on the first failed page and re-arms on retryLoadMore', async () => {
     const { pending, executeGraphQL } = deferredTransport();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { result } = renderHook(() => useCommunityPlaylists({ input: BASE_INPUT, executeGraphQL }), { wrapper });
     await waitFor(() => expect(pending).toHaveLength(1));
     await act(async () => pending[0].resolve(page(['a'], true)));
 
-    vi.useFakeTimers({ toFake: ['Date'] });
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      act(() => result.current.loadMore());
-      await act(async () => pending[attempt].reject(new Error('boom')));
-      vi.setSystemTime(Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS);
-    }
-    expect(result.current.hasLoadMoreError).toBe(true);
-    expect(result.current.hasMore).toBe(false);
-
-    act(() => result.current.loadMore());
-    expect(pending).toHaveLength(4);
-
-    act(() => result.current.retryLoadMore());
-    expect(pending).toHaveLength(5);
-    expect(pending[4].input.page).toBe(1);
-    await act(async () => pending[4].resolve(page(['b'], false)));
-    expect(result.current.hasLoadMoreError).toBe(false);
-    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['a', 'b']);
-    consoleError.mockRestore();
-  });
-
-  it('holds end-reach off for a moment after a failed page', async () => {
-    const { pending, executeGraphQL } = deferredTransport();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { result } = renderHook(() => useCommunityPlaylists({ input: BASE_INPUT, executeGraphQL }), { wrapper });
-    await waitFor(() => expect(pending).toHaveLength(1));
-    await act(async () => pending[0].resolve(page(['a'], true)));
-
-    vi.useFakeTimers({ toFake: ['Date'] });
     act(() => result.current.loadMore());
     await act(async () => pending[1].reject(new Error('boom')));
+    expect(result.current.hasLoadMoreError).toBe(true);
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.isLoadingMore).toBe(false);
 
+    // End-reach no longer fetches; only the explicit retry does.
     act(() => result.current.loadMore());
     expect(pending).toHaveLength(2);
 
-    vi.setSystemTime(Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS);
-    act(() => result.current.loadMore());
+    act(() => result.current.retryLoadMore());
     expect(pending).toHaveLength(3);
     expect(pending[2].input.page).toBe(1);
+    await act(async () => pending[2].resolve(page(['b'], false)));
+    expect(result.current.hasLoadMoreError).toBe(false);
+    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['a', 'b']);
     consoleError.mockRestore();
   });
 

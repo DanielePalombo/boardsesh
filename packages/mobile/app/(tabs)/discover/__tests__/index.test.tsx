@@ -833,8 +833,10 @@ describe('DiscoverLibrary error handling', () => {
     expect(router.push).toHaveBeenLastCalledWith('/(tabs)/discover/community');
   });
 
-  it('hides the community See all while the shelf is empty', () => {
-    const { queryByLabelText } = renderHub();
+  it('hides the community See all while the shelf is still loading', () => {
+    communityHook.isLoading = true;
+    const { container, queryByLabelText } = renderHub();
+    expect(container.querySelector('[data-scroll-section="library.sections.community"]')).not.toBeNull();
     expect(queryByLabelText('library.sections.community library.allPlaylists.seeAll')).toBeNull();
   });
 

@@ -37,6 +37,7 @@ const viewer = vi.hoisted(() => ({
   isAuthenticated: true,
   profileId: 'me' as string | null,
   profileLoading: false,
+  profileFetching: false,
   boardLoading: false,
   refetchProfile: vi.fn(),
 }));
@@ -109,6 +110,7 @@ vi.mock('../../../../src/lib/graphql/hooks', () => ({
   useProfile: () => ({
     data: viewer.profileId ? { id: viewer.profileId } : undefined,
     isLoading: viewer.profileLoading,
+    isFetching: viewer.profileFetching,
     refetch: viewer.refetchProfile,
   }),
 }));
@@ -209,6 +211,7 @@ beforeEach(() => {
   viewer.profileId = 'me';
   viewer.boardLoading = false;
   viewer.profileLoading = false;
+  viewer.profileFetching = false;
   viewer.refetchProfile.mockClear();
 });
 
@@ -340,6 +343,19 @@ describe('CommunityPlaylistsScreen states', () => {
     fireEvent.click(getByLabelText('library.errors.tryAgain'));
     expect(viewer.refetchProfile).toHaveBeenCalledTimes(1);
     expect(hook.refetch).not.toHaveBeenCalled();
+  });
+
+  it('retries the profile on a pull and spins while it refetches', () => {
+    viewer.profileId = null;
+    const { container, rerender, queryByText } = render(<CommunityPlaylistsScreen />);
+    fireEvent.click(container.querySelector('[data-refresh-control]') as HTMLElement);
+    expect(viewer.refetchProfile).toHaveBeenCalledTimes(1);
+    expect(hook.refetch).not.toHaveBeenCalled();
+
+    viewer.profileFetching = true;
+    rerender(<CommunityPlaylistsScreen />);
+    expect(queryByText('library.community.errors.loadTitle')).toBeNull();
+    expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
   });
 
   it('keeps the rows and offers a retry when a refresh fails', () => {

@@ -54,6 +54,7 @@ export default function CommunityPlaylistsScreen() {
   const {
     data: profile,
     isLoading: profileLoading,
+    isFetching: profileFetching,
     refetch: refetchProfile,
   } = useProfile({ enabled: isAuthenticated });
   const { data: activeBoard, isLoading: activeBoardLoading } = useActiveBoard();
@@ -106,7 +107,9 @@ export default function CommunityPlaylistsScreen() {
   // throw that page away. A signed-in viewer whose profile failed to load is
   // not "nobody": Everyone would show their own playlists, so that is an error.
   const viewerKnown = !isAuthenticated || profile != null;
-  const profileFailed = isAuthenticated && !authLoading && !profileLoading && profile == null;
+  // `isFetching`, not just `isLoading`: a retry of a failed query keeps
+  // `isLoading` false, and the spinner should show while it runs.
+  const profileFailed = isAuthenticated && !authLoading && !profileLoading && !profileFetching && profile == null;
   const ready = !authLoading && !activeBoardLoading && viewerKnown;
   const {
     playlists,
@@ -120,7 +123,12 @@ export default function CommunityPlaylistsScreen() {
     retryLoadMore,
     refetch,
   } = useCommunityPlaylists({ input, pageSize: PAGE_SIZE, enabled: ready });
-  const pullRefresh = usePullRefresh(refetch, isLoading);
+  // With no profile the list hook is idle, so a pull retries the profile.
+  const refreshScreen = useCallback(() => {
+    if (profileFailed) void refetchProfile();
+    else refetch();
+  }, [profileFailed, refetch, refetchProfile]);
+  const pullRefresh = usePullRefresh(refreshScreen, isLoading || profileFetching);
 
   const creatorScope = effectiveCommunityCreatorScope(filters, { viewerId });
   const filtersActive = hasActiveCommunityPlaylistFilters({ ...filters, creator: creatorScope });
@@ -186,11 +194,6 @@ export default function CommunityPlaylistsScreen() {
   // A failed pull-to-refresh keeps the rows; the footer offers the retry.
   const showRefreshError = hasError && !isLoading && playlists.length > 0;
 
-  const retryFirstPage = useCallback(() => {
-    if (profileFailed) void refetchProfile();
-    else refetch();
-  }, [profileFailed, refetch, refetchProfile]);
-
   // The count only appears beside rows; the empty states already say "none".
   const summaryParts: string[] = [];
   if (playlists.length > 0) {
@@ -219,7 +222,7 @@ export default function CommunityPlaylistsScreen() {
           {t('library.community.errors.loadDescription')}
         </Text>
         <PressableSurface
-          onPress={retryFirstPage}
+          onPress={refreshScreen}
           accessibilityRole="button"
           accessibilityLabel={t('library.errors.tryAgain')}
           hitSlop={8}
