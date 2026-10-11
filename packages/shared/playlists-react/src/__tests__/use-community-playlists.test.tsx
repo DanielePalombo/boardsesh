@@ -1,9 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { PlaylistsAdapterProvider, type ExecutePlaylistsGraphQL, type PlaylistsAdapter } from '../adapter';
 import { noopRecentsAdapter } from '../recents-adapter';
-import { useCommunityPlaylists } from '../use-community-playlists';
+import { useCommunityPlaylists, COMMUNITY_LOAD_MORE_RETRY_DELAY_MS } from '../use-community-playlists';
 import type { CommunityPlaylistsInput } from '../community-playlist-filters';
 import type {
   DiscoverablePlaylist,
@@ -59,6 +59,10 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const BASE_INPUT: CommunityPlaylistsInput = { boardType: 'kilter', layoutId: 8, sortBy: 'popular' };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('useCommunityPlaylists', () => {
   it('fetches page 0 of the given input as a single stream', async () => {
@@ -153,6 +157,25 @@ describe('useCommunityPlaylists', () => {
     consoleError.mockRestore();
   });
 
+  it('keeps paginating the loaded rows after a failed refresh', async () => {
+    const { pending, executeGraphQL } = deferredTransport();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { result } = renderHook(() => useCommunityPlaylists({ input: BASE_INPUT, executeGraphQL }), { wrapper });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(page(['a'], true)));
+
+    act(() => result.current.refetch());
+    await act(async () => pending[1].reject(new Error('offline')));
+    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['a']);
+    expect(result.current.hasError).toBe(true);
+    expect(result.current.hasMore).toBe(true);
+
+    act(() => result.current.loadMore());
+    expect(pending).toHaveLength(3);
+    expect(pending[2].input.page).toBe(1);
+    consoleError.mockRestore();
+  });
+
   it('stops paginating after three failed pages and re-arms on retryLoadMore', async () => {
     const { pending, executeGraphQL } = deferredTransport();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -160,9 +183,11 @@ describe('useCommunityPlaylists', () => {
     await waitFor(() => expect(pending).toHaveLength(1));
     await act(async () => pending[0].resolve(page(['a'], true)));
 
+    vi.useFakeTimers({ toFake: ['Date'] });
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       act(() => result.current.loadMore());
       await act(async () => pending[attempt].reject(new Error('boom')));
+      vi.setSystemTime(Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS);
     }
     expect(result.current.hasLoadMoreError).toBe(true);
     expect(result.current.hasMore).toBe(false);
@@ -179,6 +204,77 @@ describe('useCommunityPlaylists', () => {
     consoleError.mockRestore();
   });
 
+  it('holds end-reach off for a moment after a failed page', async () => {
+    const { pending, executeGraphQL } = deferredTransport();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { result } = renderHook(() => useCommunityPlaylists({ input: BASE_INPUT, executeGraphQL }), { wrapper });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(page(['a'], true)));
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    act(() => result.current.loadMore());
+    await act(async () => pending[1].reject(new Error('boom')));
+
+    act(() => result.current.loadMore());
+    expect(pending).toHaveLength(2);
+
+    vi.setSystemTime(Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS);
+    act(() => result.current.loadMore());
+    expect(pending).toHaveLength(3);
+    expect(pending[2].input.page).toBe(1);
+    consoleError.mockRestore();
+  });
+
+  it('de-duplicates repeats inside a single page', async () => {
+    const { pending, executeGraphQL } = deferredTransport();
+    const { result } = renderHook(() => useCommunityPlaylists({ input: BASE_INPUT, executeGraphQL }), { wrapper });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(page(['a', 'a', 'b'], true)));
+    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['a', 'b']);
+
+    act(() => result.current.loadMore());
+    await act(async () => pending[1].resolve(page(['c', 'c', 'b'], false)));
+    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('clears the load-more spinner when the input changes mid-page', async () => {
+    const { pending, executeGraphQL } = deferredTransport();
+    const { result, rerender } = renderHook(
+      ({ input }: { input: CommunityPlaylistsInput }) => useCommunityPlaylists({ input, executeGraphQL }),
+      { initialProps: { input: BASE_INPUT }, wrapper },
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await act(async () => pending[0].resolve(page(['a'], true)));
+
+    act(() => result.current.loadMore());
+    expect(result.current.isLoadingMore).toBe(true);
+
+    rerender({ input: { ...BASE_INPUT, sortBy: 'recent' } });
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(result.current.isLoadingMore).toBe(false);
+
+    // The stale page lands after the reset and is dropped.
+    await act(async () => pending[1].resolve(page(['stale'], false)));
+    await act(async () => pending[2].resolve(page(['fresh'], false)));
+    expect(result.current.playlists.map((playlist) => playlist.uuid)).toEqual(['fresh']);
+    expect(result.current.isLoadingMore).toBe(false);
+  });
+
+  it('drops an in-flight page when it is disabled mid-request', async () => {
+    const { pending, executeGraphQL } = deferredTransport();
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useCommunityPlaylists({ input: BASE_INPUT, enabled, executeGraphQL }),
+      { initialProps: { enabled: true }, wrapper },
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+
+    rerender({ enabled: false });
+    expect(result.current.isLoading).toBe(false);
+    await act(async () => pending[0].resolve(page(['late'], false)));
+    expect(result.current.playlists).toEqual([]);
+    expect(result.current.isLoading).toBe(false);
+  });
+
   it('does not fetch while disabled', async () => {
     const { pending, executeGraphQL } = deferredTransport();
     const { result, rerender } = renderHook(
@@ -189,6 +285,8 @@ describe('useCommunityPlaylists', () => {
     expect(pending).toHaveLength(0);
 
     rerender({ enabled: true });
+    // Loading from the very first enabled render, before the request starts.
+    expect(result.current.isLoading).toBe(true);
     await waitFor(() => expect(pending).toHaveLength(1));
   });
 });

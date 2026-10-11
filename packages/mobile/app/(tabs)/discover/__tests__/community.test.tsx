@@ -33,7 +33,13 @@ const hook = vi.hoisted(() => ({
   refetch: vi.fn(),
 }));
 const hookCalls = vi.hoisted(() => ({ options: [] as UseCommunityPlaylistsOptions[] }));
-const viewer = vi.hoisted(() => ({ isAuthenticated: true, profileId: 'me' as string | null }));
+const viewer = vi.hoisted(() => ({
+  isAuthenticated: true,
+  profileId: 'me' as string | null,
+  profileLoading: false,
+  boardLoading: false,
+  refetchProfile: vi.fn(),
+}));
 
 // Keep the real filter mapping; only the network hook is stubbed, so the test
 // sees exactly the server input each filter state produces.
@@ -100,10 +106,17 @@ vi.mock('../../../../src/providers/auth-provider', () => ({
   useAuth: () => ({ isAuthenticated: viewer.isAuthenticated, isLoading: false }),
 }));
 vi.mock('../../../../src/lib/graphql/hooks', () => ({
-  useProfile: () => ({ data: viewer.profileId ? { id: viewer.profileId } : undefined, isLoading: false }),
+  useProfile: () => ({
+    data: viewer.profileId ? { id: viewer.profileId } : undefined,
+    isLoading: viewer.profileLoading,
+    refetch: viewer.refetchProfile,
+  }),
 }));
 vi.mock('../../../../src/lib/graphql/use-active-board', () => ({
-  useActiveBoard: () => ({ data: { boardType: 'kilter', layoutId: 8 }, isLoading: false }),
+  useActiveBoard: () => ({
+    data: viewer.boardLoading ? undefined : { boardType: 'kilter', layoutId: 8 },
+    isLoading: viewer.boardLoading,
+  }),
 }));
 vi.mock('../../../../src/hooks/use-bottom-chrome-metrics', () => ({
   useBottomChromeMetrics: () => ({ scrollBottomPadding: 0 }),
@@ -194,6 +207,9 @@ beforeEach(() => {
   hookCalls.options = [];
   viewer.isAuthenticated = true;
   viewer.profileId = 'me';
+  viewer.boardLoading = false;
+  viewer.profileLoading = false;
+  viewer.refetchProfile.mockClear();
 });
 
 afterEach(() => {
@@ -244,6 +260,7 @@ describe('CommunityPlaylistsScreen filters', () => {
     viewer.isAuthenticated = false;
     viewer.profileId = null;
     const { queryByLabelText } = render(<CommunityPlaylistsScreen />);
+    expect(hookCalls.options.at(-1)?.enabled).toBe(true);
     expect(queryByLabelText('library.community.madeByLabel:mine')).toBeNull();
     expect(lastInput()).not.toHaveProperty('excludeCreatorIds');
   });
@@ -295,6 +312,43 @@ describe('CommunityPlaylistsScreen states', () => {
     const { container, queryByText } = render(<CommunityPlaylistsScreen />);
     expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
     expect(queryByText('library.community.empty.title')).toBeNull();
+  });
+
+  it('shows a spinner, not an empty state, while the board is still loading', () => {
+    viewer.boardLoading = true;
+    const { container, queryByText } = render(<CommunityPlaylistsScreen />);
+    expect(hookCalls.options.at(-1)?.enabled).toBe(false);
+    expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
+    expect(queryByText('library.community.empty.title')).toBeNull();
+    expect(queryByText('library.community.resultCount:0')).toBeNull();
+  });
+
+  it('waits for the profile before fetching, showing a spinner meanwhile', () => {
+    viewer.profileId = null;
+    viewer.profileLoading = true;
+    const { container, queryByText } = render(<CommunityPlaylistsScreen />);
+    expect(hookCalls.options.at(-1)?.enabled).toBe(false);
+    expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
+    expect(queryByText('library.community.empty.title')).toBeNull();
+  });
+
+  it('shows an error, not everyone including the viewer, when the profile fails', () => {
+    viewer.profileId = null;
+    const { getByText, getByLabelText } = render(<CommunityPlaylistsScreen />);
+    expect(hookCalls.options.at(-1)?.enabled).toBe(false);
+    expect(getByText('library.community.errors.loadTitle')).toBeTruthy();
+    fireEvent.click(getByLabelText('library.errors.tryAgain'));
+    expect(viewer.refetchProfile).toHaveBeenCalledTimes(1);
+    expect(hook.refetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rows and offers a retry when a refresh fails', () => {
+    hook.playlists = [{ uuid: 'a', name: 'A', climbCount: 1, creatorName: 'Jess' }];
+    hook.hasError = true;
+    const { getByLabelText, container } = render(<CommunityPlaylistsScreen />);
+    expect(container.querySelector('[data-playlist-row="A"]')).not.toBeNull();
+    fireEvent.click(getByLabelText('library.community.errors.loadTitle library.errors.tryAgain'));
+    expect(hook.refetch).toHaveBeenCalledTimes(1);
   });
 
   it('retries a failed first page', () => {

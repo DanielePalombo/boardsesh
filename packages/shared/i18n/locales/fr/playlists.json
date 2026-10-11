@@ -63,15 +63,15 @@
       "loadMoreError": "Impossible de charger plus de playlists.",
       "errors": {
         "loadTitle": "Impossible de charger les playlists",
-        "loadDescription": "Vérifie ta connexion et réessaie."
+        "loadDescription": "Vérifiez votre connexion et réessayez."
       },
       "empty": {
         "title": "Pas encore de playlist ici",
-        "description": "Rends l'une des tiennes publique et elle apparaîtra pour la crew."
+        "description": "Rendez l'une des vôtres publique et elle apparaîtra pour la crew."
       },
       "noMatches": {
         "title": "Rien ne correspond à ces filtres",
-        "description": "Desserre un filtre ou deux pour en voir plus.",
+        "description": "Desserrez un filtre ou deux pour en voir plus.",
         "clearFilters": "Effacer les filtres"
       }
     },

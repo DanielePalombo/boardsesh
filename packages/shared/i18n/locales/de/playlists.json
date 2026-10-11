@@ -48,7 +48,7 @@
       },
       "sizeLabel": "Größe",
       "size": {
-        "any": "Alle",
+        "any": "Jede Größe",
         "short": "Kurz",
         "session": "Session",
         "big": "Groß"
@@ -62,8 +62,8 @@
       "resultCount_other": "{{count}} Playlists",
       "loadMoreError": "Weitere Playlists ließen sich nicht laden.",
       "errors": {
-        "loadTitle": "Playlists laden nicht",
-        "loadDescription": "Check deine Verbindung und versuch's nochmal."
+        "loadTitle": "Playlists ließen sich nicht laden",
+        "loadDescription": "Prüf deine Verbindung und versuch es erneut."
       },
       "empty": {
         "title": "Hier gibt es noch keine Playlists",

@@ -30,7 +30,10 @@ export type UseCommunityPlaylistsResult = {
   isLoading: boolean;
   isLoadingMore: boolean;
   hasMore: boolean;
-  /** The first page for the current input failed. */
+  /**
+   * The latest first-page request failed: the first load (no rows) or a
+   * refresh (the previous rows stay, and so does their pagination).
+   */
   hasError: boolean;
   /** Pages 2+ failed three times in a row; `retryLoadMore` re-arms them. */
   hasLoadMoreError: boolean;
@@ -41,6 +44,24 @@ export type UseCommunityPlaylistsResult = {
 };
 
 const MAX_LOAD_MORE_FAILURES = 3;
+/**
+ * After a failed page, end-reach waits this long before trying again. A list
+ * sitting at its end can fire end-reach again as soon as the footer spinner
+ * goes away, which would spend all three attempts in well under a second.
+ */
+export const COMMUNITY_LOAD_MORE_RETRY_DELAY_MS = 2000;
+
+/** Appends rows whose uuid isn't on screen yet, de-duplicating the page itself too. */
+function appendUnique(previous: DiscoverablePlaylist[], incoming: DiscoverablePlaylist[]): DiscoverablePlaylist[] {
+  const seen = new Set(previous.map((playlist) => playlist.uuid));
+  const fresh: DiscoverablePlaylist[] = [];
+  for (const playlist of incoming) {
+    if (seen.has(playlist.uuid)) continue;
+    seen.add(playlist.uuid);
+    fresh.push(playlist);
+  }
+  return fresh.length > 0 ? [...previous, ...fresh] : previous;
+}
 
 /**
  * One sorted, filtered, paginated stream of public playlists — the full
@@ -52,8 +73,11 @@ const MAX_LOAD_MORE_FAILURES = 3;
  *    for an older input is discarded, so fast typing can't land stale rows.
  *  - Offset pages can shift between requests (a playlist gains a pin and moves
  *    up), so appended rows are de-duplicated by uuid.
- *  - Three consecutive loadMore failures stop pagination and raise
- *    `hasLoadMoreError` instead of retrying forever on every end-reach.
+ *  - A failed page holds end-reach off for `COMMUNITY_LOAD_MORE_RETRY_DELAY_MS`;
+ *    three consecutive failures stop pagination and raise `hasLoadMoreError`
+ *    instead of retrying forever on every end-reach.
+ *  - A failed refresh keeps the rows and their pagination and raises
+ *    `hasError`, so the screen can offer a retry beside them.
  */
 export function useCommunityPlaylists({
   input,
@@ -71,6 +95,11 @@ export function useCommunityPlaylists({
   const [playlists, setPlaylists] = useState<DiscoverablePlaylist[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [isLoading, setIsLoading] = useState(enabled);
+  // The input the current first-page request was started for. Until the
+  // effect starts it, a render for a new (or newly enabled) input still reports
+  // loading, so the screen never paints one frame of "nothing here".
+  const fetchKey = `${inputKey}|${pageSize}`;
+  const [startedFetchKey, setStartedFetchKey] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -81,6 +110,7 @@ export function useCommunityPlaylists({
   const isFetchingRef = useRef(false);
   const activeFetchIdRef = useRef(0);
   const loadMoreFailCountRef = useRef(0);
+  const loadMoreBlockedUntilRef = useRef(0);
 
   const fetchPage = useCallback(
     async (page: number, isInitial: boolean) => {
@@ -106,17 +136,15 @@ export function useCommunityPlaylists({
         if (activeFetchIdRef.current !== fetchId) return;
 
         const { playlists: pagePlaylists, totalCount: total, hasMore: more } = response.discoverPlaylists;
-        setPlaylists((previous) => {
-          if (isInitial) return pagePlaylists;
-          const seen = new Set(previous.map((playlist) => playlist.uuid));
-          const fresh = pagePlaylists.filter((playlist) => !seen.has(playlist.uuid));
-          return fresh.length > 0 ? [...previous, ...fresh] : previous;
-        });
+        // A co-owned playlist can come back once per owner row, so the page
+        // itself is de-duplicated as well as checked against earlier pages.
+        setPlaylists((previous) => appendUnique(isInitial ? [] : previous, pagePlaylists));
         setTotalCount(total);
         setHasMore(more);
         hasMoreRef.current = more;
         pageRef.current = page + 1;
         loadMoreFailCountRef.current = 0;
+        loadMoreBlockedUntilRef.current = 0;
         setHasError(false);
         setHasLoadMoreError(false);
       } catch (err: unknown) {
@@ -126,6 +154,7 @@ export function useCommunityPlaylists({
           setHasError(true);
         } else {
           loadMoreFailCountRef.current += 1;
+          loadMoreBlockedUntilRef.current = Date.now() + COMMUNITY_LOAD_MORE_RETRY_DELAY_MS;
           if (loadMoreFailCountRef.current >= MAX_LOAD_MORE_FAILURES) {
             setHasMore(false);
             hasMoreRef.current = false;
@@ -147,6 +176,7 @@ export function useCommunityPlaylists({
     pageRef.current = 0;
     hasMoreRef.current = false;
     loadMoreFailCountRef.current = 0;
+    loadMoreBlockedUntilRef.current = 0;
     setPlaylists([]);
     setTotalCount(0);
     setHasMore(false);
@@ -160,39 +190,44 @@ export function useCommunityPlaylists({
       // Orphan any in-flight request so it can't write into a disabled hook.
       activeFetchIdRef.current += 1;
       isFetchingRef.current = false;
+      setStartedFetchKey(null);
       setIsLoading(false);
       setIsLoadingMore(false);
       return;
     }
+    setStartedFetchKey(fetchKey);
     void fetchPage(0, true);
-  }, [enabled, fetchPage, resetState]);
+    // fetchKey changes exactly when fetchPage's input does, so it adds no runs.
+  }, [enabled, fetchKey, fetchPage, resetState]);
 
   const loadMore = useCallback(() => {
     if (isFetchingRef.current || !hasMoreRef.current) return;
+    if (Date.now() < loadMoreBlockedUntilRef.current) return;
     void fetchPage(pageRef.current, false);
   }, [fetchPage]);
 
   const retryLoadMore = useCallback(() => {
     if (isFetchingRef.current) return;
     loadMoreFailCountRef.current = 0;
+    loadMoreBlockedUntilRef.current = 0;
     setHasLoadMoreError(false);
     setHasMore(true);
     hasMoreRef.current = true;
     void fetchPage(pageRef.current, false);
   }, [fetchPage]);
 
+  // Pagination refs are left alone until the reload lands: a failed refresh
+  // (pull-to-refresh offline) keeps the rows on screen, and end-reach must
+  // still load their next page. `isFetchingRef` holds `loadMore` off meanwhile,
+  // and the success path rewrites the cursor and clears any load-more error.
   const refetch = useCallback(() => {
-    pageRef.current = 0;
-    hasMoreRef.current = false;
-    loadMoreFailCountRef.current = 0;
-    setHasLoadMoreError(false);
     void fetchPage(0, true);
   }, [fetchPage]);
 
   return {
     playlists,
     totalCount,
-    isLoading,
+    isLoading: isLoading || (enabled && startedFetchKey !== fetchKey),
     isLoadingMore,
     hasMore,
     hasError,

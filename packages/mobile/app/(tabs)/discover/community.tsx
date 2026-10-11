@@ -51,7 +51,11 @@ export default function CommunityPlaylistsScreen() {
   const { systemColors, brandColors } = useTheme();
   const bottomChrome = useBottomChromeMetrics();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
-  const { data: profile, isLoading: profileLoading } = useProfile({ enabled: isAuthenticated });
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    refetch: refetchProfile,
+  } = useProfile({ enabled: isAuthenticated });
   const { data: activeBoard, isLoading: activeBoardLoading } = useActiveBoard();
 
   const viewerId = isAuthenticated ? (profile?.id ?? null) : null;
@@ -99,8 +103,11 @@ export default function CommunityPlaylistsScreen() {
 
   // Hold the first request until the board and the viewer are known, so the
   // list doesn't fetch unscoped (or with the viewer's own playlists) and then
-  // throw that page away.
-  const ready = !authLoading && !activeBoardLoading && !(isAuthenticated && profileLoading);
+  // throw that page away. A signed-in viewer whose profile failed to load is
+  // not "nobody": Everyone would show their own playlists, so that is an error.
+  const viewerKnown = !isAuthenticated || profile != null;
+  const profileFailed = isAuthenticated && !authLoading && !profileLoading && profile == null;
+  const ready = !authLoading && !activeBoardLoading && viewerKnown;
   const {
     playlists,
     totalCount,
@@ -172,11 +179,21 @@ export default function CommunityPlaylistsScreen() {
     if (hasMore) loadMore();
   }, [hasMore, loadMore]);
 
-  const showInitialLoad = isLoading && playlists.length === 0;
-  const showFirstPageError = hasError && !isLoading && playlists.length === 0;
+  // Until the board and viewer are known the hook is idle, which is still a load
+  // from the climber's side, not an empty community.
+  const showInitialLoad = (isLoading || (!ready && !profileFailed)) && playlists.length === 0;
+  const showFirstPageError = (hasError || profileFailed) && !showInitialLoad && playlists.length === 0;
+  // A failed pull-to-refresh keeps the rows; the footer offers the retry.
+  const showRefreshError = hasError && !isLoading && playlists.length > 0;
 
+  const retryFirstPage = useCallback(() => {
+    if (profileFailed) void refetchProfile();
+    else refetch();
+  }, [profileFailed, refetch, refetchProfile]);
+
+  // The count only appears beside rows; the empty states already say "none".
   const summaryParts: string[] = [];
-  if (!showInitialLoad && !showFirstPageError) {
+  if (playlists.length > 0) {
     summaryParts.push(t('library.community.resultCount', { count: totalCount }));
   }
   if (filters.size === 'short') summaryParts.push(t('library.community.sizeBand.short'));
@@ -202,7 +219,7 @@ export default function CommunityPlaylistsScreen() {
           {t('library.community.errors.loadDescription')}
         </Text>
         <PressableSurface
-          onPress={refetch}
+          onPress={retryFirstPage}
           accessibilityRole="button"
           accessibilityLabel={t('library.errors.tryAgain')}
           hitSlop={8}
@@ -305,7 +322,21 @@ export default function CommunityPlaylistsScreen() {
           }
           ListEmptyComponent={listEmpty}
           ListFooterComponent={
-            hasLoadMoreError ? (
+            showRefreshError ? (
+              <PressableSurface
+                style={styles.footer}
+                onPress={refetch}
+                accessibilityRole="button"
+                accessibilityLabel={`${t('library.community.errors.loadTitle')} ${t('library.errors.tryAgain')}`}
+              >
+                <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.footerError}>
+                  {t('library.community.errors.loadTitle')}
+                </Text>
+                <Text variant="subheadline" color={brandColors.primary} style={styles.footerRetry}>
+                  {t('library.errors.tryAgain')}
+                </Text>
+              </PressableSurface>
+            ) : hasLoadMoreError ? (
               <PressableSurface
                 style={styles.footer}
                 onPress={retryLoadMore}
