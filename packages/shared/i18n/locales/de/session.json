@@ -500,6 +500,7 @@
       "litAgoDays": "{{count}} Tg.",
       "litAgoWeeks": "{{count}} Wo.",
       "sentByLine": "Getoppt von {{name}}",
+      "unnamedClimber": "Jemand",
       "emptyTitle": "Noch niemand an dieser Wand",
       "emptyBody": "Verbinde dich und beleuchte einen Boulder, um die Historie zu starten.",
       "historyHeader": "An dieser Wand beleuchtet",
