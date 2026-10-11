@@ -97,6 +97,33 @@ def swipe(x1, y1, x2, y2, duration_ms=200, hold_ms=0):
     call("POST", f"/session/{session()}/actions", {"actions": actions})
 
 
+def strokes(paths, gap_ms=0):
+    """Several finger strokes in ONE runner call, gap_ms apart: each path is (x1, y1, x2, y2, duration_ms) or
+    (x1, y1, x2, y2, duration_ms, hold_ms), where hold_ms keeps the finger still at the end before lifting.
+
+    The runner's overhead is per call, not per stroke, so this is how strokes
+    land closer together than one a second: the nearest the kit gets to a thumb.
+    How close they really landed is for the probes to say; `swipe-begin` and
+    `swipe-release` carry the UI thread's clock.
+    """
+    actions = []
+    for index, path in enumerate(paths):
+        x1, y1, x2, y2, duration_ms = path[:5]
+        hold_ms = path[5] if len(path) > 5 else 0
+        actions += [
+            {"type": "pointerMove", "duration": 0, "x": float(x1), "y": float(y1)},
+            {"type": "pointerDown", "button": 0},
+            {"type": "pointerMove", "duration": int(duration_ms), "x": float(x2), "y": float(y2)},
+        ]
+        if hold_ms:
+            actions.append({"type": "pause", "duration": int(hold_ms)})
+        actions.append({"type": "pointerUp", "button": 0})
+        if gap_ms and index < len(paths) - 1:
+            actions.append({"type": "pause", "duration": int(gap_ms)})
+    call("POST", f"/session/{session()}/actions", {"actions": [
+        {"type": "pointer", "id": "finger1", "parameters": {"pointerType": "touch"}, "actions": actions}]}, timeout=120)
+
+
 def record_stream(out_directory, seconds):
     """Write the runner's screen stream to numbered JPEGs, with the host time of each frame in stamps.json.
 
@@ -127,6 +154,27 @@ def record_stream(out_directory, seconds):
 
 
 # --- devicectl ---------------------------------------------------------------
+
+
+def conditions():
+    """Battery temperature, level and charging state, or {} when pymobiledevice3 is not there to ask.
+
+    The temperature is the one that matters. A phone driven for hours on a
+    charger passes 45 C, and iOS then caps the display at 60 Hz and slows the
+    CPU several times over: every number from such a run is about the heat.
+    """
+    try:
+        raw = subprocess.run(["uvx", "pymobiledevice3", "diagnostics", "battery", "single", "--udid", udid()],
+                             check=True, capture_output=True, text=True, timeout=60).stdout
+        battery = json.loads(raw)
+    except Exception:
+        return {}
+    return {
+        "batteryCelsius": round(battery.get("Temperature", 0) / 100, 1),
+        "batteryPercent": battery.get("CurrentCapacity"),
+        "charging": battery.get("IsCharging"),
+        "onPower": battery.get("ExternalConnected"),
+    }
 
 
 def launch():

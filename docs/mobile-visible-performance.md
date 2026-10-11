@@ -29,6 +29,7 @@ A probe build is a diagnostic build in the other docs' terms. Its numbers find c
 3. **Do not delete app data or uninstall.** The downloaded boards, the queue and the account are the test data. A cold start means a new process, not a clean install.
 4. **Use an account with a real history** when the change touches the logbook or the queue. The slow paths scale with it.
 5. **Note the conditions**: phone model, OS, battery and charging, Low Power Mode, what else the laptop is doing. A laptop under load makes its own numbers useless; the phone's are unaffected.
+6. **Watch the phone's temperature.** A phone driven for hours on a charger gets hot, and a hot iPhone is a different phone: at a battery temperature of 47.7 C the iPhone 13 Pro ran its animations at 60 Hz instead of 120, the JS thread took 290 ms over what had taken 50, and the UI thread stalled for up to 587 ms. Nothing on screen says so. `scenario_play_swipe.py` records the temperature before and after each run and warns from 40 C; `ios.conditions()` reads it for any other script. Let the phone rest on its home screen between batches of runs, and throw away a run whose frames came at 16.7 ms.
 
 ## The probe build
 
@@ -49,6 +50,24 @@ Every edit is an exact-text replacement that asserts its anchor occurs once. Whe
 | `climb-press`, `play-route-mounted`, `play-carousel-mounted`, `play-board-measured` | Stages of opening the play drawer | time since `climb-press` |
 | `js-frame-gap` | The JS thread went 34 ms or more between two frame callbacks | `gapMs` |
 
+`probe/apply_swipe_probes.py` adds the play drawer's swipe between climbs and its pull-down close. Both run on the UI thread, where the stall monitor sees nothing, so these come from worklets:
+
+| Event | Recorded when | Fields that matter |
+| --- | --- | --- |
+| `swipe-begin`, `swipe-release` | The carousel's pan activated; the finger lifted | `uiWallMs`, `commit` (`next`, `previous` or `none`) |
+| `swipe-settled` | The outgoing board is off screen | `uiWallMs` |
+| `swipe-reset-ui` | The carousel is at rest with the new climb in the middle | `uiWallMs` |
+| `swipe-dropped` | A finger lifted while the carousel was ignoring touches | `wouldCommit` |
+| `swipe-commit-js`, `swipe-reset-js` | The JS thread started changing the climb; it rendered the new one | `direction`, `queue` |
+| `carousel-render` | The carousel rendered | Which climbs it has boards for, as ids |
+| `dismiss-begin`, `dismiss-release`, `dismiss-settled` | The pull-down close | `committed`, `translateY`, `velocityY` |
+| `dismiss-complete-js`, `play-route-unmounted` | The JS thread heard the close; the route is gone | |
+| `ui-frames` | A gesture's shared value came to rest | `intervals` between UI-thread frame callbacks, `values` of the offset at each |
+
+`uiWallMs` is the UI thread's clock at the moment; `wallMs` on the same event is when the JS thread got round to recording it. Use `uiWallMs` for anything about a gesture. `overlay-painted`, `overlay-missed` and `overlay-render` also carry `frames`, a short id of the climb, so a paint can be matched to the swipe that brought it in.
+
+`ui-frames` is the sampler: from the moment a gesture activates it records the gesture's offset at every UI-thread frame callback until the offset has rested at 0 for 24 frames. An interval of two frame durations is a frame the UI thread did not get to run. It samples only while a gesture is moving, so it does not hold the display at 120 Hz between gestures.
+
 Two flags change behaviour, on purpose and only in this build:
 
 - `--settle-consent` skips the consent prompt and leaves consent undecided, so analytics stay off. It reuses the path screenshot mode takes.
@@ -65,12 +84,23 @@ The cleanest comparison is the same binary with one code path off. The probe mod
 | Marker | Effect for that launch |
 | --- | --- |
 | `perf-probe-cold` | Empties the hold-overlay cache, so every thumbnail has to be rendered again |
+| `perf-probe-queue-5` | Restores the saved queue cut down to five climbs, ending at the current one, and saves that launch's queue under a key of its own. The real queue is back on the next launch (needs `apply_swipe_probes.py`) |
+
+`perf-probe-queue-5` is also the way to run anything that changes the queue without leaving it changed.
 
 Add a marker for the path under test: read it once at module load, export a constant, and branch on it where the new code is chosen. #6313 was measured this way (the indexed reader off and on, in one build): 1.4 to 2.2 s a page against 2 to 36 ms. The alternative is two builds, which also changes everything else that differs between them.
 
 ### Do not move the phone's database forward
 
 A change that adds an on-device migration will migrate the tester's real database when its build is installed, and an older bundle then refuses that file (`docs/offline-sync-plan.md`, the downgrade rule): the tester's store build shows "Offline storage is paused" until the change ships. To measure such a change, leave the migration out of the probe build and create what it adds another way. #6313's index was built under a probe-only name at startup, and the reader pointed at that name. The database stayed at its version.
+
+The same applies to `main` once it holds a migration the tester's store build does not: every probe build of `main` would migrate the phone. Check before building, every time:
+
+```sh
+python3 scripts/mobile-probe-kit/schema_check.py    # phone's version, the checkout's version, exit 1 if they differ
+```
+
+When they differ, pass a hold script to the build as an extra patch. `probe/apply_schema_hold.py` holds a build at version 12 (it leaves out migration 13 and points the climb list at the probe-only index from the #6313 measurement). It asserts its anchors, so it fails once it is out of date; replace it then.
 
 ## Running it on an iPhone
 
@@ -104,8 +134,12 @@ Everything below runs from the repo root on a Mac with the phone wired and unloc
    | `scenario_search_pages.py <name> <flicks>` | Steady flicks down the list | Wait per page, and which lane answered |
    | `scenario_launch.py <name>` | Launches and waits. Needs no UI driver | Time to the first page; stalls; reads at launch |
    | `scenario_film.py <name>` | Films seven hard flicks and lays 24 frames out per sheet | The frames themselves |
+   | `scenario_film_swipe.py <name> [--back]` | Films six thumb-pace swipes between climbs as one contact sheet | Whether the incoming board has its holds in each frame |
+   | `scenario_play_swipe.py <name> [--cold] [--queue5]` | Opens the drawer from the queue bar, then swipes between climbs slowly, hard, at thumb pace (3.5 a second) and faster (6 a second), forward and back; then pulls the drawer down three ways. Needs a build with `apply_swipe_probes.py` | Boards on screen before their holds; swipes lost; time to rest; UI frames missed |
 
-4. **Compare.** `analyze.py <run>` for a list run, `launch_timeline.py --summary <run> <run> ...` for launches.
+4. **Compare.** `analyze.py <run>` for a list run, `analyze_swipe.py <run>` for a swipe run, `launch_timeline.py --summary <run> <run> ...` for launches.
+
+**Swipes faster than one a second.** The runner spends about a second around each call, so separate calls cannot swipe at the pace of a thumb. `ios.strokes([...], gap_ms)` sends several strokes in ONE call, and the runner plays them back at the spacing asked for: ten strokes of 80 ms with 200 ms between them land 290 ms apart, and with 60 ms and 90 ms, 158 ms apart. The probes say how far apart each one really landed; read that rather than trusting the request.
 
 ## What the numbers mean
 
@@ -118,6 +152,16 @@ Everything below runs from the repo root on a Mac with the phone wired and unloc
 **Drawer open.** Milliseconds from `climb-press` to each stage, ending at the play board's `overlay-painted`. A cold open is one whose overlay had never been rendered (`indexHit: false`).
 
 **Stalls.** `js-frame-gap` is the JS thread missing frame callbacks. It is not dropped UI frames: scrolling runs on the UI thread and can stay smooth through a JS stall, while a tap waits for it. Divide total gap time by thumbnails painted when two builds scroll different distances.
+
+**A board on screen before its holds, in a swipe.** The incoming board became visible when the swipe began. If no mounted board held that climb with its holds painted at that moment, the climber saw something else slide in first: another climb's holds, or a bare wall. `analyze_swipe.py` counts those swipes and how long each lasted, and how many were still missing their holds at finger-up and when the swipe settled. The paint is stamped when the JS thread hears of it, so the duration is an upper bound.
+
+**A swipe that was lost.** Far or fast enough to change the climb, and nothing happened. Count them per phase; `quick` is the pace of a thumb and `burst` is past it.
+
+**At rest.** Finger-up until the carousel has the new climb in the middle and its offset back at 0.
+
+**UI frames missed.** From `ui-frames`: intervals between UI-thread frame callbacks longer than one and a half frame durations, counted in frames. The interval the callbacks ran at says whether the animation was at 120 Hz (8.3 ms) at all. This is the UI thread's own schedule. It does not see a frame the render server dropped after the UI thread handed it over; Instruments' Animation Hitches does.
+
+**A stand-still in the close.** Consecutive frames after finger-up in which the surface did not move, before it had arrived. A pause between the drag and the release animation shows up as this.
 
 **Launch.** Time 0 is the first probe event. With the launch markers that is the first render of the root layout, about 1.2 s after the process starts. Without them the first event comes later and the early stalls are not recorded at all, so an absent stall in such a run proves nothing.
 
@@ -152,6 +196,28 @@ Same build, #6313's reader switched off and on with a marker file, 11 Oct 2026:
 
 Not changed by either PR, on `main` the same day: the app reads each queued climb two to three times at launch (104 and 147 detail reads for a queue of 52).
 
+### Swiping between climbs, and closing the drawer
+
+iPhone 13 Pro, iOS 26.6.1, Kilter Original 12x12 at 40 degrees, downloaded for offline, queue of 52, battery at 32 to 35 C, `scenario_play_swipe.py`, 11 October 2026. Seven runs of `main` (`d0099a69c3`) over three sittings, 410 swipes that changed the climb.
+
+| Measure | `main` on 11 Oct 2026 |
+| --- | --- |
+| Swipes forward that began with no board holding the incoming climb | 202 of 207. The one spare board held the other neighbour |
+| How long until the right holds were up on those | 6 to 37 ms, then a 150 ms fade when they were not decoded yet |
+| Swipes back that began the same way | 0 of 203 |
+| Swipes that changed the climb at 3.5 a second | 140 of 140 |
+| Swipes that changed the climb at 6 a second | 74 of 140 |
+| Finger-up to the carousel at rest | 141 to 248 ms, median 177, touches ignored throughout |
+| Whole-drawer renders per swipe | 4 to 8 |
+| UI frames missed while a board was moving | 0 of 18,812 |
+| UI frames missed with the picture still | 41 of 18,812, 17 of them in one run with a 90 ms stall |
+
+A cold overlay cache changed none of this: the drawer warms three climbs ahead and kept up at 3.5 swipes a second. Nor did a queue of 5 in place of 52.
+
+The pull-down close, 45 closes: a slow drag to 80% open with a still release was off screen 150 ms after finger-up, a hard flick 125 ms after, and a pull let go early was back in place in 183 ms, with no stand-still and at most two UI frames missed after finger-up in any group of ten. The drawer's holds painted 67 ms after its route mounted (median of 21 opens).
+
+Instruments' Animation Hitches over the thumb-pace swipes, two 22 s traces of one drawer open and ten swipes each (`hitches.py`): no hitch in 20 swipes. Away from the swipes there were two and four, 33 and 50 ms in all, at rest or while the drawer opened.
+
 **Launch numbers moved by a factor of six within an hour on one build.** At 11:28 the build above took 2.4 to 2.6 s to its first page, with 2.2 s of JS stalls and 0.6 s spent opening the database. At 11:47, untouched, it took 0.34 to 0.62 s, with 0.4 s of stalls and 7 ms to open the database. `main` measured in the slow hour took 3.2 s. The cause was not found. The UI driver had been attached for 14 hours and had failed to restart minutes before the slow runs, and every run in the slow hour came soon after an install. So: alternate A and B launch by launch, in one sitting, and never set a launch number beside one taken an hour earlier.
 
 ## Traps
@@ -168,8 +234,15 @@ Not changed by either PR, on `main` the same day: the app reads each queued clim
 | A screen's `render` marker fires once while its children render 25 times | The marker is on a thin wrapper (`ClimbList`) and the work is in the component it returns (`ClimbListInner`) | Mark the inner component. A plain call at the top of a component does run on every render, with React Compiler too |
 | No probe events | The build was made without `EXPO_PUBLIC_PERF_PROBE=1`, or the app relaunched and emptied the folder | Rebuild with the script; pull before relaunching |
 | The driver stops answering after a relaunch | Its session ended with the app | The kit asks for a new session; with your own client, check the remembered id first |
-| `Timed out while enabling automation mode` | The runner cannot start UI automation: the phone is locked, showing a system prompt, or has a stale automation session | Unlock it and look at the screen. `scenario_launch.py` still works without the driver |
+| `Timed out while enabling automation mode` | The runner cannot start UI automation: the phone is locked, or is asking for its passcode to allow UI automation. `devicectl` reports the phone as unlocked either way | Someone has to look at the phone and type the passcode. `scenario_launch.py` still works without the driver |
+| A swipe ends 3 ms after it began, with nothing moved | Something re-inserted the view under the finger. In Fabric a `zIndex` that changes does that: it is not a paint-order tweak, the native view is removed and put back among its siblings, and iOS cancels the touch that began on it | Never animate `zIndex` on, or reorder, a view a gesture can start on. Read `swipe-begin` and `swipe-release` 3 ms apart as this |
+| Frames arrive every 16.7 ms and everything takes several times longer | The phone is hot (battery at 45 C or more) and iOS has capped the display and the CPU | Stop driving it, put it on its home screen, wait for under 35 C. Check `conditions.json` in the run |
+| Of ten strokes sent in one driver call, only the last does anything | The gesture reads the handler's `success` flag. Strokes sent back to back end unsuccessfully for react-native-gesture-handler, all but the last | Nothing in the app reads that flag for the carousel; do not add it without re-running the `quick` phase |
+| `vp run typecheck:mobile` passes after an edit that cannot compile | The task cache replayed an earlier result | `vp exec tsc --noEmit` from `packages/mobile` |
+| The tree loses an edit when a probe build finishes | `build_ios.sh` puts `packages/mobile` and `packages/shared` back with `git checkout`. An uncommitted edit to a tracked file there goes with the probes | Commit before building; do not edit those folders while a build runs |
 | `xctrace export` crashes on the `time-profile` table | Seen on Xcode 26.6 with a device trace | The `time-sample` table exports (per-thread CPU, no symbols). Open the trace in Instruments for stacks |
+| `xctrace export` dies with SIGSEGV on a table that exported a minute ago | It does so about every other call on Xcode 26.6, on the table of contents as well | Call it again. `hitches.py` tries eight times |
+| A driver call takes four times as long as usual | Instruments is recording. One call of ten strokes took 12 s to return; the strokes landed at their usual spacing | Give the scenario more time, and keep to one phase per 22 s trace |
 | A command hangs and then times out | `rm` and `cp` ask for confirmation in an interactive shell profile | `command rm -f`, `command cp -f` |
 
 ## Android
@@ -217,7 +290,7 @@ Check on a mid-range phone as well as a flagship. The iPhone 13 Pro numbers abov
 
 ## What this does not do
 
-- It does not measure UI-thread frame drops on an iPhone. Use Instruments' Animation Hitches for that, as `docs/mobile-performance-profiling.md` describes.
+- It measures UI-thread frame callbacks only while a probed gesture is moving (the swipe between climbs, the pull-down close). It does not see a frame the render server dropped, or anything about scrolling. Instruments' Animation Hitches does; `hitches.py` places a trace's hitches against a swipe run, and `docs/mobile-performance-profiling.md` has the rest.
 - It does not attribute JS time to functions. The stall monitor says when the JS thread was busy, not with what.
 - Its gestures are slower and more regular than a hand. A climber can still flick faster than the script.
 - The UI driver is attached while a scenario runs, and nobody has measured what that costs the app. Compare builds under the same driver; treat absolute times from driven runs as upper bounds.

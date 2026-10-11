@@ -55,6 +55,10 @@ for sheet, flick_index in (("a", 2), ("b", 4)):
     selected = [index for index, stamp in enumerate(stamps) if low <= stamp <= high][:24]
     listing = os.path.join(directory, f"sheet-{sheet}.txt")
     open(listing, "w").write("\n".join(os.path.join(frames, f"f{index:05d}.jpg") for index in selected))
-    subprocess.run(["magick", "montage", "@" + listing, "-tile", "8x3", "-geometry", "234x506+2+2", "-background", "#303030",
-                    os.path.join(directory, f"sheet-{sheet}.jpg")], check=True)
-    print(os.path.join(directory, f"sheet-{sheet}.jpg"))
+    sheet_path = os.path.join(directory, f"sheet-{sheet}.jpg")
+    # Not check=True: montage exits non-zero when it finds no font for the labels it is not asked to draw.
+    subprocess.run(["magick", "montage", "@" + listing, "-tile", "8x3", "-geometry", "234x506+2+2", "-background", "#303030", sheet_path],
+                   capture_output=True)
+    if not os.path.exists(sheet_path) or os.path.getsize(sheet_path) == 0:
+        raise SystemExit("montage wrote no sheet; the frames are in " + frames)
+    print(sheet_path)
