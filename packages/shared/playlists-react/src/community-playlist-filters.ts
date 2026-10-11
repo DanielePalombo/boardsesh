@@ -31,10 +31,6 @@ export type CommunityPlaylistSort = 'popular' | 'recent';
 /** Climb-count bands. See `COMMUNITY_PLAYLIST_SIZE_BANDS` for the numbers. */
 export type CommunityPlaylistSize = 'any' | 'short' | 'session' | 'big';
 
-export const COMMUNITY_PLAYLIST_CREATOR_SCOPES: readonly CommunityPlaylistCreatorScope[] = ['everyone', 'mine'];
-export const COMMUNITY_PLAYLIST_SORTS: readonly CommunityPlaylistSort[] = ['popular', 'recent'];
-export const COMMUNITY_PLAYLIST_SIZES: readonly CommunityPlaylistSize[] = ['any', 'short', 'session', 'big'];
-
 /** Inclusive climb-count bounds per size band. `any` sends no bound at all. */
 export const COMMUNITY_PLAYLIST_SIZE_BANDS: Record<CommunityPlaylistSize, { minClimbs?: number; maxClimbs?: number }> =
   {

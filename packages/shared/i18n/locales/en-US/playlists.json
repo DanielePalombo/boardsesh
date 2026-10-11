@@ -54,9 +54,9 @@
         "big": "Big"
       },
       "sizeBand": {
-        "short": "Up to 10 climbs",
-        "session": "11–30 climbs",
-        "big": "31+ climbs"
+        "short": "Up to {{max}} climbs",
+        "session": "{{min}}–{{max}} climbs",
+        "big": "{{min}}+ climbs"
       },
       "resultCount_one": "{{count}} playlist",
       "resultCount_other": "{{count}} playlists",

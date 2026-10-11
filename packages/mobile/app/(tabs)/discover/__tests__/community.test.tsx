@@ -54,7 +54,8 @@ vi.mock('@boardsesh/playlists-react', async (importOriginal) => ({
 }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, params?: { count?: number }) => (params?.count !== undefined ? `${key}:${params.count}` : key),
+    // Params are echoed so assertions see what was interpolated, not just the key.
+    t: (key: string, params?: Record<string, unknown>) => (params ? `${key}:${JSON.stringify(params)}` : key),
   }),
 }));
 vi.mock('expo-router', () => ({ router: { push: vi.fn() } }));
@@ -237,7 +238,8 @@ describe('CommunityPlaylistsScreen filters', () => {
   });
 
   it('maps made-by, sort and size taps onto the server input', () => {
-    const { getByLabelText } = render(<CommunityPlaylistsScreen />);
+    hook.playlists = [{ uuid: 'a', name: 'A', climbCount: 1, creatorName: 'Jess' }];
+    const { getByLabelText, getByText } = render(<CommunityPlaylistsScreen />);
 
     fireEvent.click(getByLabelText('library.community.madeByLabel:mine'));
     expect(lastInput()).toMatchObject({ creatorIds: ['me'] });
@@ -248,6 +250,8 @@ describe('CommunityPlaylistsScreen filters', () => {
 
     fireEvent.click(getByLabelText('library.community.sizeLabel:session'));
     expect(lastInput()).toMatchObject({ minClimbs: 11, maxClimbs: 30 });
+    // The summary states the same band the query sends.
+    expect(getByText('library.community.sizeBand.session:{"min":11,"max":30}', { exact: false })).toBeTruthy();
   });
 
   it('debounces the search before it reaches the server input', () => {
@@ -279,8 +283,11 @@ describe('CommunityPlaylistsScreen states', () => {
     hook.totalCount = 1;
     const { getByText, container } = render(<CommunityPlaylistsScreen />);
 
-    expect(container.querySelector('[data-playlist-row="Crimp city"]')?.textContent).toBe('library.communityByline');
-    expect(getByText('library.community.resultCount:1')).toBeTruthy();
+    expect(container.querySelector('[data-playlist-row="Crimp city"]')?.textContent).toBe(
+      'library.communityByline:' +
+        JSON.stringify({ creatorName: 'Jess', climbCount: 'detail.climbCount:{"count":12}' }),
+    );
+    expect(getByText('library.community.resultCount:{"count":1}')).toBeTruthy();
   });
 
   it('loads one more page on end-reach only while there is more', () => {
@@ -327,7 +334,7 @@ describe('CommunityPlaylistsScreen states', () => {
     expect(hookCalls.options.at(-1)?.enabled).toBe(false);
     expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
     expect(queryByText('library.community.empty.title')).toBeNull();
-    expect(queryByText('library.community.resultCount:0')).toBeNull();
+    expect(queryByText('library.community.resultCount:{"count":0}')).toBeNull();
   });
 
   it('waits for the profile before fetching, showing a spinner meanwhile', () => {

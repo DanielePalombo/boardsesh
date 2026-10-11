@@ -54,9 +54,9 @@
         "big": "Longue"
       },
       "sizeBand": {
-        "short": "Jusqu'à 10 blocs",
-        "session": "11–30 blocs",
-        "big": "31+ blocs"
+        "short": "Jusqu'à {{max}} blocs",
+        "session": "{{min}}–{{max}} blocs",
+        "big": "{{min}}+ blocs"
       },
       "resultCount_one": "{{count}} playlist",
       "resultCount_other": "{{count}} playlists",

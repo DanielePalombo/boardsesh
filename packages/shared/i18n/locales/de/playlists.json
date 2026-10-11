@@ -54,9 +54,9 @@
         "big": "Groß"
       },
       "sizeBand": {
-        "short": "Bis 10 Boulder",
-        "session": "11–30 Boulder",
-        "big": "31+ Boulder"
+        "short": "Bis {{max}} Boulder",
+        "session": "{{min}}–{{max}} Boulder",
+        "big": "{{min}}+ Boulder"
       },
       "resultCount_one": "{{count}} Playlist",
       "resultCount_other": "{{count}} Playlists",

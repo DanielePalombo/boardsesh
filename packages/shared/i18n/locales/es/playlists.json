@@ -54,9 +54,9 @@
         "big": "Larga"
       },
       "sizeBand": {
-        "short": "Hasta 10 bloques",
-        "session": "11–30 bloques",
-        "big": "31+ bloques"
+        "short": "Hasta {{max}} bloques",
+        "session": "{{min}}–{{max}} bloques",
+        "big": "{{min}}+ bloques"
       },
       "resultCount_one": "{{count}} playlist",
       "resultCount_other": "{{count}} playlists",

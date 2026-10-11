@@ -9,6 +9,7 @@ import {
   effectiveCommunityCreatorScope,
   hasActiveCommunityPlaylistFilters,
   useCommunityPlaylists,
+  COMMUNITY_PLAYLIST_SIZE_BANDS,
   DEFAULT_COMMUNITY_PLAYLIST_FILTERS,
   type CommunityPlaylistCreatorScope,
   type CommunityPlaylistFilters,
@@ -203,9 +204,15 @@ export default function CommunityPlaylistsScreen() {
   if (playlists.length > 0) {
     summaryParts.push(t('library.community.resultCount', { count: totalCount }));
   }
-  if (filters.size === 'short') summaryParts.push(t('library.community.sizeBand.short'));
-  else if (filters.size === 'session') summaryParts.push(t('library.community.sizeBand.session'));
-  else if (filters.size === 'big') summaryParts.push(t('library.community.sizeBand.big'));
+  // The numbers come from the band table, so the copy can't drift from the query.
+  const sizeBand = COMMUNITY_PLAYLIST_SIZE_BANDS[filters.size];
+  if (filters.size === 'short') {
+    summaryParts.push(t('library.community.sizeBand.short', { max: sizeBand.maxClimbs }));
+  } else if (filters.size === 'session') {
+    summaryParts.push(t('library.community.sizeBand.session', { min: sizeBand.minClimbs, max: sizeBand.maxClimbs }));
+  } else if (filters.size === 'big') {
+    summaryParts.push(t('library.community.sizeBand.big', { min: sizeBand.minClimbs }));
+  }
   const summary = summaryParts.join(' · ');
 
   let listEmpty: ReactElement;

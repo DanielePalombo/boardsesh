@@ -24,11 +24,8 @@ export {
   clearCommunityPlaylistFilters,
   effectiveCommunityCreatorScope,
   hasActiveCommunityPlaylistFilters,
-  COMMUNITY_PLAYLIST_CREATOR_SCOPES,
   COMMUNITY_PLAYLIST_SEARCH_MAX_LENGTH,
   COMMUNITY_PLAYLIST_SIZE_BANDS,
-  COMMUNITY_PLAYLIST_SIZES,
-  COMMUNITY_PLAYLIST_SORTS,
   DEFAULT_COMMUNITY_PLAYLIST_FILTERS,
 } from './community-playlist-filters';
 export type {
