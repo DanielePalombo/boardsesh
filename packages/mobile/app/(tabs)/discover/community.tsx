@@ -364,7 +364,9 @@ export default function CommunityPlaylistsScreen() {
                   {t('library.errors.tryAgain')}
                 </Text>
               </PressableSurface>
-            ) : isLoadingMore ? (
+            ) : isLoadingMore || (isLoading && playlists.length > 0 && !pullRefresh.refreshing) ? (
+              // The second case is the footer's own refresh retry, which has no
+              // pull spinner to show it is working.
               <View style={styles.footer}>
                 <ActivityIndicator size="small" />
               </View>

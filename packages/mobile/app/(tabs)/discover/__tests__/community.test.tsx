@@ -384,6 +384,15 @@ describe('CommunityPlaylistsScreen states', () => {
     expect(hook.refetch).toHaveBeenCalledTimes(1);
   });
 
+  it('shows a footer spinner while the footer retry reloads', () => {
+    hook.playlists = [{ uuid: 'a', name: 'A', climbCount: 1, creatorName: 'Jess' }];
+    hook.hasError = true;
+    hook.isLoading = true;
+    const { container, queryByLabelText } = render(<CommunityPlaylistsScreen />);
+    expect(queryByLabelText('library.community.errors.loadTitle library.errors.tryAgain')).toBeNull();
+    expect(container.querySelector('[data-spinner="true"]')).not.toBeNull();
+  });
+
   it('retries a failed first page', () => {
     hook.hasError = true;
     const { getByText, getByLabelText } = render(<CommunityPlaylistsScreen />);
