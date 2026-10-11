@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runRefreshClimbGrades, runRefreshClimbNeighbors, type JobDatabase } from '@boardsesh/db/jobs';
 import {
   CLIMB_POPULARITY_REFRESH_QUEUE,
+  PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE,
   CRON_JOB_DELETE_AFTER_SECONDS,
   initializeJobQueueSchema,
   parseWorkerLogin,
@@ -140,6 +141,7 @@ describe('owner-only queue initialization', () => {
       for (const queue of [
         POPULAR_BOARD_CONFIGS_REFRESH_QUEUE,
         CLIMB_POPULARITY_REFRESH_QUEUE,
+        PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE,
         SPRAY_DETECTION_QUEUE,
       ]) {
         await runtime.deleteAllJobs(queue);
@@ -156,6 +158,10 @@ describe('owner-only queue initialization', () => {
       await runtime.schedule(CLIMB_POPULARITY_REFRESH_QUEUE, '23 * * * *', null, { tz: 'UTC' });
       expect(await runtime.send(CLIMB_POPULARITY_REFRESH_QUEUE, {})).toBeTruthy();
       expect(await runtime.send(CLIMB_POPULARITY_REFRESH_QUEUE, {})).toBeNull();
+      // The playlist grade summary refresh: the same contract, daily.
+      await runtime.schedule(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, '41 7 * * *', null, { tz: 'UTC' });
+      expect(await runtime.send(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, {})).toBeTruthy();
+      expect(await runtime.send(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, {})).toBeNull();
       const id = await runtime.send(SPRAY_DETECTION_QUEUE, { detectionId: randomUUID() });
       expect(id).toBeTruthy();
       const jobs = await runtime.fetch(SPRAY_DETECTION_QUEUE);
@@ -249,6 +255,19 @@ describe('batch worker grants', () => {
       // delete fires the sync_deletions trigger.
       await refreshRecommendationsFamily.execute(context('refresh-recommendations'), {});
       await refreshRecommendationsFamily.execute(context('refresh-recommendations'), {});
+      // Each rewritten cohort playlist's grade band is recomputed with its
+      // climbs. The job only warns when that fails, so a missing grant on
+      // playlist_grade_summaries shows up here as a missing band.
+      const cohortPlaylists = await ownerDatabase
+        .select({ id: dbSchema.playlists.id, summary: dbSchema.playlistGradeSummaries.playlistId })
+        .from(dbSchema.playlists)
+        .leftJoin(
+          dbSchema.playlistGradeSummaries,
+          eq(dbSchema.playlistGradeSummaries.playlistId, dbSchema.playlists.id),
+        )
+        .where(isNotNull(dbSchema.playlists.generatedRecommendation));
+      expect(cohortPlaylists).not.toHaveLength(0);
+      expect(cohortPlaylists.filter((playlist) => playlist.summary === null)).toEqual([]);
       await refreshHoldFeaturesFamily.execute(
         context('refresh-hold-features'),
         refreshHoldFeaturesFamily.payload.parse({}),

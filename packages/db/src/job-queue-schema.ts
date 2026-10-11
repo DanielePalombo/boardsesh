@@ -58,6 +58,26 @@ const CLIMB_POPULARITY_REFRESH_QUEUE_OPTIONS = {
 } as const;
 
 /**
+ * The backend's daily `playlist_grade_summaries` refresh (the grade band on
+ * playlist cards and Discover's grade filter, docs/playlist-grade-summaries.md).
+ * Lives here because the migrator creates the queue.
+ */
+export const PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE = 'playlist-grade-summary-refresh';
+
+/**
+ * `exclusive`: one job queued or running, so the daily cron and the one-off
+ * backfill a fresh table asks for collapse to one run. The handler stops
+ * starting new 50-playlist chunks after 1,500 s, well under this expiry, so
+ * pg-boss never starts a second copy beside a live one.
+ */
+const PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE_OPTIONS = {
+  policy: 'exclusive',
+  expireInSeconds: 1_800,
+  retryLimit: 2,
+  retryDelay: 300,
+} as const;
+
+/**
  * Completed jobs of the once-a-minute crons (the two reconcilers and pg-boss's
  * own `__pgboss__send-it` dispatcher) are kept 1 day, not pg-boss's 7-day
  * default. The queue-stats monitor seq-scans this table on every pass.
@@ -439,6 +459,11 @@ export const WORKER_ROLE_DATA_GRANTS: Record<BackgroundWorkerRole, readonly Work
     { table: 'playlists', privileges: ['SELECT', 'INSERT', 'UPDATE'] },
     { table: 'playlist_ownership', privileges: ['SELECT', 'INSERT'] },
     { table: 'playlist_climbs', privileges: ['SELECT', 'INSERT', 'DELETE'] },
+    // The generated playlists' grade bands, recomputed when the job swaps their
+    // climbs (refreshPlaylistGradeSummariesFor: upsert, delete). Granted with
+    // the table's own migration, so a worker image that ships the recompute
+    // can't start ahead of the grant (docs/background-workers.md).
+    { table: 'playlist_grade_summaries', privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] },
     // Written by the playlist_climbs delete trigger (offline sync tombstones).
     { table: 'sync_deletions', privileges: ['INSERT'] },
     { table: 'board_climb_stats_history', privileges: ['SELECT', 'INSERT'] },
@@ -683,6 +708,13 @@ export async function initializeJobQueueSchema(
     });
     const { policy: _climbPopularityPolicy, ...mutableClimbPopularityOptions } = CLIMB_POPULARITY_REFRESH_QUEUE_OPTIONS;
     await boss.updateQueue(CLIMB_POPULARITY_REFRESH_QUEUE, mutableClimbPopularityOptions);
+    await boss.createQueue(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, {
+      partition: false,
+      ...PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE_OPTIONS,
+    });
+    const { policy: _playlistGradePolicy, ...mutablePlaylistGradeOptions } =
+      PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE_OPTIONS;
+    await boss.updateQueue(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, mutablePlaylistGradeOptions);
     // Family queues are stately. A queue created under an earlier policy keeps
     // it (pg-boss cannot change a policy), which is why these are new names
     // rather than the retired `background-probe-<role>` queues.
