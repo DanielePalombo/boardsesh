@@ -39,7 +39,7 @@
     "gymClaimApprovedGeneric": "Tu es désormais le propriétaire : ta revendication de la salle est validée",
     "default": "Tu as une nouvelle notification",
     "sprayWallReady": "{{wall}} est prêt à vérifier.",
-    "sprayWallReadyGeneric": "La photo de ton mur est prête à vérifier."
+    "sprayWallReadyGeneric": "La photo de ton spray wall est prête à vérifier."
   },
   "followRequest": {
     "approve": "Approuver",

@@ -127,6 +127,10 @@ const RULES: TermRule[] = [
       'boards.json:sprayWizard.publish.title',
       // "Encuentra un rocódromo con plafones": gyms with any board.
       'climbs.json:spray.gymsLink',
+      // General board list/navigation also includes spray walls.
+      'marketing.json:home.showcase.videoLabel',
+      'marketing.json:help.sprayWalls.add.step1',
+      'marketing.json:help.sprayWalls.later.p1',
     ]),
     requiredTerm: /Spraywalls?/,
     requiredTermFloor: 99,
@@ -156,6 +160,10 @@ const RULES: TermRule[] = [
       'boards.json:sprayWizard.publish.title',
       // "Finde eine Halle mit Boards": gyms with any board, not one spray wall.
       'climbs.json:spray.gymsLink',
+      // General board list/navigation also includes spray walls.
+      'marketing.json:home.showcase.videoLabel',
+      'marketing.json:help.sprayWalls.add.step1',
+      'marketing.json:help.sprayWalls.later.p1',
     ]),
     requiredTerm: /Spraywalls?/,
     requiredTermFloor: 97,
