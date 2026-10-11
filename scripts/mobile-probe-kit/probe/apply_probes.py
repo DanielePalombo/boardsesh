@@ -41,7 +41,7 @@ def edit(path, pairs):
 
 open(M + "src/lib/perf-probe.ts", "w").write(open(os.path.join(HERE, "perf-probe.ts.template")).read())
 
-PROBE_IMPORT = "import { PERF_PROBE_ENABLED, perfNow, perfProbe } from '../lib/perf-probe';\n"
+PROBE_IMPORT = "import { PERF_PROBE_ENABLED, perfNow, perfProbe, perfProbeId } from '../lib/perf-probe';\n"
 hook = "src/hooks/use-native-climb-render.ts"
 text = open(M + hook).read()
 first_import = text.index("import ")
@@ -74,6 +74,7 @@ edit(hook, [
             surface: failureTelemetryContext.surface,
             queueMs: Math.round(probeDispatchedAtMs - probeRequestedAtMs),
             nativeMs: Math.round(perfNow() - probeDispatchedAtMs),
+            frames: perfProbeId(frames),
           });
         }
 """),
@@ -82,9 +83,13 @@ edit(hook, [
 """,
 """  const latestCacheKeyRef = useRef(currentCacheKey);
   latestCacheKeyRef.current = currentCacheKey;
-  const overlayWaitProbeRef = useRef<{ key: string; seenAtMs: number; indexHit: boolean; painted: boolean } | null>(
-    null,
-  );
+  const overlayWaitProbeRef = useRef<{
+    key: string;
+    frames: string;
+    seenAtMs: number;
+    indexHit: boolean;
+    painted: boolean;
+  } | null>(null);
   if (PERF_PROBE_ENABLED && flatFrames && overlayWaitProbeRef.current?.key !== currentCacheKey) {
     const previousWait = overlayWaitProbeRef.current;
     if (previousWait && !previousWait.painted) {
@@ -92,10 +97,12 @@ edit(hook, [
         surface: playSurface ? 'play' : prefetch ? 'prefetch' : filledStyle ? 'thumbnail' : 'full',
         shownMs: Math.round(perfNow() - previousWait.seenAtMs),
         indexHit: previousWait.indexHit,
+        frames: previousWait.frames,
       });
     }
     overlayWaitProbeRef.current = {
       key: currentCacheKey,
+      frames: perfProbeId(frames),
       seenAtMs: perfNow(),
       indexHit: getRenderedOverlay(currentCacheKey) !== undefined,
       painted: false,
@@ -120,6 +127,7 @@ edit(hook, [
             waitMs: Math.round(perfNow() - wait.seenAtMs),
             indexHit: wait.indexHit,
             cacheType: cacheType ?? null,
+            frames: wait.frames,
           });
         }
       }
