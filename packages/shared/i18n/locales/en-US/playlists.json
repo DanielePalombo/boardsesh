@@ -34,6 +34,47 @@
       "loadMoreError": "Couldn't load all your playlists.",
       "noResults": "No playlists match \"{{query}}\""
     },
+    "community": {
+      "searchPlaceholder": "Search playlists",
+      "madeByLabel": "Made by",
+      "madeBy": {
+        "everyone": "Everyone",
+        "mine": "Mine"
+      },
+      "sortLabel": "Sort",
+      "sort": {
+        "popular": "Popular",
+        "recent": "New"
+      },
+      "sizeLabel": "Size",
+      "size": {
+        "any": "Any size",
+        "short": "Short",
+        "session": "Session",
+        "big": "Big"
+      },
+      "sizeBand": {
+        "short": "Up to {{max}} climbs",
+        "session": "{{min}}–{{max}} climbs",
+        "big": "{{min}}+ climbs"
+      },
+      "resultCount_one": "{{count}} playlist",
+      "resultCount_other": "{{count}} playlists",
+      "loadMoreError": "Couldn't load more playlists.",
+      "errors": {
+        "loadTitle": "Couldn't load playlists",
+        "loadDescription": "Check your connection and give it another go."
+      },
+      "empty": {
+        "title": "No playlists here yet",
+        "description": "Make one of yours public and it shows up for the crew."
+      },
+      "noMatches": {
+        "title": "Nothing fits those filters",
+        "description": "Loosen a filter or two to see more.",
+        "clearFilters": "Clear filters"
+      }
+    },
     "pin": {
       "pin": "Pin",
       "unpin": "Unpin",

@@ -501,6 +501,12 @@ export type DiscoverPlaylistsInput = {
   angle?: number | null;
   name?: string;
   creatorIds?: string[];
+  /** Leave these creators out — the viewer's own, on a discovery surface. */
+  excludeCreatorIds?: string[];
+  /** Inclusive climb-count floor. */
+  minClimbs?: number;
+  /** Inclusive climb-count ceiling. */
+  maxClimbs?: number;
   generatedRecommendation?: boolean | null;
   sortBy?: 'recent' | 'popular';
   page?: number;

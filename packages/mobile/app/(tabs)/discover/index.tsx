@@ -539,6 +539,7 @@ export default function DiscoverLibrary() {
     [isAuthenticated, pinnedPlaylistUuids, t],
   );
   const openAllPlaylists = useCallback(() => router.push('/(tabs)/discover/all'), []);
+  const openCommunityPlaylists = useCallback(() => router.push('/(tabs)/discover/community'), []);
 
   // Refresh owned + pinned when returning to the tab (e.g. after editing,
   // deleting, or pinning from a detail screen). Skip the first focus so we don't
@@ -750,6 +751,8 @@ export default function DiscoverLibrary() {
           {communityLoading || communityItems.length > 0 ? (
             <PlaylistShelf
               title={t('library.sections.community')}
+              actionLabel={communityItems.length > 0 ? t('library.allPlaylists.seeAll') : undefined}
+              onActionPress={communityItems.length > 0 ? openCommunityPlaylists : undefined}
               loading={communityLoading && communityItems.length === 0}
               isLoadingMore={communityLoadingMore}
               hasMore={communityHasMore}

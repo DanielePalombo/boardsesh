@@ -41,6 +41,16 @@ export default function DiscoverLayout() {
             }}
           />
           <Stack.Screen
+            name="community"
+            options={{
+              // The full Community Playlists list behind the shelf's "See all":
+              // a solid header with a back button, like "My Playlists".
+              headerShown: true,
+              headerTransparent: false,
+              title: t('library.sections.community'),
+            }}
+          />
+          <Stack.Screen
             name="[playlist_uuid]"
             options={{
               // The detail view owns its full-bleed gradient hero with a floating

@@ -14,6 +14,29 @@ export type { RecentPlaylistEntry, RecentsStorageAdapter } from './recents-adapt
 export { useDiscoverPlaylists } from './use-discover-playlists';
 export type { UseDiscoverPlaylistsOptions, UseDiscoverPlaylistsResult } from './use-discover-playlists';
 
+export { useCommunityPlaylists } from './use-community-playlists';
+export type { UseCommunityPlaylistsOptions, UseCommunityPlaylistsResult } from './use-community-playlists';
+
+// Community Playlists browse filters: the filter-state type and its pure
+// mapping onto `discoverPlaylists` input.
+export {
+  buildCommunityPlaylistsInput,
+  clearCommunityPlaylistFilters,
+  effectiveCommunityCreatorScope,
+  hasActiveCommunityPlaylistFilters,
+  COMMUNITY_PLAYLIST_SEARCH_MAX_LENGTH,
+  COMMUNITY_PLAYLIST_SIZE_BANDS,
+  DEFAULT_COMMUNITY_PLAYLIST_FILTERS,
+} from './community-playlist-filters';
+export type {
+  CommunityPlaylistCreatorScope,
+  CommunityPlaylistFilters,
+  CommunityPlaylistSize,
+  CommunityPlaylistSort,
+  CommunityPlaylistsContext,
+  CommunityPlaylistsInput,
+} from './community-playlist-filters';
+
 export { useUserPlaylists } from './use-user-playlists';
 export type { UseUserPlaylistsOptions, UseUserPlaylistsResult } from './use-user-playlists';
 
