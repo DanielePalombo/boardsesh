@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { router, usePathname, useGlobalSearchParams, type Href } from 'expo-router';
 import { DEFAULT_CLIMB_FILTER_STATE, toClimbSearchInput } from '@boardsesh/climb-filters';
 import {
   buildScreenshotWallSeed,
@@ -8,6 +9,7 @@ import {
 import { useSearchClimbs } from '../lib/graphql/hooks';
 import { useActiveBoard, useSetActiveBoard } from '../lib/graphql/use-active-board';
 import { resolveScreenshotBoard } from '../lib/screenshot-board-selection';
+import { resolveScreenshotCppBoard, type ScreenshotCppBoardIdentity } from '../lib/screenshot-cpp-board-identity';
 import { useScreenshotBoards } from '../hooks/use-screenshot-boards';
 import { useAuth } from '../providers/auth-provider';
 import { SCREENSHOT_NOW_MS } from '../lib/screenshot-mode';
@@ -26,6 +28,35 @@ const WALL_SEED_SEARCH_DISABLED_INPUT: ClimbSearchInput = {
   page: 0,
   pageSize: 0,
 };
+
+const CPP_CAPTURE_PARAM_KEYS = new Set([
+  'screenshotCppScene',
+  'screenshotBoardIndex',
+  'screenshotOpenFirst',
+  'screenshotOpenFilters',
+  'screenshotOpenWallPreview',
+  'screenshotTab',
+  'screenshotBoardType',
+  'wallUuid',
+]);
+
+/** Diagnostic paths omit dynamic identifiers and unrecognized routes. */
+function cppDiagnosticPathname(pathname: string): string {
+  if (/^\/join\/[^/]+$/.test(pathname)) return '/join/[sessionId]';
+  return [
+    '/',
+    '/home',
+    '/climbs',
+    '/climbs/create',
+    '/profile',
+    '/record',
+    '/wall',
+    '/discover/smart/PROJECTS',
+    '/boards/spray/holds',
+  ].includes(pathname)
+    ? pathname
+    : '[other route]';
+}
 
 /**
  * Screenshot builds only: make the board named by `SCREENSHOT_BOARDS[0]` active
@@ -59,6 +90,110 @@ export function ScreenshotBoardAutoActivator(): null {
   // keeps the roster warm in the React Query cache for the re-activation path.
   const screenshotBoards = useScreenshotBoards(isAuthenticated);
   const setActiveBoard = useSetActiveBoard();
+
+  const cppSequence = useRef(-1);
+  const pathname = usePathname();
+  const routeParams = useGlobalSearchParams();
+  const [cppPending, setCppPending] = useState<{ sequence: number; route: string } | null>(null);
+  const cppAckDiagnostic = useRef<string | null>(null);
+  useEffect(() => {
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !cppPending || !process.env.EXPO_PUBLIC_SCREENSHOT_CPP_URL)
+      return;
+    const destination = new URL(cppPending.route, 'http://localhost');
+    const mismatchedKeys = [...destination.searchParams.entries()]
+      .filter(([key, expected]) => routeParams[key] !== expected)
+      .map(([key]) => key);
+    const pathnameMatches = pathname === destination.pathname;
+    const diagnostic = JSON.stringify({
+      sequence: cppPending.sequence,
+      intendedPathname: cppDiagnosticPathname(destination.pathname),
+      actualPathname: cppDiagnosticPathname(pathname),
+      pathnameMatches,
+      requestedParamsMatch: mismatchedKeys.length === 0,
+      mismatchedCaptureParamKeys: mismatchedKeys.filter((key) => CPP_CAPTURE_PARAM_KEYS.has(key)),
+    });
+    if (cppAckDiagnostic.current !== diagnostic) {
+      cppAckDiagnostic.current = diagnostic;
+      console.log(`[screenshot] CPP ACK route ${diagnostic}`);
+    }
+    if (!pathnameMatches || mismatchedKeys.length > 0) return;
+    void (async () => {
+      try {
+        const response = await fetch(
+          `${process.env.EXPO_PUBLIC_SCREENSHOT_CPP_URL}/ack?sequence=${cppPending.sequence}`,
+        );
+        console.log(
+          `[screenshot] CPP ACK response ${JSON.stringify({ sequence: cppPending.sequence, status: response.status })}`,
+        );
+      } catch (error) {
+        const errorKind =
+          error instanceof Error && error.name === 'AbortError'
+            ? 'aborted'
+            : error instanceof TypeError
+              ? 'network'
+              : 'request';
+        console.log(`[screenshot] CPP ACK request ${JSON.stringify({ sequence: cppPending.sequence, errorKind })}`);
+      }
+    })();
+  }, [cppPending, pathname, routeParams]);
+
+  // CPP commands carry navigation only. The real roster, search queries and native
+  // screens supply all content; polling is sequential and each command runs once.
+  useEffect(() => {
+    if (
+      process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' ||
+      !process.env.EXPO_PUBLIC_SCREENSHOT_CPP_URL ||
+      !isAuthenticated ||
+      !screenshotBoards.length
+    )
+      return;
+    const endpoint = process.env.EXPO_PUBLIC_SCREENSHOT_CPP_URL;
+    const configuration = JSON.parse(process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS ?? '{}') as Record<
+      string,
+      { selector: string; identity: ScreenshotCppBoardIdentity; route: string }
+    >;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${endpoint}/command`);
+        const command = (await response.json()) as { sequence?: number; scene?: string };
+        if (
+          stopped ||
+          typeof command.sequence !== 'number' ||
+          typeof command.scene !== 'string' ||
+          command.sequence <= cppSequence.current
+        )
+          return;
+        const scene = configuration[command.scene];
+        if (!scene) {
+          cppSequence.current = command.sequence;
+          return;
+        }
+        const board = resolveScreenshotCppBoard(screenshotBoards, scene.selector, scene.identity);
+        if (!board) throw new Error(`CPP verified identity is ambiguous or missing: ${scene.selector}`);
+        const activated = await setActiveBoard(board, () => !stopped);
+        if (stopped) return;
+        if (!activated) throw new Error(`CPP verified board activation did not commit: ${scene.selector}`);
+        cppSequence.current = command.sequence;
+        console.log(`[screenshot] CPP command ${command.sequence} ${command.scene}: ${board.uuid}`);
+        setCppPending({ sequence: command.sequence, route: scene.route });
+        router.replace(scene.route as Href);
+      } catch (error) {
+        console.log(`[screenshot] WARN CPP navigation: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (!stopped)
+          timer = setTimeout(() => {
+            void poll();
+          }, 500);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isAuthenticated, screenshotBoards, setActiveBoard]);
 
   // Logged once at boot so a screenshot run's Metro-teed output says whether
   // relative timestamps are pinned (EXPO_PUBLIC_SCREENSHOT_NOW parsed) or

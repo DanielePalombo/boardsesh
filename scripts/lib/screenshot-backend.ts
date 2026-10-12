@@ -28,6 +28,9 @@ import {
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
+import { Kind, parse } from 'graphql';
+import { createCppWsRecording, type CppWsOperation } from './cpp-ws-recording';
+import { isCppTarget, readCppPage } from './screenshot-cpp';
 import {
   isCampaignPushRegistration,
   isCampaignWallConfirmation,
@@ -232,6 +235,57 @@ export function jwtSubject(token: string): string | null {
   }
 }
 
+/** Native keychain sessions can skip /auth on a relaunch. Bind only the
+ * upstream's authenticated profile, never an arbitrary public profile or JWT.
+ */
+function authenticatedRecordingProfile(
+  query: string,
+  responseBody: unknown,
+  token: string | null,
+): { id: string; email: string } | null {
+  if (!token || typeof responseBody !== 'object' || responseBody === null) return null;
+  const response = responseBody as { errors?: unknown; data?: { profile?: { id?: unknown; email?: unknown } } };
+  if (response.errors !== undefined && (!Array.isArray(response.errors) || response.errors.length > 0)) return null;
+  const profile = response.data?.profile;
+  if (
+    !profile ||
+    typeof profile.id !== 'string' ||
+    profile.id !== jwtSubject(token) ||
+    typeof profile.email !== 'string' ||
+    !profile.email.trim()
+  )
+    return null;
+  try {
+    const document = parse(query);
+    const operation = document.definitions[0];
+    if (
+      document.definitions.length !== 1 ||
+      operation.kind !== Kind.OPERATION_DEFINITION ||
+      operation.operation !== 'query' ||
+      operation.name?.value !== 'GetProfile' ||
+      operation.selectionSet.selections.length !== 1
+    )
+      return null;
+    const selection = operation.selectionSet.selections[0];
+    if (
+      selection.kind !== Kind.FIELD ||
+      selection.name.value !== 'profile' ||
+      selection.alias ||
+      selection.arguments?.length ||
+      !['id', 'email'].every((fieldName) =>
+        selection.selectionSet?.selections.some(
+          (field) =>
+            field.kind === Kind.FIELD && field.name.value === fieldName && !field.alias && !field.arguments?.length,
+        ),
+      )
+    )
+      return null;
+    return { id: profile.id, email: profile.email };
+  } catch {
+    return null;
+  }
+}
+
 function shortHash(hash: string): string {
   return hash.slice(0, FIXTURE_HASH_DISPLAY_LENGTH);
 }
@@ -356,6 +410,25 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     throw new Error('replay mode makes no outbound requests — drop --upstream');
   }
 
+  const recordingScenario =
+    isRecording && process.env.BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO
+      ? (JSON.parse(process.env.BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO) as unknown)
+      : undefined;
+  if (recordingScenario !== undefined) {
+    const scenarioValidation = validateScreenshotFixtureManifest({
+      ...emptyManifest({
+        recordedAt: new Date().toISOString(),
+        frozenNow,
+        upstream: upstreamUrl ?? '',
+        accountEmail: '',
+        accountUserId: '',
+        flow: options.flow ?? DEFAULT_SCREENSHOT_FLOW,
+      }),
+      capture: recordingScenario,
+    });
+    if (!scenarioValidation.ok) throw new Error(`Invalid recording capture scenario: ${scenarioValidation.reason}`);
+  }
+
   const emit = (line: ScreenshotBackendLogLine): void => log(formatScreenshotBackendLine(line));
 
   if (isRecording && options.fresh) {
@@ -387,6 +460,9 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     manifest.frozenNow = frozenNow;
     manifest.upstream = upstreamUrl ?? '';
     manifest.flow = options.flow ?? manifest.flow;
+    if (recordingScenario !== undefined) {
+      manifest.capture = recordingScenario as ScreenshotFixtureManifest['capture'];
+    }
   }
 
   // (operationName, variablesHash) -> entry. The variables pick the fixture; the
@@ -409,6 +485,15 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
    * git history.
    */
   const sensitiveTokens = new Set<string>();
+  // This only rejects mixed sessions. An unverified bearer subject never
+  // establishes manifest identity; the upstream auth/profile must do that.
+  let observedRecordingSubject = manifest.accountUserId || null;
+  const acceptRecordingSubject = (subject: string | null): boolean => {
+    if (!subject) return true;
+    if (observedRecordingSubject && observedRecordingSubject !== subject) return false;
+    observedRecordingSubject = subject;
+    return true;
+  };
 
   let hits = 0;
   let misses = 0;
@@ -473,6 +558,27 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     rawBody: Buffer,
     parsedBody: Record<string, unknown>,
   ): Promise<void> => {
+    const authorization = request.headers.authorization;
+    const bearerToken =
+      typeof authorization === 'string' ? (/^Bearer\s+(\S+)$/i.exec(authorization)?.[1] ?? null) : null;
+    if (bearerToken) {
+      sensitiveTokens.add(bearerToken);
+      const payload = bearerToken.split('.')[1];
+      if (payload) sensitiveTokens.add(payload);
+    }
+    const bearerSubject = bearerToken ? jwtSubject(bearerToken) : null;
+    if (
+      !acceptRecordingSubject(bearerSubject) ||
+      (manifest.accountUserId && bearerSubject && manifest.accountUserId !== bearerSubject)
+    ) {
+      emit({
+        event: 'upstream-error',
+        operationName: resolveOperationName(parsedBody) ?? 'anonymous',
+        detail: 'recording-account-mismatch',
+      });
+      sendJson(response, 200, { errors: [{ message: 'Screenshot recording is bound to a different account' }] });
+      return;
+    }
     const upstreamResponse = await fetch(`${upstreamUrl}/graphql`, {
       method: 'POST',
       headers: { ...forwardableHeaders(request.headers), 'content-type': 'application/json' },
@@ -488,8 +594,29 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     });
     response.end(responseText);
 
+    persistRecordedResponse(parsedBody, responseText, upstreamResponse.status, bearerToken);
+  };
+
+  /** HTTP and CPP WS share every credential, identity, privacy and provenance guard. */
+  const persistRecordedResponse = (
+    parsedBody: Record<string, unknown>,
+    responseText: string,
+    status: number,
+    bearerToken: string | null,
+    verifiedSubject?: string,
+  ): void => {
+    const bearerSubject = verifiedSubject ?? (bearerToken ? jwtSubject(bearerToken) : null);
     const operationName = resolveOperationName(parsedBody);
     const loggedName = operationName ?? 'anonymous';
+    // Another request may have established the recording identity while this
+    // upstream request was in flight. Recheck before persisting any response.
+    if (
+      !acceptRecordingSubject(bearerSubject) ||
+      (manifest.accountUserId && bearerSubject && manifest.accountUserId !== bearerSubject)
+    ) {
+      emit({ event: 'upstream-error', operationName: loggedName, detail: 'recording-account-mismatch' });
+      return;
+    }
     const responseBody: unknown = ((): unknown => {
       try {
         return JSON.parse(responseText);
@@ -510,11 +637,11 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       );
     const hasData = typeof responseBody === 'object' && responseBody !== null && Object.hasOwn(responseBody, 'data');
 
-    if (upstreamResponse.status !== 200 || !hasData || hasInternalServerError) {
+    if (status !== 200 || !hasData || hasInternalServerError) {
       emit({
         event: 'upstream-error',
         operationName: loggedName,
-        detail: hasInternalServerError ? 'code=INTERNAL_SERVER_ERROR' : `status=${upstreamResponse.status}`,
+        detail: hasInternalServerError ? 'code=INTERNAL_SERVER_ERROR' : `status=${status}`,
       });
       return;
     }
@@ -526,6 +653,18 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     }
 
     const query = typeof parsedBody.query === 'string' ? parsedBody.query : '';
+    const profileIdentity = authenticatedRecordingProfile(query, responseBody, bearerToken);
+    if (profileIdentity) {
+      if (manifest.accountUserId && manifest.accountUserId !== profileIdentity.id) {
+        emit({ event: 'upstream-error', operationName: loggedName, detail: 'recording-account-mismatch' });
+        return;
+      }
+      if (manifest.accountUserId !== profileIdentity.id || manifest.accountEmail !== profileIdentity.email) {
+        manifest.accountUserId = profileIdentity.id;
+        manifest.accountEmail = profileIdentity.email;
+        rewriteManifest();
+      }
+    }
     const key = graphqlFixtureKey({ operationName, query, variables: parsedBody.variables }, sha256Hex);
     const indexKey = `${key.operationName}\n${key.variablesHash}`;
     if (graphqlIndex.has(indexKey)) {
@@ -574,7 +713,7 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       // actually sends.
       variables: redactIgnoredVariablePaths(key.operationName, parsedBody.variables ?? {}),
       response: persistedResponse,
-      status: upstreamResponse.status,
+      status: status,
       recordedAt: new Date().toISOString(),
       upstream: upstreamUrl ?? '',
     };
@@ -632,6 +771,48 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     }
     rewriteManifest();
   };
+
+  const cppRecording =
+    isRecording && options.flow === 'app-store-cpp' && manifest.capture?.cpp
+      ? createCppWsRecording({
+          upstreamUrl: upstreamUrl!,
+          scope: () => {
+            const coverage = manifest.capture?.cpp;
+            if (
+              !coverage ||
+              !isCppTarget(coverage.target) ||
+              !manifest.accountUserId ||
+              !manifest.capture?.sharedSessionId ||
+              coverage.scenes.queue?.sessionId !== manifest.capture.sharedSessionId
+            )
+              return null;
+            const primary = readCppPage(coverage.target).primaryBoard;
+            const boardUuid = coverage.boardIds?.[primary.id] ?? coverage.scenes.search?.boardId;
+            if (!boardUuid || coverage.scenes.queue.boardId !== boardUuid) return null;
+            return {
+              accountUserId: manifest.accountUserId,
+              sessionId: manifest.capture.sharedSessionId,
+              boardUuid,
+              primary,
+            };
+          },
+          authorizeToken: (token) => {
+            sensitiveTokens.add(token);
+            const payload = token.split('.')[1];
+            if (payload) sensitiveTokens.add(payload);
+            const subject = jwtSubject(token);
+            return Boolean(subject && acceptRecordingSubject(subject) && manifest.accountUserId === subject);
+          },
+          persist: (operation, body, subject) =>
+            persistRecordedResponse(
+              operation as unknown as Record<string, unknown>,
+              JSON.stringify(body),
+              200,
+              null,
+              subject,
+            ),
+        })
+      : null;
 
   /**
    * One batch scope's recorded fixtures, decomposed: every id the recording
@@ -829,7 +1010,18 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     }
     let entry = graphqlIndex.get(`${operationName}\n${key.variablesHash}`);
     let campaignResponse: { response: unknown } | null = null;
-    if (!entry && manifest.flow === 'app-store-campaign' && operationName === 'JoinSession') {
+    const cpp = manifest.capture?.cpp;
+    const cppReplayScope =
+      manifest.flow === 'app-store-cpp' &&
+      cpp &&
+      isCppTarget(cpp.target) &&
+      manifest.capture?.sharedSessionId &&
+      cpp.scenes?.queue?.sessionId === manifest.capture.sharedSessionId &&
+      typeof cpp.scenes.search?.boardId === 'string' &&
+      cpp.scenes.search.boardId.trim().length > 0 &&
+      cpp.scenes.queue.boardId === cpp.scenes.search.boardId &&
+      (parsedBody.variables as { sessionId?: unknown } | undefined)?.sessionId === manifest.capture.sharedSessionId;
+    if (!entry && (manifest.flow === 'app-store-campaign' || cppReplayScope) && operationName === 'JoinSession') {
       for (const candidate of manifest.graphql.filter((item) => item.operationName === 'JoinSession')) {
         try {
           if (!isFixtureFileWithinDirectory(fixturesDir, candidate.file)) throw new Error('Invalid fixture path');
@@ -881,7 +1073,7 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
           campaignResponse ??
           (entry.documentHash !== key.documentHash
             ? (replayCompatibleFixtureResponse(query, fixture) ??
-              (manifest.flow === 'app-store-campaign'
+              (manifest.flow === 'app-store-campaign' || cppReplayScope
                 ? replayCampaignSessionResponse(query, parsedBody.variables, fixture)
                 : null))
             : null);
@@ -942,8 +1134,16 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     // — not an empty list. The placard stays visible in the capture, which is
     // exactly what makes a miss noticeable at a glance, and the connectivity
     // store itself is never tripped.
-    if (isRecording) await recordGraphql(request, response, rawBody, parsedBody as Record<string, unknown>);
-    else
+    if (isRecording) {
+      if (cppRecording && typeof (parsedBody as Record<string, unknown>).query === 'string') {
+        const token =
+          typeof request.headers.authorization === 'string'
+            ? /^Bearer\s+(\S+)$/i.exec(request.headers.authorization)?.[1]
+            : undefined;
+        if (token) await cppRecording.preparePreview(parsedBody as CppWsOperation, token);
+      }
+      await recordGraphql(request, response, rawBody, parsedBody as Record<string, unknown>);
+    } else
       replayGraphql(
         (serializedResponse) => sendRawJson(response, 200, serializedResponse),
         parsedBody as Record<string, unknown>,
@@ -1002,6 +1202,12 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       const token = (session as Record<string, unknown>)[field];
       if (typeof token === 'string' && token.length > 0) sensitiveTokens.add(token);
     }
+    const liveJwt = (session as Record<string, unknown>).jwt;
+    const subject = typeof liveJwt === 'string' ? jwtSubject(liveJwt) : null;
+    if (!acceptRecordingSubject(subject) || (manifest.accountUserId && subject && manifest.accountUserId !== subject)) {
+      emit({ event: 'upstream-error', operationName: 'NativeAuth', detail: 'recording-account-mismatch' });
+      return;
+    }
     const requestBody = parseJsonBody(rawBody);
     const email =
       typeof requestBody === 'object' && requestBody !== null ? (requestBody as { email?: unknown }).email : undefined;
@@ -1013,8 +1219,6 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
     // The id, not the token: replay needs a jwt the app can read a `sub` out
     // of, and the live jwt itself must never reach disk. `/auth/native/refresh`
     // carries no email but does carry a jwt, so it fills this in too.
-    const liveJwt = (session as Record<string, unknown>).jwt;
-    const subject = typeof liveJwt === 'string' ? jwtSubject(liveJwt) : null;
     if (subject && manifest.accountUserId !== subject) {
       manifest.accountUserId = subject;
       manifestChanged = true;
@@ -1170,11 +1374,13 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
   });
 
   // -------------------------------------------------------------------------
-  // graphql-ws: deterministic initial snapshots, never a live upstream stream
+  // graphql-ws: frozen replay snapshots and explicitly scoped CPP recording
   // -------------------------------------------------------------------------
 
-  // Record mode retains its inert transport. Replay serves manifest-listed
-  // snapshots through the same key/document validation and cache as HTTP.
+  // Ordinary recording remains inert. An authorized CPP uses one real owned
+  // session connection; only its native join and initial snapshots reach disk.
+  // Replay serves manifest-listed snapshots through the same key/document
+  // validation and cache as HTTP.
   const webSocketServer = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols) => (protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false),
@@ -1189,6 +1395,15 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
 
   webSocketServer.on('connection', (socket: WebSocket) => {
     let initialized = false;
+    let cppToken = '';
+    const cppOperations = new Map<string, { cancelled: boolean; cleanup?: () => void }>();
+    socket.on('close', () => {
+      for (const operation of cppOperations.values()) {
+        operation.cancelled = true;
+        operation.cleanup?.();
+      }
+      cppOperations.clear();
+    });
     const subscriptionIds = new Set<string>();
     const invalidMessage = (): void => {
       misses += 1;
@@ -1218,6 +1433,8 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
           return;
         }
         initialized = true;
+        const initPayload = (message as { payload?: { authToken?: unknown } }).payload;
+        if (typeof initPayload?.authToken === 'string') cppToken = initPayload.authToken;
         socket.send(JSON.stringify({ type: 'connection_ack' }));
         emit({ event: 'ws-ack' });
         return;
@@ -1263,7 +1480,51 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
         }
         const operationName = resolveOperationName(operation) ?? 'anonymous';
         emit({ event: 'ws-subscribe', operationName });
-        if (isRecording) return;
+        if (isRecording) {
+          if (cppRecording && ['JoinSession', 'QueueUpdates', 'SessionUpdates'].includes(operationName)) {
+            subscriptionIds.add(id);
+            const pending = { cancelled: false, cleanup: undefined as (() => void) | undefined };
+            cppOperations.set(id, pending);
+            const current = () => !pending.cancelled && cppOperations.get(id) === pending && socket.readyState === 1;
+            void cppRecording
+              .subscribe(
+                id,
+                operation as unknown as CppWsOperation,
+                cppToken,
+                (frame) => {
+                  if (!current()) return;
+                  socket.send(JSON.stringify(frame));
+                  if (frame.type === 'complete' || frame.type === 'error') {
+                    pending.cancelled = true;
+                    pending.cleanup?.();
+                    cppOperations.delete(id);
+                    subscriptionIds.delete(id);
+                  }
+                },
+                current,
+              )
+              .then((cleanup) => {
+                if (!cleanup) return;
+                if (!current()) cleanup();
+                else pending.cleanup = cleanup;
+              })
+              .catch(() => {
+                emit({ event: 'upstream-error', operationName, detail: 'cpp-owned-session-validation-failed' });
+                if (current()) {
+                  socket.send(
+                    JSON.stringify({
+                      id,
+                      type: 'error',
+                      payload: [{ message: 'CPP owned-session transport validation failed' }],
+                    }),
+                  );
+                  cppOperations.delete(id);
+                  subscriptionIds.delete(id);
+                }
+              });
+          }
+          return;
+        }
         // Screenshot documents begin with their operation, optionally preceded
         // by comments. Exact document hashing below still rejects changed text.
         const subscriptionDeclaration = operation.query.match(
@@ -1295,7 +1556,15 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       if (messageType === 'complete') {
         const id = (message as { id?: unknown }).id;
         if (typeof id !== 'string' || id.length === 0) invalidMessage();
-        else subscriptionIds.delete(id);
+        else {
+          subscriptionIds.delete(id);
+          const pending = cppOperations.get(id);
+          if (pending) {
+            pending.cancelled = true;
+            pending.cleanup?.();
+            cppOperations.delete(id);
+          }
+        }
         return;
       }
       if (messageType !== 'pong') invalidMessage();
@@ -1436,6 +1705,7 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       // after every new entry, so a SIGTERM mid-capture still leaves a manifest
       // that matches the files on disk.
       if (isRecording) rewriteManifest();
+      cppRecording?.close();
       for (const socket of webSocketServer.clients) socket.terminate();
       return new Promise<void>((resolve) => {
         webSocketServer.close(() => {

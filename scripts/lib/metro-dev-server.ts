@@ -90,6 +90,44 @@ export function readinessServerReachable(): boolean {
   return probe.status === 0;
 }
 
+/** The exact detached child script, also exercised without opening a socket in tests. */
+export function buildReadinessServerScript(): string {
+  return [
+    `const http = require('http');`,
+    `const fs = require('fs');`,
+    `let cppCommand = { sequence: 0, scene: 'reset' };`,
+    `let cppAcknowledged = -1;`,
+    `const cppScenes = new Set(['reset', 'hero-1', 'hero-2', 'hero-3', 'other-1', 'other-2', 'other-3', 'search', 'search-results', 'logbook', 'led', 'queue-join', 'queue', 'workout', 'status', 'status-ipad', 'island', 'kiosk']);`,
+    `http.createServer((request, response) => {`,
+    `  const url = new URL(request.url || '/', 'http://localhost');`,
+    `  if (url.pathname.startsWith('/cpp/')) {`,
+    `    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.socket.remoteAddress)) { response.writeHead(403); response.end(); return; }`,
+    `    if (url.pathname === '/cpp/set') {`,
+    `      const scene = url.searchParams.get('scene');`,
+    `      if (!cppScenes.has(scene)) { response.writeHead(400); response.end(); return; }`,
+    `      cppCommand = { sequence: cppCommand.sequence + 1, scene };`,
+    `    } else if (url.pathname === '/cpp/ack') { const sequence = Number(url.searchParams.get('sequence')); if (Number.isSafeInteger(sequence) && sequence >= 0 && sequence <= cppCommand.sequence) cppAcknowledged = Math.max(cppAcknowledged, sequence); } else if (!['/cpp/command', '/cpp/status'].includes(url.pathname)) { response.writeHead(404); response.end(); return; }`,
+    `    const send = () => { response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify({ ...cppCommand, acknowledged: cppAcknowledged })); };`,
+    `    const waitFor = Number(url.searchParams.get('waitFor'));`,
+    `    if (url.pathname === '/cpp/status' && Number.isSafeInteger(waitFor) && waitFor > cppAcknowledged) {`,
+    `      const deadline = Date.now() + 8000;`,
+    `      const timer = setInterval(() => { if (cppAcknowledged >= waitFor || Date.now() >= deadline) { clearInterval(timer); send(); } }, 100);`,
+    `      response.on('close', () => clearInterval(timer)); return;`,
+    `    }`,
+    `    send(); return;`,
+    `  }`,
+    `  if (request.url && request.url.indexOf('/ready') === 0) {`,
+    `    fs.appendFileSync(${JSON.stringify(READINESS_LOG_PATH)}, 'x\\n');`,
+    `  }`,
+    `  if (request.url && request.url.indexOf('/smoke') === 0) {`,
+    `    fs.appendFileSync(${JSON.stringify(SMOKE_PING_LOG_PATH)}, request.url + '\\n');`,
+    `  }`,
+    `  response.statusCode = 204;`,
+    `  response.end();`,
+    `}).listen(${SCREENSHOT_READY_PORT}, '0.0.0.0');`,
+  ].join('\n');
+}
+
 /**
  * Start the readiness server as a SEPARATE detached process. The orchestrator
  * itself is fully synchronous (spawnSync for sleep/simctl/maestro), so an
@@ -102,20 +140,7 @@ export function readinessServerReachable(): boolean {
 export function startReadinessServer(): ChildProcess {
   writeFileSync(READINESS_LOG_PATH, '');
   writeFileSync(SMOKE_PING_LOG_PATH, '');
-  const serverCode = [
-    `const http = require('http');`,
-    `const fs = require('fs');`,
-    `http.createServer((request, response) => {`,
-    `  if (request.url && request.url.indexOf('/ready') === 0) {`,
-    `    fs.appendFileSync(${JSON.stringify(READINESS_LOG_PATH)}, 'x\\n');`,
-    `  }`,
-    `  if (request.url && request.url.indexOf('/smoke') === 0) {`,
-    `    fs.appendFileSync(${JSON.stringify(SMOKE_PING_LOG_PATH)}, request.url + '\\n');`,
-    `  }`,
-    `  response.statusCode = 204;`,
-    `  response.end();`,
-    `}).listen(${SCREENSHOT_READY_PORT}, '0.0.0.0');`,
-  ].join('\n');
+  const serverCode = buildReadinessServerScript();
   const server = spawn(process.execPath, ['-e', serverCode], { stdio: 'ignore', detached: true });
   // Don't let the child keep the orchestrator's event loop alive at exit.
   server.unref();

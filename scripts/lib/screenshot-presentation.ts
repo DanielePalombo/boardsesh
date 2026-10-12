@@ -31,6 +31,31 @@ export const CAPTION_IDS = [
   'storeSpray',
   'storeMoreBoards',
   'storeIsland',
+  'cppIsland',
+  'cppKilterGrade',
+  'cppKilterLayouts',
+  'cppKilterLogbookImport',
+  'cppKiosk',
+  'cppLogbook',
+  'cppMoonboardGrade',
+  'cppMoonboardLogbook',
+  'cppMoonboardSets',
+  'cppOtherBoards',
+  'cppQueue',
+  'cppSearch',
+  'cppSprayHolds',
+  'cppSprayOtherBoards',
+  'cppSprayProjects',
+  'cppSpraySetting',
+  'cppSprayWalls',
+  'cppSprayWorkout',
+  'cppStatus',
+  'cppTensionLayouts',
+  'cppTensionLogbookImport',
+  'cppTensionMirrorBoard',
+  'cppTensionQueue',
+  'cppTensionSearch',
+  'cppWorkout',
 ] as const;
 export type CaptionId = (typeof CAPTION_IDS)[number];
 export const CAPTION_LOCALES = ['en-US', 'es', 'fr', 'de'] as const;
@@ -104,6 +129,7 @@ export type ScreenshotLayout =
   | 'wall-status'
   | 'wall-column'
   | 'cross-board-logbook'
+  | 'store-hero'
   | 'store-boards'
   | 'store-spray'
   | 'store-queue'
@@ -115,6 +141,26 @@ export interface ScreenshotRecipe {
   layout: ScreenshotLayout;
   /** Actual native captures, in their compositing order. */
   sources: readonly string[];
+  /** Printed outside the native trio, in exactly the same order as sources. */
+  boardLabels?: readonly string[];
+}
+
+export function validateScreenshotBoardLabels(
+  candidate: unknown,
+  layout: ScreenshotLayout,
+  sourceCount: number,
+): readonly string[] | undefined {
+  if (candidate === undefined) return undefined;
+  if (
+    layout !== 'store-boards' ||
+    sourceCount !== 3 ||
+    !Array.isArray(candidate) ||
+    candidate.length !== 3 ||
+    candidate.some((label) => typeof label !== 'string' || !label.trim())
+  ) {
+    throw new Error('Board labels require three nonblank names matching a store-boards source trio');
+  }
+  return candidate;
 }
 
 export const IOS_CAMPAIGN_CAPTURE_NAMES = [
@@ -194,7 +240,7 @@ export function resolveScreenshotRecipes(
   // frame is not worth shipping until it is fixed.
   if (platform === 'ios' && device.startsWith('ipad-') && matches(legacyNames)) {
     return [
-      { output: '00-wall-kiosk.png', caption: 'wallKiosk', layout: 'screen', sources: ['00-wall.png'] },
+      { output: '00-wall-kiosk.png', caption: 'storeBoards', layout: 'screen', sources: ['00-wall.png'] },
       // The wall column is part of this very capture, enlarged beside the screen
       // it came from — never a second screen standing in for it.
       { output: '01-wall-status.png', caption: 'wallStatus', layout: 'wall-column', sources: ['02-climbs.png'] },
@@ -315,11 +361,13 @@ export interface PresentedScreenshot {
   framedSha256: string;
   /** Composite provenance. rawBytes is the smallest source, so a blank peer cannot hide behind a detailed image. */
   sources?: Record<string, { rawBytes: number; rawSha256: string }>;
+  boardLabels?: readonly string[];
 }
 export interface PresentationManifest {
   version: typeof PRESENTATION_VERSION;
   locale: CaptionLocale;
   files: Record<string, PresentedScreenshot>;
+  cpp?: { target: string; manifestSha256: string; fixtureSha256?: string };
 }
 
 export function sha256Screenshot(bytes: Buffer): string {
@@ -401,6 +449,12 @@ export function readPresentationManifest(directory: string): PresentationManifes
         throw new Error(`Composite source metadata does not match: ${filename}: ${name}`);
       }
     }
+    const boardLabels = validateScreenshotBoardLabels(
+      entry.boardLabels,
+      'store-boards',
+      Object.keys(presented.sources ?? {}).length,
+    );
+    if (boardLabels) presented.boardLabels = boardLabels;
     files[name] = presented;
   }
   return { version: PRESENTATION_VERSION, locale: parsed.locale as CaptionLocale, files };

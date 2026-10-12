@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import type { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import sharp from 'sharp';
 import { prepareIosCampaignFixtures } from '../prepare-ios-campaign-fixtures';
@@ -76,6 +76,7 @@ type UpstreamHarness = {
   origin: string;
   /** Set to make the next /graphql POST answer with this instead of the canned body. */
   nextGraphqlResponse: { status: number; body: unknown } | null;
+  nextGraphqlBarrier: Promise<void> | null;
   graphqlRequests: Array<{ operationName?: string; authorization?: string }>;
   staticRequestPaths: string[];
 };
@@ -83,6 +84,7 @@ type UpstreamHarness = {
 async function startUpstream(): Promise<UpstreamHarness> {
   const harness: Partial<UpstreamHarness> & Pick<UpstreamHarness, 'graphqlRequests' | 'staticRequestPaths'> = {
     nextGraphqlResponse: null,
+    nextGraphqlBarrier: null,
     graphqlRequests: [],
     staticRequestPaths: [],
   };
@@ -100,10 +102,14 @@ async function startUpstream(): Promise<UpstreamHarness> {
         });
         const canned = harness.nextGraphqlResponse;
         harness.nextGraphqlResponse = null;
+        const barrier = harness.nextGraphqlBarrier;
+        harness.nextGraphqlBarrier = null;
         const status = canned?.status ?? 200;
         const payload = JSON.stringify(canned?.body ?? SYNC_TICKS_RESPONSE);
-        response.writeHead(status, { 'content-type': 'application/json' });
-        response.end(payload);
+        void (barrier ?? Promise.resolve()).then(() => {
+          response.writeHead(status, { 'content-type': 'application/json' });
+          response.end(payload);
+        });
       });
       return;
     }
@@ -243,6 +249,60 @@ describe('screenshot backend', () => {
     rmSync(fixturesDir, { recursive: true, force: true });
   });
 
+  it('persists the record capture scenario and keeps it when replay has a different environment', async () => {
+    const capture = {
+      sharedSessionId: '00000000-0000-4000-8000-000000000004',
+      boards: ['Liz', 'Cherry', 'Bowlo', 'Kilter', 'Tension', 'MoonBoard'],
+      cpp: {
+        target: 'spray',
+        boardReadyText: { 'spray-liz': 'Actual Liz climb' },
+        scenes: { queue: { boardId: ACCOUNT_USER_ID, readyText: 'Actual queued climb' } },
+      },
+    };
+    try {
+      vi.stubEnv('BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO', JSON.stringify(capture));
+      await start({ mode: 'record', fresh: true });
+      await postGraphql({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY, variables: { cursor: null } });
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)?.capture).toEqual(capture);
+      const persisted = readFileSync(join(fixturesDir, 'manifest.json'));
+      vi.stubEnv('BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO', '{invalid replay environment');
+      await start({ mode: 'replay' });
+      expect(
+        await (
+          await postGraphql({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY, variables: { cursor: null } })
+        ).json(),
+      ).toEqual(SYNC_TICKS_RESPONSE);
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)?.capture).toEqual(capture);
+      expect(readFileSync(join(fixturesDir, 'manifest.json'))).toEqual(persisted);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects an invalid record scenario before fresh mode removes a previous recording', async () => {
+    try {
+      vi.stubEnv('BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO', '');
+      await start({ mode: 'record', fresh: true });
+      await postGraphql({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY, variables: { cursor: null } });
+      await stop();
+      const originals = new Map(
+        listFixtureFiles(fixturesDir).map((file) => [file, readFileSync(join(fixturesDir, file))]),
+      );
+      expect(originals.size).toBeGreaterThan(1);
+      vi.stubEnv(
+        'BOARDSESH_SCREENSHOT_CAPTURE_SCENARIO',
+        JSON.stringify({ sharedSessionId: 'invalid', boards: ['Liz', 'Bowlo'] }),
+      );
+      await expect(start({ mode: 'record', fresh: true })).rejects.toThrow('capture.sharedSessionId must be a UUID');
+      expect(listFixtureFiles(fixturesDir).sort()).toEqual([...originals.keys()].sort());
+      for (const [file, bytes] of originals) expect(readFileSync(join(fixturesDir, file))).toEqual(bytes);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('projects recorded native identity, refuses APNs locally, and reports corrupted session fixtures as misses', async () => {
     await start({ mode: 'record', flow: 'app-store-campaign' });
     upstream.nextGraphqlResponse = {
@@ -373,6 +433,187 @@ describe('screenshot backend', () => {
   });
 
   describe('record mode', () => {
+    const profileQuery = 'query GetProfile { profile { id email displayName avatarUrl } }';
+    const profileBody = {
+      data: {
+        profile: {
+          id: ACCOUNT_USER_ID,
+          email: ACCOUNT_EMAIL,
+          displayName: 'Test User',
+          avatarUrl: 'https://cdn/own.jpg',
+        },
+      },
+    };
+
+    it('binds a cached native session from its upstream authenticated profile before persisting it', async () => {
+      await start({ mode: 'record', fresh: true });
+      upstream.nextGraphqlResponse = { status: 200, body: profileBody };
+      await postGraphql({ operationName: 'GetProfile', query: profileQuery });
+      await stop();
+      const manifest = readScreenshotFixtureManifest(fixturesDir);
+      expect(manifest).toMatchObject({ accountUserId: ACCOUNT_USER_ID, accountEmail: ACCOUNT_EMAIL });
+      const contents = readFileSync(join(fixturesDir, manifest!.graphql[0].file), 'utf8');
+      expect(contents).toContain('Test User');
+      expect(contents).toContain('https://cdn/own.jpg');
+      expect(contents).not.toContain(UPSTREAM_JWT);
+      expect(contents).not.toContain(UPSTREAM_JWT_PAYLOAD);
+    });
+
+    it.each([
+      ['public alias', 'query GetProfile { profile: publicProfile(userId: "other") { id email } }', profileBody],
+      ['email alias', 'query GetProfile { profile { id email: displayName } }', profileBody],
+      ['id alias', 'query GetProfile { profile { id: displayName email } }', profileBody],
+      ['mismatched subject', profileQuery, { data: { profile: { id: 'another-account', email: ACCOUNT_EMAIL } } }],
+      ['partial error', profileQuery, { ...profileBody, errors: [{ message: 'unavailable' }] }],
+      ['missing email', profileQuery, { data: { profile: { id: ACCOUNT_USER_ID } } }],
+    ])('does not bind cached account metadata from %s', async (_description, query, body) => {
+      await start({ mode: 'record', fresh: true });
+      upstream.nextGraphqlResponse = { status: 200, body };
+      await postGraphql({ operationName: 'GetProfile', query });
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)).toMatchObject({ accountUserId: '', accountEmail: '' });
+    });
+
+    it('refuses to mix a second cached account into an established recording', async () => {
+      await start({ mode: 'record', fresh: true });
+      upstream.nextGraphqlResponse = { status: 200, body: profileBody };
+      await postGraphql({ operationName: 'GetProfile', query: profileQuery });
+      const secondId = 'aaaa1111-2222-3333-4444-555555555555';
+      const secondToken = `header.${base64Url(JSON.stringify({ sub: secondId }))}.signature`;
+      upstream.nextGraphqlResponse = {
+        status: 200,
+        body: { data: { profile: { id: secondId, email: 'second@example.com' } } },
+      };
+      await fetch(`${backendOrigin}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secondToken}` },
+        body: JSON.stringify({ operationName: 'GetProfile', query: profileQuery }),
+      });
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)).toMatchObject({
+        accountUserId: ACCOUNT_USER_ID,
+        accountEmail: ACCOUNT_EMAIL,
+      });
+      expect(hasLine('recording-account-mismatch')).toBe(true);
+      expect(
+        listFixtureFiles(fixturesDir).some((file) =>
+          readFileSync(join(fixturesDir, file), 'utf8').includes('second@example.com'),
+        ),
+      ).toBe(false);
+    });
+
+    it('redacts a cached session token payload even without an auth proxy request', async () => {
+      await start({ mode: 'record', fresh: true });
+      upstream.nextGraphqlResponse = {
+        status: 200,
+        body: { data: { syncTicks: { documents: [{ note: UPSTREAM_JWT_PAYLOAD }] } } },
+      };
+      await postGraphql({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY });
+      await stop();
+      expect(hasLine('REDACTED graphql SyncTicks')).toBe(true);
+      expect(listFixtureFiles(fixturesDir).filter((file) => file.startsWith('graphql/'))).toHaveLength(0);
+    });
+
+    it('rejects second-account data before a profile request or upstream call', async () => {
+      await start({ mode: 'record', fresh: true });
+      upstream.nextGraphqlResponse = { status: 200, body: profileBody };
+      await postGraphql({ operationName: 'GetProfile', query: profileQuery });
+      const before = upstream.graphqlRequests.length;
+      const secondToken = `header.${base64Url(JSON.stringify({ sub: 'second-account' }))}.signature`;
+      const response = await fetch(`${backendOrigin}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secondToken}` },
+        body: JSON.stringify({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY }),
+      });
+      expect(await response.json()).toHaveProperty('errors');
+      await stop();
+      expect(upstream.graphqlRequests).toHaveLength(before);
+      expect(readScreenshotFixtureManifest(fixturesDir)?.graphql.map((entry) => entry.operationName)).toEqual([
+        'GetProfile',
+      ]);
+      expect(hasLine('recording-account-mismatch')).toBe(true);
+    });
+
+    it('keeps a cached identity when the auth proxy signs in another account', async () => {
+      await start({ mode: 'record', fresh: true });
+      const secondId = 'aaaa1111-2222-3333-4444-555555555555';
+      const secondToken = `header.${base64Url(JSON.stringify({ sub: secondId }))}.signature`;
+      upstream.nextGraphqlResponse = {
+        status: 200,
+        body: { data: { profile: { id: secondId, email: 'second@example.com' } } },
+      };
+      await fetch(`${backendOrigin}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secondToken}` },
+        body: JSON.stringify({ operationName: 'GetProfile', query: profileQuery }),
+      });
+      await fetch(`${backendOrigin}/auth/native/credentials`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: ACCOUNT_EMAIL, password: 'hunter2' }),
+      });
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)).toMatchObject({
+        accountUserId: secondId,
+        accountEmail: 'second@example.com',
+      });
+      expect(hasLine('NativeAuth')).toBe(true);
+      expect(hasLine('recording-account-mismatch')).toBe(true);
+    });
+
+    it('refuses another profile while a cached subject is in flight without trusting either identity', async () => {
+      await start({ mode: 'record', fresh: true });
+      let releaseResponse!: () => void;
+      upstream.nextGraphqlBarrier = new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+      });
+      const secondToken = `header.${base64Url(JSON.stringify({ sub: 'second-account' }))}.signature`;
+      const pending = fetch(`${backendOrigin}/graphql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secondToken}` },
+        body: JSON.stringify({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY }),
+      });
+      try {
+        await expect.poll(() => upstream.graphqlRequests.length).toBe(1);
+        upstream.nextGraphqlResponse = { status: 200, body: profileBody };
+        const profileResponse = await postGraphql({ operationName: 'GetProfile', query: profileQuery });
+        expect(await profileResponse.json()).toHaveProperty('errors');
+      } finally {
+        releaseResponse();
+        await pending;
+      }
+      await stop();
+      expect(readScreenshotFixtureManifest(fixturesDir)).toMatchObject({ accountUserId: '', accountEmail: '' });
+      expect(readScreenshotFixtureManifest(fixturesDir)?.graphql.map((entry) => entry.operationName)).toEqual([
+        'SyncTicks',
+      ]);
+      expect(hasLine('recording-account-mismatch')).toBe(true);
+    });
+
+    it('refuses mixed bearer subjects even when neither account requests its profile', async () => {
+      await start({ mode: 'record', fresh: true });
+      await postGraphql({ operationName: 'SyncTicks', query: SYNC_TICKS_QUERY });
+      const before = upstream.graphqlRequests.length;
+      const response = await fetch(`${backendOrigin}/graphql`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer header.${base64Url(JSON.stringify({ sub: 'another-account' }))}.signature`,
+        },
+        body: JSON.stringify({
+          operationName: 'SyncTicks',
+          query: SYNC_TICKS_QUERY,
+          variables: { cursor: { different: true } },
+        }),
+      });
+      expect(await response.json()).toHaveProperty('errors');
+      await stop();
+      expect(upstream.graphqlRequests).toHaveLength(before);
+      expect(readScreenshotFixtureManifest(fixturesDir)).toMatchObject({ accountUserId: '', accountEmail: '' });
+      expect(readScreenshotFixtureManifest(fixturesDir)?.graphql).toHaveLength(1);
+      expect(hasLine('recording-account-mismatch')).toBe(true);
+    });
+
     it('records a graphql response, an auth proxy and a redirected asset without persisting a token', async () => {
       await start({ mode: 'record', fresh: true });
 

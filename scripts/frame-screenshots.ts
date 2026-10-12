@@ -31,11 +31,14 @@ import {
   resolveScreenshotRecipes,
   sha256Screenshot,
   sha256ScreenshotSources,
+  validateScreenshotBoardLabels,
   type CaptionLocale,
   type PresentationManifest,
   type ScreenshotCaption,
   type ScreenshotLayout,
 } from './lib/screenshot-presentation';
+
+import { readCppPage, resolveCppRecipes, isCppTarget, CPP_MANIFEST_PATH, type CppTarget } from './lib/screenshot-cpp';
 
 type MaterialSurface = Record<keyof (typeof materialSurfaces)['dark'], string>;
 
@@ -138,8 +141,10 @@ export async function frameComposition(
   caption: ScreenshotCaption,
   layout: ScreenshotLayout,
   showcase = false,
+  options: { boardLabels?: readonly string[] } = {},
 ): Promise<Buffer> {
-  if (showcase || layout.startsWith('store-')) return frameShowcaseComposition(sources, caption, layout);
+  validateScreenshotBoardLabels(options.boardLabels, layout, sources.length);
+  if (showcase || layout.startsWith('store-')) return frameShowcaseComposition(sources, caption, layout, options);
   if (
     ((layout === 'screen' || layout === 'wall-status' || layout === 'wall-column') && sources.length !== 1) ||
     (layout === 'board-family' && sources.length !== 2 && sources.length !== 3) ||
@@ -289,8 +294,9 @@ export async function frameShowcaseComposition(
   sources: readonly Buffer[],
   caption: ScreenshotCaption,
   layout: ScreenshotLayout,
-  options: { placement?: StoreCreativePlacement } = {},
+  options: { placement?: StoreCreativePlacement; boardLabels?: readonly string[] } = {},
 ): Promise<Buffer> {
+  const boardLabels = validateScreenshotBoardLabels(options.boardLabels, layout, sources.length);
   const boards = layout === 'store-boards';
   const boardCount = 3;
   if (sources.length !== (boards ? boardCount : 1)) throw new Error(`Invalid showcase source count for ${layout}`);
@@ -360,10 +366,25 @@ export async function frameShowcaseComposition(
     const foregroundDrop = wide ? 0.17 : 0.29;
     const sideTop = region.top + height * 0.032;
     const panelBleed = Math.max(2, Math.round(Math.min(width, height) * 0.002)) * 2 + 8;
+    const labelSize = Math.round(Math.min(width, height) * (wide ? 0.02 : 0.025));
+    const labelCellWidth = Math.floor(region.width / 3);
+    const labelPadding = Math.round(labelSize * 0.4);
+    const renderedLabels = boardLabels
+      ? await Promise.all(
+          boardLabels.map((label) =>
+            renderShowcaseText(label, labelSize, labelCellWidth - labelPadding * 2, colors.label, { bold: true }),
+          ),
+        )
+      : [];
+    const labelHeight = Math.max(0, ...renderedLabels.map((label) => label.info.height));
+    if (labelHeight > labelSize * 2.8) throw new Error('Board labels overflow the two-line trio footer');
+    const labelTop = Math.floor(height * 0.94 - labelHeight);
+    const panelBottom = boardLabels ? labelTop - height * 0.015 : height * 0.96;
     const panelWidth = Math.min(
       region.width * 0.49,
-      (height * 0.96 - sideTop - region.height * foregroundDrop - panelBleed) / aspect,
+      (panelBottom - sideTop - region.height * foregroundDrop - panelBleed) / aspect,
     );
+    if (panelWidth <= 0) throw new Error('Board labels leave no room for the complete native panels');
     // Short Header canvases limit phone height; keep the group compact enough
     // that the center spray panel overlaps both sides instead of becoming a row.
     const boardGroupWidth = options.placement ? Math.min(region.width, panelWidth * 2.05) : region.width;
@@ -376,6 +397,13 @@ export async function frameShowcaseComposition(
     for (const index of [0, 2, 1]) {
       const position = positions[index];
       panels.push({ raw: sources[index], ...position, width: panelWidth });
+    }
+    for (const [index, label] of renderedLabels.entries()) {
+      foreground.push({
+        input: label.data,
+        left: Math.round(region.left + (index + 0.5) * labelCellWidth - label.info.width / 2),
+        top: labelTop,
+      });
     }
   } else if (!wide && (layout === 'store-queue' || layout === 'store-wall')) {
     // These details are lifted from the same full native capture shown below.
@@ -641,6 +669,7 @@ export interface FrameDirectoryOptions {
   locale: CaptionLocale;
   input: string;
   output: string;
+  cpp?: CppTarget;
 }
 
 export async function frameDirectory(options: FrameDirectoryOptions): Promise<string[]> {
@@ -653,7 +682,10 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
   const names = readdirSync(input)
     .filter((name) => name.toLowerCase().endsWith('.png'))
     .sort();
-  const recipes = resolveScreenshotRecipes(options.platform, options.device, names);
+  if (options.cpp && options.platform !== 'ios') throw new Error('CPP framing requires iOS');
+  const recipes = options.cpp
+    ? resolveCppRecipes(readCppPage(options.cpp), options.device, names)
+    : resolveScreenshotRecipes(options.platform, options.device, names);
   const outputNames = recipes.map((recipe) => recipe.output);
   const captures = names.map((name) => ({ name, buffer: readFileSync(join(input, name)) }));
   const offenders =
@@ -665,10 +697,32 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
   }
   if (offenders.length) throw new Error(offenders.map(({ file, reason }) => `${file}: ${reason}`).join('\n'));
   const catalog = readCaptionCatalog(options.locale);
+  const cppCapture = options.cpp
+    ? (JSON.parse(readFileSync(join(input, 'cpp-capture.json'), 'utf8')) as {
+        target?: string;
+        fixtureSha256?: string;
+        verified?: boolean;
+      })
+    : undefined;
+  if (options.cpp && cppCapture?.target !== options.cpp)
+    throw new Error('CPP raw captures lack target and fixture provenance');
   const capturesByName = new Map(captures.map((capture) => [capture.name, capture.buffer]));
   mkdirSync(dirname(output), { recursive: true });
   const staging = mkdtempSync(join(dirname(output), '.framing-'));
-  const manifest: PresentationManifest = { version: PRESENTATION_VERSION, locale: options.locale, files: {} };
+  const manifest: PresentationManifest = {
+    version: PRESENTATION_VERSION,
+    locale: options.locale,
+    files: {},
+    ...(options.cpp
+      ? {
+          cpp: {
+            target: options.cpp,
+            manifestSha256: sha256Screenshot(readFileSync(CPP_MANIFEST_PATH)),
+            fixtureSha256: cppCapture?.fixtureSha256,
+          },
+        }
+      : {}),
+  };
   try {
     const thumbnails: Array<{ data: Buffer; info: sharp.OutputInfo }> = [];
     for (const recipe of recipes) {
@@ -679,6 +733,7 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
         catalog[recipe.caption],
         recipe.layout,
         options.platform === 'ios',
+        { boardLabels: recipe.boardLabels },
       );
       writeFileSync(join(staging, name), framed);
       thumbnails.push(await sharp(framed).resize({ width: 270 }).toBuffer({ resolveWithObject: true }));
@@ -696,6 +751,7 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
         rawSha256: buffers.length === 1 ? sha256Screenshot(buffers[0]) : sha256ScreenshotSources(sourceMetadata),
         framedSha256: sha256Screenshot(framed),
         ...(buffers.length > 1 ? { sources: sourceMetadata } : {}),
+        ...(recipe.boardLabels ? { boardLabels: recipe.boardLabels } : {}),
       };
     }
     if (options.platform === 'android') {
@@ -748,6 +804,7 @@ export function parseFrameArguments(argv: readonly string[]): {
   output: string;
   device?: string;
   locale?: CaptionLocale;
+  cpp?: CppTarget;
 } {
   const args = argv.filter((argument) => argument !== '--');
   const flags = new Map<string, string>();
@@ -755,7 +812,7 @@ export function parseFrameArguments(argv: readonly string[]): {
     const flag = args[index];
     const argument = args[index + 1];
     if (
-      !['--platform', '--input', '--output', '--device', '--locale'].includes(flag) ||
+      !['--platform', '--input', '--output', '--device', '--locale', '--cpp'].includes(flag) ||
       !argument ||
       argument.startsWith('--') ||
       flags.has(flag)
@@ -772,6 +829,9 @@ export function parseFrameArguments(argv: readonly string[]): {
       'Usage: screenshot:frame --platform ios|android --input <raw tree> --output <store tree> [--device <slug> --locale en-US|es|fr|de]',
     );
   }
+  const cpp = flags.get('--cpp');
+  if (cpp && (!isCppTarget(cpp) || platform !== 'ios'))
+    throw new Error('--cpp requires an iOS target: kilter|tension|moonboard|spray');
   const locale = flags.get('--locale');
   if (locale && !CAPTION_LOCALES.some((supportedLocale) => supportedLocale === locale))
     throw new Error(`Unsupported caption locale: ${locale}`);
@@ -783,6 +843,7 @@ export function parseFrameArguments(argv: readonly string[]): {
     output: resolve(output),
     device: flags.get('--device'),
     locale: locale as CaptionLocale | undefined,
+    ...(cpp ? { cpp: cpp as CppTarget } : {}),
   };
 }
 
@@ -801,6 +862,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
             throw new Error(`Unrecognized raw screenshot directory: ${directory}`);
           groups.push({
             platform: options.platform,
+            cpp: options.cpp,
             device: basename(directory),
             locale,
             input: directory,
