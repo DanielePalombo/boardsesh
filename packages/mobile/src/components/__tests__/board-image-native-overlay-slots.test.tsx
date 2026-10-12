@@ -4,17 +4,30 @@ import { act, render } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 
 type ViewMockProps = { children?: ReactNode; testID?: string; style?: unknown };
-const imageEvents = vi.hoisted(() => ({ loadCallbacks: [] as Array<() => void> }));
+const imageEvents = vi.hoisted(() => ({
+  loadCallbacks: [] as Array<() => void>,
+  displays: [] as Array<{ uri: string; display?: () => void }>,
+}));
 
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios' },
-  View: ({ children, testID }: ViewMockProps) => createElement('div', { 'data-testid': testID }, children),
+  View: ({ children, testID, style }: ViewMockProps) =>
+    createElement(
+      'div',
+      {
+        'data-testid': testID,
+        'data-opacity':
+          typeof style === 'object' && style !== null && 'opacity' in style ? String(style.opacity) : undefined,
+      },
+      children,
+    ),
   StyleSheet: { create: (styles: Record<string, unknown>) => styles },
 }));
 
 vi.mock('expo-image', () => ({
-  Image: ({ source, onLoad }: { source: { uri: string }; onLoad?: () => void }) => {
+  Image: ({ source, onLoad, onDisplay }: { source: { uri: string }; onLoad?: () => void; onDisplay?: () => void }) => {
     if (onLoad) imageEvents.loadCallbacks.push(onLoad);
+    imageEvents.displays.push({ uri: source.uri, display: onDisplay });
     return createElement('img', { src: source.uri, onLoad });
   },
 }));
@@ -36,10 +49,21 @@ vi.mock('../../hooks/use-native-climb-render', () => ({
     backgroundPaths: ['/bundled/kilter.webp'],
     missingBackgroundCount: 0,
     rendererUnavailable: renderResult.current.rendererUnavailable,
+    artworkIdentity: {
+      boardName: 'kilter',
+      layoutId: 1,
+      sizeId: 10,
+      setIds: '26,27',
+      frames: 'p1r12',
+      renderSignature: 'classic',
+      colorScheme: 'dark',
+    },
   }),
 }));
 
 import { BoardImageNative } from '../BoardImageNative';
+import { cacheRenderedOverlay } from '../../lib/overlay-index';
+import { captureReadyBoardArt } from '../../lib/board-render/ready-board-art';
 
 const BOARD = {
   boardName: 'kilter' as const,
@@ -57,6 +81,70 @@ function overlaySources(container: HTMLElement): string[] {
 }
 
 describe('BoardImageNative overlay layers', () => {
+  it('does not report ordinary unchanged board art again when mirroring its retained native images', () => {
+    imageEvents.displays.length = 0;
+    renderResult.current = { overlayUri: 'file:///overlay-normal.png', rendererUnavailable: false };
+    const displayed = vi.fn();
+    const props = { ...BOARD, frames: 'p1r12', onReadyArtDisplayed: displayed };
+    const { rerender } = render(createElement(BoardImageNative, { ...props, mirrored: false }));
+    act(() => {
+      for (const event of imageEvents.displays) event.display?.();
+    });
+    expect(displayed).toHaveBeenCalledTimes(1);
+    rerender(createElement(BoardImageNative, { ...props, mirrored: true }));
+    act(() => {
+      for (const event of imageEvents.displays) event.display?.();
+    });
+    expect(displayed).toHaveBeenCalledTimes(1);
+    rerender(createElement(BoardImageNative, { ...props, mirrored: false }));
+    expect(displayed).toHaveBeenCalledTimes(1);
+  });
+  it('withholds the exact capture marker from opacity-zero replacement art until the actual visible handoff', () => {
+    imageEvents.displays.length = 0;
+    renderResult.current = { overlayUri: 'file:///overlay-full.png', rendererUnavailable: false };
+    const cached = cacheRenderedOverlay('opening-marker-test', 'file:///overlay-opening.png');
+    const opening = captureReadyBoardArt({
+      ...BOARD,
+      frames: 'p1r12',
+      renderSignature: 'classic',
+      colorScheme: 'dark',
+      climbUuid: 'real-climb',
+      mirrored: false,
+      quality: 'thumbnail',
+      overlayCacheKey: 'opening-marker-test',
+      overlayUri: cached.uri,
+      overlayGeneration: cached.generation,
+      overlayLoadKey: `${cached.generation}:0`,
+      backgroundPaths: ['/bundled/kilter.webp'],
+    });
+    const marker = 'cpp-climb-painted-owned-real-climb';
+    const { container, queryByTestId } = render(
+      createElement(BoardImageNative, {
+        ...BOARD,
+        frames: 'p1r12',
+        readyBoardArt: opening,
+        paintedTestID: marker,
+      }),
+    );
+    expect(container.querySelector('[data-opacity="0"]')).not.toBeNull();
+    expect(queryByTestId(marker)).toBeNull();
+    act(() =>
+      imageEvents.displays
+        .filter((event) => event.uri === 'file:///overlay-full.png')
+        .at(-1)
+        ?.display?.(),
+    );
+    expect(container.querySelector('[data-opacity="0"]')).not.toBeNull();
+    expect(queryByTestId(marker)).toBeNull();
+    act(() =>
+      imageEvents.displays
+        .filter((event) => event.uri === 'file:///bundled/kilter.webp')
+        .at(-1)
+        ?.display?.(),
+    );
+    expect(container.querySelector('[data-opacity="0"]')).toBeNull();
+    expect(queryByTestId(marker)).not.toBeNull();
+  });
   it('drops the retained frame when the frames go empty, because no replacement is coming', () => {
     imageEvents.loadCallbacks.length = 0;
     renderResult.current = { overlayUri: 'file:///overlay-a.png', rendererUnavailable: false };

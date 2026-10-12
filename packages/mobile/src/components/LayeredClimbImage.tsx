@@ -86,6 +86,9 @@ type LayeredClimbImageProps = {
    * (the full-size play view sets this; thumbnails leave it unset).
    */
   overlayTestID?: string;
+  /** Capture identity exposed only after every current image has displayed. */
+  paintedTestID?: string;
+  paintedExtraTestID?: string;
   /**
    * Opt into keeping the last overlay that actually painted mounted underneath
    * while the next one renders, by passing the identity of the board it belongs
@@ -163,6 +166,8 @@ const LayeredClimbImage = React.memo(function LayeredClimbImage({
   revealWithOverlay,
   revealPlaceholderColor,
   overlayTestID,
+  paintedTestID,
+  paintedExtraTestID,
   retainPreviousOverlayFor,
   underOverlay,
   emptyOverlayFallback,
@@ -176,6 +181,7 @@ const LayeredClimbImage = React.memo(function LayeredClimbImage({
   // blank drawer. Gating on onDisplay makes the anchor mean "the lit board is on
   // screen".
   const [overlayPainted, setOverlayPainted] = useState(false);
+  const [paintedAttempt, setPaintedAttempt] = useState<string | null>(null);
   // Native image events can already be queued when React replaces an overlay.
   // Keep the currently rendered attempt in a ref so an old image cannot expose
   // the screenshot anchor after the replacement reset it. The recovery owner
@@ -199,14 +205,20 @@ const LayeredClimbImage = React.memo(function LayeredClimbImage({
   if (visibilityEpochRef.current.hidden !== hidden)
     visibilityEpochRef.current = { hidden, epoch: visibilityEpochRef.current.epoch + 1 };
   const visibilityEpoch = visibilityEpochRef.current.epoch;
-  const displayAttempt = JSON.stringify([
-    overlayUri,
-    overlayLoadKey,
-    recyclingKey,
-    displayIdentity,
-    backgroundPaths,
-    visibilityEpoch,
-  ]);
+  const displayAttempt = JSON.stringify(
+    paintedTestID === undefined
+      ? [overlayUri, overlayLoadKey, recyclingKey, displayIdentity, backgroundPaths, visibilityEpoch]
+      : [
+          overlayUri,
+          overlayLoadKey,
+          recyclingKey,
+          displayIdentity,
+          backgroundPaths,
+          visibilityEpoch,
+          paintedTestID,
+          mirrored ?? false,
+        ],
+  );
   const nativeOverlayIdentity = JSON.stringify([overlayUri, overlayLoadKey, recyclingKey, visibilityEpoch]);
   const backgroundIdentity = JSON.stringify([backgroundPaths, visibilityEpoch]);
   const displayedAttemptRef = useRef({
@@ -240,6 +252,7 @@ const LayeredClimbImage = React.memo(function LayeredClimbImage({
     )
       return;
     current.reported = true;
+    if (paintedTestID) setPaintedAttempt(displayAttempt);
     onArtDisplayed?.(overlayLoadKey ?? null);
   };
   const reportArtDisplayedRef = useRef(reportArtDisplayed);
@@ -470,6 +483,17 @@ const LayeredClimbImage = React.memo(function LayeredClimbImage({
       {/* Screenshot/e2e anchor — see overlayPainted above. Transparent, full-bleed
           (so it has on-screen bounds Maestro can see), and pointer-transparent. */}
       {overlayTestID && overlayPainted && <View testID={overlayTestID} style={styles.layer} pointerEvents="none" />}
+      {paintedTestID &&
+        !hidden &&
+        overlayUri &&
+        backgroundPaths.length > 0 &&
+        missingBackgroundCount === 0 &&
+        paintedAttempt === displayAttempt && (
+          <>
+            <View testID={paintedTestID} style={styles.layer} pointerEvents="none" />
+            {paintedExtraTestID && <View testID={paintedExtraTestID} style={styles.layer} pointerEvents="none" />}
+          </>
+        )}
     </View>
   );
 });

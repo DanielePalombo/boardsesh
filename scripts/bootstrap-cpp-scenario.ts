@@ -6,7 +6,12 @@ import sharp from 'sharp';
 import { getOperationAST, parse } from 'graphql';
 import WebSocket from 'ws';
 import { CREATE_BOARD, GET_MY_BOARDS, UPDATE_BOARD } from '../packages/shared/graphql/src/operations/boards';
-import { SEARCH_CLIMBS } from '../packages/shared/graphql/src/operations/climb-search';
+import { SEARCH_CLIMBS, SEARCH_CLIMBS_COUNT } from '../packages/shared/graphql/src/operations/climb-search';
+import { GET_GRADES, UPDATE_PROFILE } from '../packages/mobile/src/lib/graphql/operations';
+import { formatGrade } from '../packages/shared/play-view/src/grade-display';
+import { buildGradeRailStops } from '../packages/mobile/src/lib/grade-stops';
+import { buildCountPreviewInput } from '../packages/mobile/src/lib/climb-count-preview-input';
+import { DEFAULT_FILTERS } from '../packages/mobile/src/lib/climb-filter-types';
 import { GET_USER_GROUPED_ASCENTS_FEED, SAVE_TICK } from '../packages/shared/graphql/src/operations/ticks';
 import { BOARD_LIVE_SESSIONS } from '../packages/shared/graphql/src/operations/live-sessions';
 import { CREATE_SESSION } from '../packages/shared/graphql/src/operations/create-session';
@@ -43,6 +48,8 @@ import {
   readCppPage,
   isCppTarget,
   isCppAscentId,
+  isCppClimbId,
+  type CppHeroClimb,
   type CppBoard,
   type CppTarget,
   type CppSceneCoverage,
@@ -50,7 +57,7 @@ import {
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const LOCALES = ['en-US', 'es', 'fr', 'de'] as const;
-export const CPP_BOOTSTRAP_PROFILE_QUERY = 'query CppBootstrapProfile { profile { id } }';
+export const CPP_BOOTSTRAP_PROFILE_QUERY = 'query CppBootstrapProfile { profile { id displayName avatarUrl } }';
 const SESSION_STATUS_QUERY = `query CppBootstrapSessionStatus($sessionId: ID!) { sessionStatus(sessionId: $sessionId) }`;
 const OWNED_SESSIONS_QUERY = `query CppBootstrapOwnedSessions { mySessions { id boardPath createdByUserId isActive isPublic isPermanent } }`;
 
@@ -101,6 +108,8 @@ export interface BootstrapAscent extends GroupableEntry {
   isMirror: boolean;
   renderBoard?: { sizeId: number; setIds: number[] } | null;
 }
+/** SearchClimbs selects statsAngle, which is intentionally absent from queue mutation inputs. */
+export type BootstrapClimb = ClimbInput & { statsAngle?: number | null };
 export interface BootstrapCheckpoint {
   version: 1;
   upstream: string;
@@ -161,6 +170,137 @@ export interface BootstrapResult {
   actions: string[];
   blockers: string[];
   scenario?: ScreenshotCaptureScenario;
+}
+
+/** At most ten genuine query rows per board, with no fallback outside that page. */
+export function selectCppHeroClimbs(
+  sources: readonly {
+    variantId: string;
+    board: BootstrapBoard;
+    climbs: readonly BootstrapClimb[];
+    requireBenchmark?: boolean;
+  }[],
+): Record<string, CppHeroClimb> | undefined {
+  if (sources.length > 3) throw new Error('CPP hero selection is bounded to one three-board trio');
+  const choices = sources.map(({ board, climbs, requireBenchmark }) =>
+    climbs.slice(0, 10).flatMap((climb): CppHeroClimb[] => {
+      if (
+        !isCppClimbId(climb.uuid) ||
+        !climb.name?.trim() ||
+        !climb.frames ||
+        climb.boardType !== board.boardType ||
+        climb.layoutId !== board.layoutId ||
+        (climb.angle != null && climb.angle !== board.angle) ||
+        (climb.compatibleSizeIds != null && !climb.compatibleSizeIds.includes(board.sizeId)) ||
+        (climb.missingHoldCount != null && climb.missingHoldCount > 0) ||
+        (board.boardType === 'kilter' && /^moon\s*landing$/i.test(climb.name.trim()))
+      )
+        return [];
+      const benchmark = climb.benchmark_difficulty == null ? undefined : Number(climb.benchmark_difficulty);
+      if (
+        requireBenchmark &&
+        (benchmark === undefined || !Number.isFinite(benchmark) || benchmark <= 0 || climb.statsAngle !== board.angle)
+      )
+        return [];
+      return [
+        {
+          boardId: board.uuid,
+          climbId: climb.uuid,
+          readyText: climb.name,
+          gradeLabel: formatGrade(climb.difficulty, 'v-grade', board.boardType) ?? '',
+          ...(climb.statsAngle != null ? { statsAngle: climb.statsAngle } : {}),
+          ...(benchmark !== undefined && Number.isFinite(benchmark) && benchmark > 0 && climb.statsAngle === board.angle
+            ? { benchmarkDifficulty: benchmark }
+            : {}),
+        },
+      ];
+    }),
+  );
+  let best: CppHeroClimb[] | undefined;
+  let bestScore = -1;
+  const visit = (selected: CppHeroClimb[], names: Set<string>, grades: Set<string>) => {
+    if (selected.length === choices.length) {
+      if (grades.size > bestScore) {
+        best = [...selected];
+        bestScore = grades.size;
+      }
+      return;
+    }
+    for (const candidate of choices[selected.length]) {
+      const title = candidate.readyText.trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
+      if (names.has(title)) continue;
+      visit(
+        [...selected, candidate],
+        new Set([...names, title]),
+        new Set([...grades, ...(candidate.gradeLabel ? [candidate.gradeLabel] : [])]),
+      );
+    }
+  };
+  visit([], new Set(), new Set());
+  return best ? Object.fromEntries(sources.map((source, index) => [source.variantId, best![index]])) : undefined;
+}
+
+export async function ensureScreenshotCatalogueName(
+  options: BootstrapOptions,
+  variant: CppBoard,
+  board: BootstrapBoard,
+  actions: string[],
+): Promise<BootstrapBoard> {
+  if (variant.family === 'spray' || !/^test user(?:['’]s)?\b/i.test(board.name)) return board;
+  if (
+    board.ownerId !== options.accountUserId ||
+    !board.canEdit ||
+    board.isPublic !== false ||
+    !boardMatchesConfig(board, variant)
+  )
+    throw new Error(`${variant.id}: generated QA board name is not an editable private owned configuration`);
+  const name = `Liz's ${variant.selector.replace(/^(Kilter|Tension) Board /, '$1 ')}`;
+  actions.push(`${variant.id}: set own private QA board name to ${name}`);
+  if (!options.apply) return board;
+  await options.transport.request(UPDATE_BOARD, { input: { boardUuid: board.uuid, name } });
+  const after = (await listOwnedBoards(options)).find((candidate) => candidate.uuid === board.uuid);
+  if (
+    !after ||
+    after.name !== name ||
+    after.ownerId !== board.ownerId ||
+    !after.canEdit ||
+    after.isPublic !== false ||
+    !boardMatchesConfig(after, variant) ||
+    after.layoutId !== board.layoutId ||
+    after.sizeId !== board.sizeId ||
+    after.angle !== board.angle ||
+    after.setIds !== board.setIds
+  )
+    throw new Error(
+      `${variant.id}: name-only QA board update failed fresh ownership/configuration/privacy verification`,
+    );
+  return after;
+}
+
+export async function ensureScreenshotProfileName(
+  options: BootstrapOptions,
+  actions: string[],
+): Promise<string | null> {
+  type Profile = { id: string; displayName: string | null; avatarUrl: string | null };
+  const before = (await options.transport.request<{ profile: Profile | null }>(CPP_BOOTSTRAP_PROFILE_QUERY)).profile;
+  if (!before || before.id !== options.accountUserId)
+    return 'screenshot profile is not the authenticated checkpoint owner';
+  if (before.displayName === 'Liz') return null;
+  actions.push('screenshot account: set own display name to Liz');
+  if (!options.apply) return 'screenshot display-name update requires --apply';
+  const updated = await options.transport.request<{ updateProfile: Profile }>(UPDATE_PROFILE, {
+    input: { displayName: 'Liz' },
+  });
+  const after = (await options.transport.request<{ profile: Profile | null }>(CPP_BOOTSTRAP_PROFILE_QUERY)).profile;
+  if (
+    updated.updateProfile.id !== before.id ||
+    !after ||
+    after.id !== before.id ||
+    after.displayName !== 'Liz' ||
+    after.avatarUrl !== before.avatarUrl
+  )
+    return 'screenshot account display-name update failed fresh owner/name/avatar verification';
+  return null;
 }
 
 export function boardMatchesConfig(board: BootstrapBoard, variant: CppBoard): boolean {
@@ -647,10 +787,12 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
       };
     }
   }
+  const profileProblem = await ensureScreenshotProfileName(options, actions);
+  if (profileProblem) return { target: options.target, boards: [], actions, blockers: [profileProblem] };
   const selected = new Map<string, BootstrapBoard>();
   const boardReadyText: Record<string, string> = {};
   const boardPhotoSha256: Record<string, string> = {};
-  const climbsByBoard = new Map<string, ClimbInput[]>();
+  const climbsByBoard = new Map<string, BootstrapClimb[]>();
   const boardHeroModes: Record<string, 'climb' | 'wall-editor'> = {};
   const boardClimbCounts: Record<string, number> = {};
   const boardReadyTextByLocale: Record<string, Record<(typeof LOCALES)[number], string>> = {};
@@ -723,8 +865,9 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
         .update(readFileSync(resolve(ROOT, variant.photo!)))
         .digest('hex');
     }
+    board = await ensureScreenshotCatalogueName(options, variant, board, actions);
     selected.set(variant.id, board);
-    const result = await options.transport.request<{ searchClimbs: { climbs: ClimbInput[] } }>(SEARCH_CLIMBS, {
+    const result = await options.transport.request<{ searchClimbs: { climbs: BootstrapClimb[] } }>(SEARCH_CLIMBS, {
       input: {
         boardName: board.boardType,
         layoutId: board.layoutId,
@@ -735,6 +878,8 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
         pageSize: 10,
         sortBy: 'ascents',
         sortOrder: 'desc',
+        boulders: true,
+        routes: false,
       },
     });
     const climbs = result.searchClimbs.climbs.filter(
@@ -756,6 +901,37 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
       boardReadyTextByLocale[variant.id] = labels;
       boardHeroModes[variant.id] = 'wall-editor';
     } else blockers.push(`${variant.id}: no published, drawable real climb returned by SearchClimbs`);
+  }
+  const heroClimbs: Record<string, CppHeroClimb> = {};
+  for (const trio of [page.heroBoards, page.otherBoards]) {
+    const sources = trio.flatMap((variant) => {
+      const board = selected.get(variant.id);
+      return board && boardHeroModes[variant.id] === 'climb'
+        ? [
+            {
+              variantId: variant.id,
+              board,
+              climbs: climbsByBoard.get(board.uuid) ?? [],
+              requireBenchmark: options.target === 'moonboard' && variant.id === page.primaryBoard.id,
+            },
+          ]
+        : [];
+    });
+    if (!sources.length) continue;
+    const chosen = selectCppHeroClimbs(sources);
+    if (!chosen)
+      blockers.push(
+        sources.some(
+          (source) =>
+            source.requireBenchmark &&
+            !source.climbs
+              .slice(0, 10)
+              .some((climb) => Number(climb.benchmark_difficulty) > 0 && climb.statsAngle === source.board.angle),
+        )
+          ? `${options.target}: primary first ten real climbs have no benchmark at the captured angle; benchmark marketing requires verified evidence`
+          : `${options.target}: first ten real climbs do not contain distinct drawable trio titles; no hero selection invented`,
+      );
+    else Object.assign(heroClimbs, chosen);
   }
   const primary = selected.get(page.primaryBoard.id);
   let scenario: ScreenshotCaptureScenario | undefined;
@@ -931,6 +1107,47 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
       status: { ...makeScene(firstClimb), climbId: climbs[0].uuid },
       island: makeScene(firstClimb),
     };
+    const grades = (
+      await options.transport.request<{ grades: Array<{ difficultyId: number; name: string }> }>(GET_GRADES, {
+        boardName: primary.boardType,
+      })
+    ).grades;
+    const stops = buildGradeRailStops(grades, 'v-grade', primary.boardType);
+    const labels = new Set(
+      climbs
+        .slice(0, 10)
+        .map((climb) => formatGrade(climb.difficulty, 'v-grade', primary.boardType))
+        .filter(Boolean),
+    );
+    const supported = stops.filter((stop) => labels.has(stop.label));
+    const lower = supported[0];
+    const upper = supported[1] ?? lower;
+    if (lower && upper) {
+      const counted = await options.transport.request<{ searchClimbs: { totalCount: number } }>(SEARCH_CLIMBS_COUNT, {
+        input: buildCountPreviewInput(
+          { ...DEFAULT_FILTERS, minGrade: lower.minGradeId, maxGrade: upper.maxGradeId },
+          {},
+          {
+            boardName: primary.boardType,
+            layoutId: primary.layoutId,
+            sizeId: primary.sizeId,
+            setIds: primary.setIds,
+            angle: primary.angle,
+          },
+          '',
+        ),
+      });
+      if (!Number.isSafeInteger(counted.searchClimbs.totalCount) || counted.searchClimbs.totalCount < 1)
+        blockers.push(`${options.target}: selected real grade rail bounds have no verified positive API count`);
+      else
+        scenes.search.gradeFilter = {
+          minLabel: lower.label,
+          ...(upper !== lower ? { maxLabel: upper.label } : {}),
+          minGradeId: lower.minGradeId,
+          maxGradeId: upper.maxGradeId,
+          expectedCount: counted.searchClimbs.totalCount,
+        };
+    } else blockers.push(`${options.target}: genuine primary climb grades do not match available grade rail stops`);
     if (options.target === 'spray') {
       const projects = await options.transport.request<{ smartPlaylist: { climbs: ClimbInput[] } }>(
         GET_SMART_PLAYLIST,
@@ -963,6 +1180,7 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
         boards: variants.map((variant) => selected.get(variant.id)!.name),
         cpp: {
           target: options.target,
+          heroClimbs,
           boardReadyText,
           boardIds: Object.fromEntries(variants.map((variant) => [variant.id, selected.get(variant.id)!.uuid])),
           boardNames: Object.fromEntries(variants.map((variant) => [variant.id, selected.get(variant.id)!.name])),

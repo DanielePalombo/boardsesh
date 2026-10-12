@@ -37,6 +37,7 @@ import { buildOpeningLayoutKey } from './opening-layout-cache';
 import { usePlayNavigationModel } from './use-play-navigation-model';
 import { usePlayLayoutMeasurements, usePlayOpeningLayout } from './use-play-opening-layout';
 import { DeferredBoard } from './DeferredBoard';
+import { screenshotPaintedClimbTestId, screenshotLocalMirrorTestId } from '../../lib/screenshot-climb-selection';
 import { PlayCoreSheetHosts } from './PlayCoreSheetHosts';
 import { usePlayFavorite } from './use-play-favorite';
 import { usePlaySelectionController } from './use-play-selection-controller';
@@ -1142,6 +1143,14 @@ export function PlayCore({
 
   const handleMirror = useCallback(() => {
     if (!displayedClimbUuid) return;
+    // New CPP selections may photograph a local preview, never change a crew's
+    // shared orientation if its session restores between readiness and the tap.
+    if (
+      process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' &&
+      process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS?.includes('screenshotClimbId=') === true &&
+      sharesMirrorState
+    )
+      return;
     if (sharesMirrorState && currentClimbQueueItem) {
       void mirrorCurrentClimb(!isMirrored, currentClimbQueueItem.uuid);
     } else {
@@ -1598,6 +1607,29 @@ export function PlayCore({
                         {showBrowseFrame ? <BrowseFrameOverlay /> : null}
                         {boardRenderData ? (
                           <DeferredBoard
+                            capturePaintedTestID={screenshotPaintedClimbTestId(
+                              process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' &&
+                                process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS?.includes('screenshotClimbId=') ===
+                                  true,
+                              activeBoardForNavigation,
+                              renderBoardConfig,
+                              displayedClimb,
+                              isMirrored,
+                            )}
+                            captureLocalMirrorTestID={screenshotLocalMirrorTestId(
+                              {
+                                captureEnabled:
+                                  process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' &&
+                                  process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS?.includes('screenshotClimbId=') ===
+                                    true,
+                                supportsMirroring,
+                                sessionId,
+                                isPreview,
+                              },
+                              activeBoardForNavigation,
+                              renderBoardConfig,
+                              displayedClimb,
+                            )}
                             open={isSheetOpen}
                             containerSize={boardContainerSize}
                             boardName={boardName as BoardName}

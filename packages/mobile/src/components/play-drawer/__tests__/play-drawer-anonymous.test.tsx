@@ -72,6 +72,7 @@ const queueActions = vi.hoisted(() => ({
   nextClimb: vi.fn(),
   previousClimb: vi.fn(),
   addToQueue: vi.fn(async () => 'added'),
+  mirrorCurrentClimb: vi.fn(async () => true),
 }));
 // Mutable session fixtures: whether another climber is in the session, and the
 // navigation state the drawer swipes through. Read at call time so a case can
@@ -1341,6 +1342,39 @@ describe('PlayDrawer — the mirror toggle and the wall', () => {
     };
     return ble.current;
   };
+
+  it.each(['normal', 'legacy-cpp', 'selected-cpp'] as const)(
+    'isolates a restored shared-session mirror only for new explicit CPP selections (%s)',
+    (mode) => {
+      const previousMode = process.env.EXPO_PUBLIC_SCREENSHOT_MODE;
+      const previousCommands = process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS;
+      process.env.EXPO_PUBLIC_SCREENSHOT_MODE = mode === 'normal' ? '0' : '1';
+      process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS =
+        mode === 'selected-cpp' ? '{"hero-1":{"route":"/climbs?screenshotClimbId=real"}}' : '{}';
+      queueActions.mirrorCurrentClimb.mockClear();
+      try {
+        session.currentItem = { uuid: 'queue-item-current', climb: CLIMB };
+        const { rerender } = render(drawerElement('member', committedTargetFor(CLIMB)));
+        // Restore after the local surface was eligible: the action must use the
+        // current session state, rather than trusting the earlier capture gate.
+        session.sessionId = 'restored-session';
+        session.isShared = true;
+        rerender(drawerElement('member', committedTargetFor(CLIMB)));
+        act(() => {
+          (lastActionBarProps().onMirror as () => void)();
+        });
+        // mirrorCurrentClimb is the provider's setQueueMirrored dispatch path.
+        expect(queueActions.mirrorCurrentClimb).toHaveBeenCalledTimes(mode === 'selected-cpp' ? 0 : 1);
+        if (mode !== 'selected-cpp')
+          expect(queueActions.mirrorCurrentClimb).toHaveBeenCalledWith(true, 'queue-item-current');
+      } finally {
+        if (previousMode === undefined) delete process.env.EXPO_PUBLIC_SCREENSHOT_MODE;
+        else process.env.EXPO_PUBLIC_SCREENSHOT_MODE = previousMode;
+        if (previousCommands === undefined) delete process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS;
+        else process.env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS = previousCommands;
+      }
+    },
+  );
 
   it('mirrors a preview on screen only', () => {
     const bluetooth = connectBle();

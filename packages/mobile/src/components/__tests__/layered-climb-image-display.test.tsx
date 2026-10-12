@@ -10,7 +10,8 @@ const native = vi.hoisted(() => ({
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios' },
   StyleSheet: { create: (styles: unknown) => styles },
-  View: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
+  View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
+    createElement('div', { 'data-testid': testID }, children),
 }));
 vi.mock('expo-image', () => ({
   Image: ({ source, onLoad, onDisplay }: { source: { uri: string }; onLoad?: () => void; onDisplay?: () => void }) => {
@@ -30,6 +31,115 @@ describe('native artwork display handoff', () => {
   beforeEach(() => {
     native.events.length = 0;
     native.hidden = false;
+  });
+  it('exposes a selected-climb marker only after every current native image displays, and rejects stale callbacks after replacement', () => {
+    const initial = {
+      overlayUri: 'file:///first.png',
+      overlayLoadKey: '1:0',
+      backgroundPaths: ['/board.webp'],
+      paintedTestID: 'cpp-climb-painted-owned-first',
+    };
+    const { rerender, queryByTestId } = render(createElement(LayeredClimbImage, initial));
+    const stale = latest('file:///first.png');
+    act(() => {
+      latest('file:///first.png').load?.();
+      latest('file:///board.webp').load?.();
+    });
+    expect(queryByTestId(initial.paintedTestID)).toBeNull();
+    act(() => latest('file:///first.png').display?.());
+    expect(queryByTestId(initial.paintedTestID)).toBeNull();
+    act(() => latest('file:///board.webp').display?.());
+    expect(queryByTestId(initial.paintedTestID)).not.toBeNull();
+    const next = {
+      ...initial,
+      overlayUri: 'file:///second.png',
+      overlayLoadKey: '2:0',
+      paintedTestID: 'cpp-climb-painted-owned-second',
+    };
+    rerender(createElement(LayeredClimbImage, next));
+    expect(queryByTestId(initial.paintedTestID)).toBeNull();
+    expect(queryByTestId(next.paintedTestID)).toBeNull();
+    act(() => stale.display?.());
+    expect(queryByTestId(next.paintedTestID)).toBeNull();
+    act(() => latest('file:///second.png').display?.());
+    expect(queryByTestId(next.paintedTestID)).not.toBeNull();
+    native.hidden = true;
+    rerender(createElement(LayeredClimbImage, { ...next, displayIdentity: 'hidden' }));
+    expect(queryByTestId(next.paintedTestID)).toBeNull();
+    native.hidden = false;
+    rerender(createElement(LayeredClimbImage, { ...next, displayIdentity: 'shown' }));
+    expect(queryByTestId(next.paintedTestID)).toBeNull();
+  });
+  it('does not label missing or backgroundless artwork as a painted board', () => {
+    const props = {
+      overlayUri: 'file:///holds.png',
+      overlayLoadKey: '1:0',
+      backgroundPaths: [],
+      paintedTestID: 'cpp-climb-painted-incomplete',
+    };
+    const { rerender, queryByTestId } = render(createElement(LayeredClimbImage, props));
+    act(() => latest('file:///holds.png').display?.());
+    expect(queryByTestId(props.paintedTestID)).toBeNull();
+    rerender(
+      createElement(LayeredClimbImage, { ...props, backgroundPaths: ['/board.webp'], missingBackgroundCount: 1 }),
+    );
+    act(() => latest('file:///board.webp').display?.());
+    expect(queryByTestId(props.paintedTestID)).toBeNull();
+  });
+  it('binds mirror readiness to the actual transformed stack and reuses genuinely unchanged decoded images', () => {
+    const base = {
+      overlayUri: 'file:///holds.png',
+      overlayLoadKey: '1:0',
+      backgroundPaths: ['/board.webp'],
+      paintedTestID: 'cpp-climb-painted-owned-climb',
+      paintedExtraTestID: 'cpp-climb-local-mirror-owned-climb',
+    };
+    const { rerender, queryByTestId } = render(createElement(LayeredClimbImage, { ...base, mirrored: false }));
+    act(() => {
+      latest('file:///holds.png').display?.();
+      latest('file:///board.webp').display?.();
+    });
+    expect(queryByTestId(base.paintedTestID)).not.toBeNull();
+    expect(queryByTestId(base.paintedExtraTestID)).not.toBeNull();
+    rerender(
+      createElement(LayeredClimbImage, { ...base, mirrored: true, paintedTestID: `${base.paintedTestID}-mirrored` }),
+    );
+    expect(queryByTestId(base.paintedTestID)).toBeNull();
+    expect(queryByTestId(`${base.paintedTestID}-mirrored`)).not.toBeNull();
+    rerender(
+      createElement(LayeredClimbImage, {
+        ...base,
+        mirrored: true,
+        paintedTestID: `${base.paintedTestID}-mirrored`,
+        paintedExtraTestID: undefined,
+      }),
+    );
+    expect(queryByTestId(base.paintedExtraTestID)).toBeNull();
+    expect(queryByTestId(`${base.paintedTestID}-mirrored`)).not.toBeNull();
+  });
+  it('keeps normal mirror changes on the original display identity without duplicate image reports', () => {
+    const displayed = vi.fn();
+    const props = {
+      overlayUri: 'file:///holds.png',
+      overlayLoadKey: '1:0',
+      backgroundPaths: ['/board.webp'],
+      displayIdentity: 'ordinary-art',
+      onArtDisplayed: displayed,
+    };
+    const { rerender } = render(createElement(LayeredClimbImage, { ...props, mirrored: false }));
+    act(() => {
+      latest('file:///holds.png').display?.();
+      latest('file:///board.webp').display?.();
+    });
+    expect(displayed).toHaveBeenCalledExactlyOnceWith('1:0');
+    rerender(createElement(LayeredClimbImage, { ...props, mirrored: true }));
+    act(() => {
+      latest('file:///holds.png').display?.();
+      latest('file:///board.webp').display?.();
+    });
+    expect(displayed).toHaveBeenCalledTimes(1);
+    rerender(createElement(LayeredClimbImage, { ...props, mirrored: false }));
+    expect(displayed).toHaveBeenCalledTimes(1);
   });
   it('requires display, not load, of every background and the exact overlay', () => {
     const displayed = vi.fn();

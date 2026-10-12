@@ -7,6 +7,9 @@ import {
   boardMatchesConfig,
   sessionPathMatchesBoard,
   selectCppLogbookAscent,
+  selectCppHeroClimbs,
+  ensureScreenshotProfileName,
+  ensureScreenshotCatalogueName,
   bootstrapCppScenario,
   photosMatch,
   ensureSprayPhoto,
@@ -34,6 +37,8 @@ import {
 import { AscentFeedInputSchema, SaveTickInputSchema } from '../../packages/backend/src/validation/schemas/ticks';
 import { CreateSessionInputSchema } from '../../packages/backend/src/validation/schemas/sessions';
 import { GetSmartPlaylistInputSchema } from '../../packages/backend/src/validation/schemas/playlists';
+import { UpdateProfileInputSchema } from '../../packages/backend/src/validation/schemas/users';
+import { getBoulderGradesForBoard } from '../../packages/board-constants/src/boulder-grade-mapping';
 import {
   CreateSprayWallInputSchema,
   CreateSprayWallVersionInputSchema,
@@ -55,6 +60,8 @@ const INPUT_SCHEMAS = {
   CreateBoard: CreateBoardInputSchema,
   UpdateBoard: UpdateBoardInputSchema,
   SearchClimbs: ClimbSearchInputSchema,
+  SearchClimbsCount: ClimbSearchInputSchema,
+  UpdateProfile: UpdateProfileInputSchema,
   GetUserGroupedAscentsFeed: AscentFeedInputSchema,
   SaveTick: SaveTickInputSchema,
   CreateSession: CreateSessionInputSchema,
@@ -83,7 +90,7 @@ function genuineClimb(board: BootstrapBoard): ClimbInput {
     boardType: board.boardType,
     layoutId: board.layoutId,
     ascensionist_count: 4,
-    difficulty: '17',
+    difficulty: '6a/V3',
     difficulty_error: '0',
     quality_average: '3',
     stars: 3,
@@ -166,6 +173,20 @@ function manufacturerHarness(): {
       operations.push({ name, variables });
       let response: unknown;
       switch (name) {
+        case 'CppBootstrapProfile':
+          response = { profile: { id: ACCOUNT, displayName: 'Liz', avatarUrl: null } };
+          break;
+        case 'GetGrades':
+          response = {
+            grades: getBoulderGradesForBoard(variables.boardName as string).map((grade) => ({
+              difficultyId: grade.difficulty_id,
+              name: grade.difficulty_name,
+            })),
+          };
+          break;
+        case 'SearchClimbsCount':
+          response = { searchClimbs: { totalCount: 37 } };
+          break;
         case 'GetMyBoards':
           response = { myBoards: { boards: owned, hasMore: false } };
           break;
@@ -227,6 +248,12 @@ function manufacturerHarness(): {
           };
           owned.push(board);
           response = { createBoard: board };
+          break;
+        }
+        case 'UpdateBoard': {
+          const input = variables.input as { boardUuid: string; name: string };
+          owned.find((board) => board.uuid === input.boardUuid)!.name = input.name;
+          response = { updateBoard: owned.find((board) => board.uuid === input.boardUuid) };
           break;
         }
         case 'CppBootstrapOwnedSessions':
@@ -360,6 +387,183 @@ function sprayRenameHarness(variantIndex = 0) {
   };
   return { ...harness, variant, originalBoard, originalWall, calls, behavior, currentBoard: () => board };
 }
+
+describe('genuine marketing climb and account coverage', () => {
+  it('chooses three distinct titles and displayed grades without changing primary scene climbs', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variants = readCppPage('kilter').heroBoards;
+    const sources = harness.owned.slice(0, 3).map((board, index) => ({
+      variantId: variants[index].id,
+      board,
+      climbs: [
+        { ...genuineClimb(board), name: 'Moon Landing' },
+        { ...genuineClimb(board), uuid: testUuid(940 + index), name: 'Shared name', difficulty: '6a/V3' },
+        {
+          ...genuineClimb(board),
+          uuid: testUuid(950 + index),
+          name: `Real route ${index}`,
+          difficulty: ['6a/V3', '6b/V4', '6c/V5'][index],
+        },
+      ],
+    }));
+    const selected = selectCppHeroClimbs(sources)!;
+    expect(new Set(Object.values(selected).map((climb) => climb.readyText)).size).toBe(3);
+    expect(Object.values(selected).map((climb) => climb.gradeLabel)).toEqual(['V3', 'V4', 'V5']);
+    expect(Object.values(selected).every((climb) => climb.readyText !== 'Moon Landing')).toBe(true);
+    const request = harness.options.transport.request;
+    harness.options.transport.request = async <T>(
+      query: string,
+      variables: Record<string, unknown> = {},
+    ): Promise<T> => {
+      if (getOperationAST(parse(query))?.name?.value === 'SearchClimbs') {
+        validateActualInput('SearchClimbs', variables);
+        const input = variables.input as { boardName: string; layoutId: number; sizeId: number };
+        const source = sources.find(
+          ({ board }) =>
+            board.boardType === input.boardName && board.layoutId === input.layoutId && board.sizeId === input.sizeId,
+        );
+        if (source) return { searchClimbs: { climbs: source.climbs } } as T;
+      }
+      return request<T>(query, variables);
+    };
+    const result = await bootstrapCppScenario(harness.options);
+    expect(result.blockers).toEqual([]);
+    expect(result.scenario?.cpp?.heroClimbs?.[variants[0].id]).toEqual(selected[variants[0].id]);
+    expect(result.scenario?.cpp?.scenes.status.climbId).toBe(sources[0].climbs[0].uuid);
+    expect(result.scenario?.cpp?.scenes.status.readyText).toBe('Moon Landing');
+    expect(result.scenario?.cpp?.scenes.search.gradeFilter).toMatchObject({ minLabel: 'V3', expectedCount: 37 });
+    expect(harness.operations.find((operation) => operation.name === 'SearchClimbsCount')?.variables.input).toEqual({
+      boardName: sources[0].board.boardType,
+      layoutId: sources[0].board.layoutId,
+      sizeId: sources[0].board.sizeId,
+      setIds: sources[0].board.setIds,
+      angle: 40,
+      minGrade: result.scenario?.cpp?.scenes.search.gradeFilter?.minGradeId,
+      maxGrade: result.scenario?.cpp?.scenes.search.gradeFilter?.maxGradeId,
+      boulders: true,
+      page: 0,
+      pageSize: 1,
+      sortBy: 'ascents',
+      sortOrder: 'desc',
+    });
+  });
+
+  it('uses only the first ten exact-config drawable rows and proves benchmarks at the captured angle', () => {
+    const { owned } = manufacturerHarness();
+    const board = { ...owned[0], boardType: 'moonboard' };
+    const candidate = { ...genuineClimb(board), benchmark_difficulty: '19', statsAngle: 40 };
+    expect(selectCppHeroClimbs([{ variantId: 'moon', board, climbs: [candidate] }])?.moon).toMatchObject({
+      climbId: candidate.uuid,
+      statsAngle: 40,
+      benchmarkDifficulty: 19,
+    });
+    expect(
+      selectCppHeroClimbs([
+        { variantId: 'moon', board, climbs: [{ ...candidate, statsAngle: 25 }], requireBenchmark: true },
+      ]),
+    ).toBeUndefined();
+    expect(
+      selectCppHeroClimbs([
+        { variantId: 'moon', board, climbs: [{ ...candidate, benchmark_difficulty: '0' }], requireBenchmark: true },
+      ]),
+    ).toBeUndefined();
+    expect(
+      selectCppHeroClimbs([
+        {
+          variantId: 'moon',
+          board,
+          climbs: [{ ...candidate, uuid: testUuid(966), benchmark_difficulty: null }, candidate],
+          requireBenchmark: true,
+        },
+      ])?.moon.climbId,
+    ).toBe(candidate.uuid);
+    expect(
+      selectCppHeroClimbs([{ variantId: 'moon', board, climbs: [{ ...candidate, statsAngle: 25 }] }])?.moon
+        .benchmarkDifficulty,
+    ).toBeUndefined();
+    for (const invalid of [
+      { layoutId: 999 },
+      { angle: 25 },
+      { compatibleSizeIds: [999] },
+      { missingHoldCount: 1 },
+      { uuid: 'fabricated' },
+    ])
+      expect(
+        selectCppHeroClimbs([{ variantId: 'moon', board, climbs: [{ ...candidate, ...invalid }] }]),
+      ).toBeUndefined();
+    const invalidRows = Array.from({ length: 10 }, () => ({ ...candidate, frames: '' }));
+    expect(selectCppHeroClimbs([{ variantId: 'moon', board, climbs: [...invalidRows, candidate] }])).toBeUndefined();
+    expect(() =>
+      selectCppHeroClimbs(Array.from({ length: 4 }, () => ({ variantId: 'moon', board, climbs: [candidate] }))),
+    ).toThrow('bounded');
+  });
+
+  it('renames only the authenticated profile with a name-only API input and fresh immutable avatar proof', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const profile = { id: ACCOUNT, displayName: 'Test User', avatarUrl: 'https://avatar.example.test/existing' };
+    const calls: Array<{ name: string; variables: Record<string, unknown> }> = [];
+    harness.options.transport.request = async <T>(
+      query: string,
+      variables: Record<string, unknown> = {},
+    ): Promise<T> => {
+      expect(validate(API_SCHEMA, parse(query))).toEqual([]);
+      const name = getOperationAST(parse(query))?.name?.value ?? '';
+      calls.push({ name, variables });
+      if (name === 'CppBootstrapProfile') return { profile: { ...profile } } as T;
+      validateActualInput(name, variables);
+      expect(variables.input).toEqual({ displayName: 'Liz' });
+      profile.displayName = 'Liz';
+      return { updateProfile: { ...profile } } as T;
+    };
+    expect(await ensureScreenshotProfileName(harness.options, [])).toBeNull();
+    expect(calls.map((call) => call.name)).toEqual(['CppBootstrapProfile', 'UpdateProfile', 'CppBootstrapProfile']);
+    expect(await ensureScreenshotProfileName(harness.options, [])).toBeNull();
+    expect(calls.filter((call) => call.name === 'UpdateProfile')).toHaveLength(1);
+    profile.id = testUuid(999);
+    expect(await ensureScreenshotProfileName(harness.options, [])).toContain('authenticated checkpoint owner');
+    expect(calls.filter((call) => call.name === 'UpdateProfile')).toHaveLength(1);
+  });
+
+  it('plans profile changes without writes and fails a stale name/avatar reread', async () => {
+    const harness = manufacturerHarness();
+    const profile = { id: ACCOUNT, displayName: 'Test User', avatarUrl: null };
+    const request = vi.fn(async <T>(query: string): Promise<T> =>
+      getOperationAST(parse(query))?.name?.value === 'CppBootstrapProfile'
+        ? ({ profile } as T)
+        : ({ updateProfile: { ...profile, displayName: 'Liz' } } as T),
+    );
+    harness.options.transport.request = async <T>(query: string): Promise<T> => (await request(query)) as T;
+    expect(await ensureScreenshotProfileName(harness.options, [])).toContain('--apply');
+    expect(request).toHaveBeenCalledTimes(1);
+    harness.options.apply = true;
+    expect(await ensureScreenshotProfileName(harness.options, [])).toContain('fresh owner/name/avatar');
+  });
+
+  it('renames a generated private QA board without changing its identity or configuration', async () => {
+    const harness = manufacturerHarness();
+    const variant = readCppPage('kilter').heroBoards[0];
+    const board = harness.owned[0];
+    board.name = "Test User's Kilter Original 12×12";
+    board.isPublic = false;
+    harness.options.apply = true;
+    const before = { ...board };
+    const renamed = await ensureScreenshotCatalogueName(harness.options, variant, board, []);
+    expect(renamed.name).toBe("Liz's Kilter Original 12x12");
+    expect(renamed).toEqual({ ...before, name: renamed.name });
+    expect(harness.operations.find((operation) => operation.name === 'UpdateBoard')?.variables.input).toEqual({
+      boardUuid: before.uuid,
+      name: renamed.name,
+    });
+    board.name = "Test User's public board";
+    board.isPublic = true;
+    await expect(ensureScreenshotCatalogueName(harness.options, variant, board, [])).rejects.toThrow(
+      'editable private owned',
+    );
+    expect(harness.operations.filter((operation) => operation.name === 'UpdateBoard')).toHaveLength(1);
+  });
+});
 
 describe('verified spray wall names', () => {
   it.each([0, 1, 2])('applies only the requested name to verified owned variant %s', async (variantIndex) => {
@@ -592,6 +796,7 @@ describe('CPP account/bootstrap safety', () => {
           })),
         } as T;
       if (name === 'GetSprayWallWithVersions') return { sprayWall: walls[0] } as T;
+      if (name === 'CppBootstrapProfile') return { profile: { id: ACCOUNT, displayName: 'Liz', avatarUrl: null } } as T;
       if (name === 'SearchClimbs') return { searchClimbs: { climbs: [] } } as T;
       throw new Error(`Unexpected action ${name}`);
     };
@@ -991,7 +1196,18 @@ describe('CPP account/bootstrap safety', () => {
         );
         if (actual) {
           validateActualInput('SearchClimbs', variables);
-          return { searchClimbs: { climbs: [{ ...genuineClimb(actual), name: 'Moon Landing' }] } } as T;
+          return {
+            searchClimbs: {
+              climbs: [
+                { ...genuineClimb(actual), name: 'Moon Landing' },
+                {
+                  ...genuineClimb(actual),
+                  uuid: testUuid(actual.sizeId + 400),
+                  name: `Real alternative ${actual.sizeId}`,
+                },
+              ],
+            },
+          } as T;
         }
       }
       return request<T>(query, variables);

@@ -129,12 +129,16 @@ import {
   buildScreenshotWallSeed,
   publishScreenshotWallClimbs,
 } from '../../../src/lib/board-presence/screenshot-wall-seed';
-import {
-  resolveScreenshotBoard,
-  screenshotClimbMatchesBoard,
-  screenshotCppClimbListTestId,
-} from '../../../src/lib/screenshot-board-selection';
+import { resolveScreenshotBoard, screenshotCppClimbListTestId } from '../../../src/lib/screenshot-board-selection';
 import { useScreenshotBoards } from '../../../src/hooks/use-screenshot-boards';
+import { selectScreenshotClimb, selectScreenshotGradeRange } from '../../../src/lib/screenshot-climb-selection';
+import { DEFAULT_FILTERS } from '../../../src/lib/climb-filter-types';
+import { loadGradeDisplayFormat, setGradeDisplayFormatPreference } from '../../../src/lib/grade-format-preference';
+import { loadPersonalGradesPreference, setPersonalGradesPreference } from '../../../src/lib/personal-grades-preference';
+import {
+  loadBoardseshGradesPreference,
+  setBoardseshGradesPreference,
+} from '../../../src/lib/boardsesh-grades-preference';
 import { parseSetIdsParam, prewarmCreateBoardHolds } from '../../../src/lib/create-board-holds';
 import { shouldShowUnsetWallEmptyState } from '../../../src/lib/spray/unset-wall-empty-state';
 import { useSprayWallIsArchived } from '../../../src/lib/spray/use-spray-wall-archive';
@@ -290,6 +294,9 @@ function ClimbListInner() {
   // row (the help flow's 11-climb-actions shot).
   const {
     screenshotOpenFirst,
+    screenshotClimbId,
+    screenshotMinGrade,
+    screenshotMaxGrade,
     screenshotBoardIndex,
     screenshotCppScene,
     screenshotOpenFilters,
@@ -299,6 +306,9 @@ function ClimbListInner() {
     screenshotOpenClimbActions,
   } = useLocalSearchParams<{
     screenshotOpenFirst?: string;
+    screenshotClimbId?: string;
+    screenshotMinGrade?: string;
+    screenshotMaxGrade?: string;
     screenshotBoardIndex?: string;
     screenshotCppScene?: string;
     screenshotOpenFilters?: string;
@@ -307,6 +317,33 @@ function ClimbListInner() {
     screenshotOpenWallPreview?: string;
     screenshotOpenClimbActions?: string;
   }>();
+  const [screenshotGradesReadyFor, setScreenshotGradesReadyFor] = useState<string | null>(null);
+  const screenshotGradeSetupKey =
+    screenshotClimbId ??
+    (screenshotMinGrade !== undefined ? `grade:${screenshotMinGrade}:${screenshotMaxGrade ?? ''}` : undefined);
+  useEffect(() => {
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || screenshotGradeSetupKey === undefined) return;
+    let cancelled = false;
+    void (async () => {
+      await Promise.all([
+        setGradeDisplayFormatPreference('v-grade'),
+        setPersonalGradesPreference(false),
+        setBoardseshGradesPreference(false),
+      ]);
+      const [format, personal, boardsesh] = await Promise.all([
+        loadGradeDisplayFormat(),
+        loadPersonalGradesPreference(),
+        loadBoardseshGradesPreference(),
+      ]);
+      if (!cancelled && format === 'v-grade' && personal === false && boardsesh === false)
+        setScreenshotGradesReadyFor(screenshotGradeSetupKey);
+    })().catch(() => {
+      console.log('[screenshot] WARN capture grade preferences did not settle');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [screenshotGradeSetupKey]);
   const { t } = useTranslation('climbs');
   const { t: tCommon } = useTranslation('common');
   const { openClimbActions, openAddToPlaylist, openBoardSheet, openPlayDrawer, usesDetailPane } = useDrawerHost();
@@ -673,7 +710,7 @@ function ClimbListInner() {
   // 'missing' (offer the download) vs 'queued' (already asked for) vs null.
   const offlineCatalog = useOfflineCatalogState(activeBoard);
 
-  const { data: gradesData } = useGrades(boardName);
+  const { data: gradesData, isSuccess: gradesLoaded, isPlaceholderData: gradesPlaceholder } = useGrades(boardName);
   const gradesRef = useRef(gradesData);
   gradesRef.current = gradesData;
   const grades = useMemo(() => gradesData ?? [], [gradesData]);
@@ -1290,21 +1327,34 @@ function ClimbListInner() {
   // normal builds.
   const screenshotOpenedForBoardRef = useRef<string | null>(null);
   useEffect(() => {
-    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !screenshotOpenFirst) return;
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || (!screenshotOpenFirst && screenshotClimbId === undefined))
+      return;
     // When a specific board is requested, wait until it's the active board.
     if (screenshotTargetBoard && activeBoard?.uuid !== screenshotTargetBoard.uuid) return;
-    const captureIdentity = `${activeBoard?.uuid}:${screenshotCppScene ?? ''}`;
+    const captureIdentity = `${activeBoard?.uuid}:${screenshotCppScene ?? ''}:${screenshotClimbId ?? 'first'}`;
     if (!activeBoard || screenshotOpenedForBoardRef.current === captureIdentity) return;
-    const firstClimb = visibleClimbs[0];
-    if (!searchReady || isPlaceholderData || !firstClimb || !screenshotClimbMatchesBoard(firstClimb, activeBoard))
-      return;
+    const requestedClimb = selectScreenshotClimb(
+      visibleClimbs,
+      screenshotClimbId,
+      activeBoard,
+      searchInput,
+      searchReady &&
+        !isPlaceholderData &&
+        !isClimbsLoading &&
+        (screenshotClimbId === undefined || screenshotGradesReadyFor === screenshotClimbId),
+    );
+    if (!requestedClimb) return;
     screenshotOpenedForBoardRef.current = captureIdentity;
-    handleClimbPress(firstClimb);
+    handleClimbPress(requestedClimb);
   }, [
     screenshotOpenFirst,
+    screenshotClimbId,
+    screenshotGradesReadyFor,
     screenshotCppScene,
     searchReady,
     isPlaceholderData,
+    isClimbsLoading,
+    searchInput,
     visibleClimbs,
     handleClimbPress,
     screenshotTargetBoard,
@@ -1324,7 +1374,8 @@ function ClimbListInner() {
   const screenshotPaneLitRef = useRef(false);
   useEffect(() => {
     if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1') return;
-    if (screenshotOpenFirst || screenshotOpenPreview || screenshotOpenWallPreview) return;
+    if (screenshotOpenFirst || screenshotClimbId !== undefined || screenshotOpenPreview || screenshotOpenWallPreview)
+      return;
     if (screenshotOpenClimbActions) return;
     if (!usesDetailPane || screenshotPaneLitRef.current) return;
     if (!activeBoard || !searchReady) return;
@@ -1334,6 +1385,7 @@ function ClimbListInner() {
     handleClimbPress(firstClimb);
   }, [
     screenshotOpenFirst,
+    screenshotClimbId,
     screenshotOpenPreview,
     screenshotOpenWallPreview,
     screenshotOpenClimbActions,
@@ -1439,6 +1491,56 @@ function ClimbListInner() {
     isPlaceholderData,
     visibleClimbs,
     openPlayDrawer,
+  ]);
+
+  // CPP-only setup uses the live selection action after genuine board/grades
+  // arrive. Latching the route prevents the later native Reset from reapplying.
+  const screenshotGradeAppliedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (screenshotCppScene !== 'search-grade') {
+      screenshotGradeAppliedRef.current = null;
+      return;
+    }
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !showFilters || name.trim()) return;
+    const range = selectScreenshotGradeRange(
+      screenshotMinGrade,
+      screenshotMaxGrade,
+      grades,
+      activeBoard,
+      screenshotTargetBoard,
+      searchInput,
+      searchReady &&
+        !isPlaceholderData &&
+        !isClimbsLoading &&
+        gradesLoaded &&
+        !gradesPlaceholder &&
+        screenshotGradesReadyFor === screenshotGradeSetupKey,
+      gradeStops,
+    );
+    if (!range) return;
+    const identity = `${activeBoard!.uuid}:${screenshotCppScene}:${range.minGrade}:${range.maxGrade}`;
+    if (screenshotGradeAppliedRef.current === identity) return;
+    screenshotGradeAppliedRef.current = identity;
+    handleLiveFilterSelectionChange({ ...DEFAULT_FILTERS, ...range }, {});
+  }, [
+    screenshotCppScene,
+    screenshotMinGrade,
+    screenshotMaxGrade,
+    showFilters,
+    name,
+    grades,
+    activeBoard,
+    screenshotTargetBoard,
+    searchInput,
+    searchReady,
+    isPlaceholderData,
+    isClimbsLoading,
+    gradesLoaded,
+    gradesPlaceholder,
+    screenshotGradesReadyFor,
+    screenshotGradeSetupKey,
+    gradeStops,
+    handleLiveFilterSelectionChange,
   ]);
 
   // Screenshot mode: open the long-press reaction menu over the first row. The

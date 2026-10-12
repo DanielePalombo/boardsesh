@@ -13,6 +13,8 @@ type BoardRenderData = {
 };
 
 type DeferredBoardProps = {
+  capturePaintedTestID?: string;
+  captureLocalMirrorTestID?: string;
   /** Only a closed drawer withholds the interactive board. */
   open: boolean;
   /** Legacy caller hint; artwork mounts independently of measurement readiness. */
