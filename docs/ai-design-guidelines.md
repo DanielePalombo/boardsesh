@@ -902,6 +902,23 @@ renders a native Material **ripple** on Android and a reanimated **scale/opacity
 `RadioGroup`, `SwitchRow`, `ActivityIndicator`, plus board/climb/queue components. Prefer these over
 raw RN host components.
 
+**Native switch rows.** iOS `SwitchRow` measures its wrapping title and subtitle
+inside SwiftUI. Put minimum heights in a native `frame`, not on a React Native
+`Host` with `matchContents`: the host writes its measured height back to Yoga.
+Leave text unrestricted at accessibility sizes, and let React Native own the
+leaf host's safe-area placement. A padded card must cancel its horizontal inset
+once around the whole group of self-insetting controls so labels share one gutter.
+
+Rest timer cadence uses content-width scrolling tabs above a font scale of 1.3,
+matching the iOS segmented control's large-text fallback. Keep the selection
+haptic and same-cadence guard when swapping controls so a tap cannot restart a
+running rest window.
+
+The rest timer sheet uses a bounded 90% detent and a scroll body so its final
+turn-off action stays reachable on short screens and at accessibility text sizes.
+Do not combine its scroll body with content-fitting: the native host proposes an
+unbounded height, leaving overflow outside the scroll viewport.
+
 ---
 
 ## Dark mode

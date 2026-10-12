@@ -21,7 +21,9 @@ import { Button } from '../Button';
 import { SwitchRow } from '../SwitchRow';
 import { SectionHeader } from '../SectionHeader';
 import { SegmentedControl } from '../SegmentedControl';
+import { makeSelectHandler } from '../SegmentedControl.logic';
 import type { SegmentOption } from '../SegmentedControl.types';
+import { ScrollableTabs } from '../navigation/ScrollableTabs';
 import { TickDestructiveRow } from '../tick/TickDestructiveRow';
 import { TICK_ACTION_MAX_FONT_SCALE, TICK_GUTTER, tickActionHeight } from '../tick/tick-sheet-metrics';
 import { useTheme } from '../../providers/theme-provider';
@@ -56,10 +58,8 @@ export function RestTimerLengthControl({ inset = true }: { inset?: boolean } = {
   const [targetSeconds, setTargetSeconds] = useSetting('restTimerTargetSeconds');
 
   return (
-    // `inset={false}` is the Record tab's padded `Card`. SectionHeader carries
-    // its own 16pt gutter, so inside a card that already pads 16 the block pulls
-    // back out through the card's padding and every child re-applies the gutter
-    // itself — one seam on both surfaces rather than a 32pt indent on one.
+    // `inset={false}` cancels a caller-owned card gutter. The Record card now
+    // cancels its gutter once around the whole group and uses the default here.
     <View style={inset ? null : styles.cardBleed}>
       {/* Label and value on ONE row: this is a field, not a section. A caption
           stacked over a lone pill left a third of the row empty and read as a
@@ -116,13 +116,12 @@ export function RestTimerAutoAdvanceRow() {
       : t('mobile.restTimer.autoAdvanceNeedsLength');
 
   return (
-    <View>
+    <View style={styles.autoAdvanceGroup}>
       <SwitchRow
         label={t('mobile.restTimer.autoAdvance')}
         // Short enough to read at a glance. The "only while the app is open"
-        // caveat moved to the group footnote below — SwiftUI derives the Toggle's
-        // VoiceOver name from BOTH its Text children (see SwitchRow.ios.tsx), so
-        // leaving it here made the spoken name a paragraph.
+        // caveat lives in the group footnote below: SwitchRow includes both its
+        // label and description in the accessible name.
         description={blockedReason ?? t('mobile.restTimer.autoAdvanceHint')}
         value={autoAdvance}
         onValueChange={setAutoAdvance}
@@ -151,13 +150,14 @@ export function RestTimerAutoAdvanceRow() {
  * for. With the rest length Off there is no length to name, so it falls back to
  * the plain mode name.
  *
- * `inset={false}` is the arm row's padded `Card`, exactly as for
- * {@link RestTimerLengthControl}: the header and the segmented control pull back
- * out through the card's padding so they share the length label's seam.
+ * `inset={false}` cancels a caller-owned card gutter, exactly as for
+ * {@link RestTimerLengthControl}. The Record card uses one shared wrapper for
+ * all its controls, so it keeps the default inset here.
  */
 export function RestTimerCadenceSection({ inset = true }: { inset?: boolean } = {}) {
   const { t } = useTranslation('session');
   const { systemColors } = useTheme();
+  const { fontScale } = useWindowDimensions();
   const [mode, setMode] = useSetting('restTimerMode');
   const [targetSeconds] = useSetting('restTimerTargetSeconds');
   // Only whether it is armed: the full state emits on every tick, pause and
@@ -191,15 +191,20 @@ export function RestTimerCadenceSection({ inset = true }: { inset?: boolean } = 
     },
     [armed, mode, sessionId, setMode],
   );
+  // Match the iOS segmented control's large-text fallback. Paper's fixed-width
+  // Android segments ellipsize the cadence labels when the text grows.
+  const usesScrollingTabs = fontScale > 1.3;
+  const CadenceControl = usesScrollingTabs ? ScrollableTabs : SegmentedControl;
+  const handleScrollingSelect = useMemo(() => makeSelectHandler(handleSelect), [handleSelect]);
 
   return (
     <View style={inset ? null : styles.cardBleed}>
       <SectionHeader title={t('mobile.restTimer.modeLabel')} />
       <View style={styles.cadenceContent}>
-        <SegmentedControl
+        <CadenceControl
           options={options}
           selectedKey={mode}
-          onSelect={handleSelect}
+          onSelect={usesScrollingTabs ? handleScrollingSelect : handleSelect}
           accessibilityLabel={t('mobile.restTimer.modeAria')}
         />
         <Text variant="footnote" color={systemColors.secondaryLabel}>
@@ -214,6 +219,8 @@ type RestTimerSheetProps = {
   visible: boolean;
   onClose: () => void;
 };
+
+const REST_TIMER_SNAP_POINTS = ['90%'];
 
 export function RestTimerSheet({ visible, onClose }: RestTimerSheetProps) {
   const { t } = useTranslation('session');
@@ -250,12 +257,10 @@ export function RestTimerSheet({ visible, onClose }: RestTimerSheetProps) {
   }, [onClose]);
 
   return (
-    // Solid ground: this is a form, not chrome — reading a slider and a segmented
-    // control through the board art behind it is unreadable. Sized to its
-    // content, and deliberately WITHOUT `header` / `footer`: `enableDynamicSizing`
-    // with sheet chrome but no `androidContentSized` gives the Android column
-    // `flex: 1` under a `matchContents` host, which resolves to zero (#4720).
-    <ModalSheet visible={visible} enableDynamicSizing onClose={onClose} enablePanDownToClose>
+    // A bounded scroll body keeps the final action reachable at accessibility
+    // sizes and on short screens. Content-fitting proposes an unbounded height
+    // to the native host, so adding a ScrollView alone cannot bound its viewport.
+    <ModalSheet visible={visible} snapPoints={REST_TIMER_SNAP_POINTS} scrollable onClose={onClose} enablePanDownToClose>
       {/* No container `gap`: each block owns its own rhythm (SectionHeader brings
           the section's top padding, each control its own inset), and a blanket
           gap on top of those produced the ladder of unequal seams the old sheet
@@ -328,9 +333,7 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: spacing[2],
   },
-  // Pulls the block back out through the Record tab card's 16pt padding, so its
-  // SectionHeader lines up with the card's own content edge rather than indenting
-  // twice; every child re-applies TICK_GUTTER itself.
+  // Cancels a caller-owned card gutter; each child re-applies TICK_GUTTER.
   cardBleed: {
     marginHorizontal: -spacing[4],
   },
@@ -350,6 +353,9 @@ const styles = StyleSheet.create({
   cadenceContent: {
     paddingHorizontal: TICK_GUTTER,
     gap: spacing[2],
+  },
+  autoAdvanceGroup: {
+    marginTop: spacing[4],
   },
   transportRow: {
     flexDirection: 'row',
