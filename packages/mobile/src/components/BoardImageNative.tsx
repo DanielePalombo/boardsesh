@@ -87,6 +87,8 @@ type BoardImageNativeProps = {
    * appear. The full-size play-drawer board sets this; thumbnails leave it unset.
    */
   overlayTestID?: string;
+  paintedTestID?: string;
+  paintedExtraTestID?: string;
   /**
    * Ceiling for the veil — the wash over the unlit wall. Editing surfaces pass
    * `EDITING_VEIL_OPACITY` (none), so the holds a climber still has to find and
@@ -165,6 +167,8 @@ const BoardImageNative = React.memo(function BoardImageNative({
   revealWithOverlay,
   suppressOverlayTransition,
   overlayTestID,
+  paintedTestID,
+  paintedExtraTestID,
   renderSettingsOverride,
   holdColorOverride,
   maxVeilOpacity,
@@ -207,7 +211,11 @@ const BoardImageNative = React.memo(function BoardImageNative({
   const openingArt = isReadyBoardArtCurrent(readyBoardArt, { ...artworkIdentity, mirrored: mirrored ?? false })
     ? readyBoardArt
     : undefined;
-  const currentArtIdentity = JSON.stringify([artworkIdentity, overlayUri, overlayLoadKey, backgroundPaths]);
+  const currentArtIdentity = JSON.stringify(
+    paintedTestID === undefined
+      ? [artworkIdentity, overlayUri, overlayLoadKey, backgroundPaths]
+      : [artworkIdentity, overlayUri, overlayLoadKey, backgroundPaths, paintedTestID, mirrored ?? false],
+  );
   const [displayedArtIdentity, setDisplayedArtIdentity] = useState<string | null>(null);
   const openingArtIsCurrent =
     openingArt?.quality === 'full' &&
@@ -290,6 +298,8 @@ const BoardImageNative = React.memo(function BoardImageNative({
           // An overlay that paints with the board has nothing to fade from.
           suppressOverlayTransition={suppressOverlayTransition || overlayPaintsWithBoard || bridging}
           overlayTestID={overlayTestID}
+          paintedTestID={bridging ? undefined : paintedTestID}
+          paintedExtraTestID={bridging ? undefined : paintedExtraTestID}
           // A bridge only makes sense while a replacement is on its way. Empty
           // frames render nothing at all — `useNativeClimbRender` returns before
           // it draws — so retaining there would leave the holds the climber just

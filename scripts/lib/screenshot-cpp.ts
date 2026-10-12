@@ -49,6 +49,23 @@ export interface CppSceneCoverage {
   climbId?: string;
   readyTextByLocale?: Record<'en-US' | 'es' | 'fr' | 'de', string>;
   sessionId?: string;
+  /** Genuine GradeRail bounds and the API count for this exact selection. */
+  gradeFilter?: {
+    minLabel: string;
+    maxLabel?: string;
+    minGradeId: number;
+    maxGradeId: number;
+    expectedCount: number;
+  };
+}
+export interface CppHeroClimb {
+  boardId: string;
+  climbId: string;
+  readyText: string;
+  /** Crowd grade rendered in the capture's V-grade format; empty for ungraded projects. */
+  gradeLabel: string;
+  statsAngle?: number;
+  benchmarkDifficulty?: number;
 }
 export function isCppAscentId(candidate: unknown): candidate is string {
   return (
@@ -60,6 +77,8 @@ export function isCppClimbId(candidate: unknown): candidate is string {
 }
 export interface CppCaptureCoverage {
   target: CppTarget;
+  /** Explicit real climb selections; absent on older fixture candidates. */
+  heroClimbs?: Record<string, CppHeroClimb>;
   boardIds?: Record<string, string>;
   /** Actual visible names from the verified UUID/config-matched owned roster. */
   boardNames?: Record<string, string>;
@@ -267,6 +286,23 @@ export function assertCppCaptureReady(
     const matches = recordedBoards.filter((recorded) =>
       screenshotCppBoardMatches(recorded, board.selector, cppBoardIdentity(board, coverage)),
     );
+    const hero = coverage.heroClimbs?.[board.id];
+    if (
+      coverage.heroClimbs &&
+      coverage.boardHeroModes?.[board.id] !== 'wall-editor' &&
+      (!hero ||
+        hero.boardId !== coverage.boardIds?.[board.id] ||
+        !isCppClimbId(hero.climbId) ||
+        typeof hero.readyText !== 'string' ||
+        !hero.readyText.trim() ||
+        typeof hero.gradeLabel !== 'string' ||
+        (hero.statsAngle !== undefined && !Number.isFinite(hero.statsAngle)) ||
+        (hero.benchmarkDifficulty !== undefined &&
+          (!Number.isFinite(hero.benchmarkDifficulty) ||
+            hero.benchmarkDifficulty <= 0 ||
+            hero.statsAngle !== matches[0]?.angle)))
+    )
+      throw new Error(`CPP ${target} lacks a genuine selected hero climb for ${board.id}`);
     if (board.family === 'spray') {
       const sourceHash = createHash('sha256')
         .update(readFileSync(resolve(fileURLToPath(new URL('../../', import.meta.url)), board.photo!)))
@@ -322,6 +358,18 @@ export function assertCppCaptureReady(
   const primary = recordedBoards.find((board) =>
     screenshotCppBoardMatches(board, page.primaryBoard.selector, cppBoardIdentity(page.primaryBoard, coverage)),
   );
+  const gradeFilter = coverage.scenes.search?.gradeFilter;
+  if (
+    gradeFilter &&
+    (!gradeFilter.minLabel?.trim() ||
+      (gradeFilter.maxLabel !== undefined && !gradeFilter.maxLabel.trim()) ||
+      !Number.isInteger(gradeFilter.minGradeId) ||
+      !Number.isInteger(gradeFilter.maxGradeId) ||
+      gradeFilter.minGradeId > gradeFilter.maxGradeId ||
+      !Number.isSafeInteger(gradeFilter.expectedCount) ||
+      gradeFilter.expectedCount < 1)
+  )
+    throw new Error(`CPP ${target} lacks genuine grade-filter bounds/count`);
   for (const scene of ['search', 'logbook', 'led', 'queue', 'workout', 'status', 'island']) {
     const entry = coverage.scenes[scene];
     if (scene === 'logbook' && !isCppAscentId(entry?.ascentId))
@@ -365,7 +413,7 @@ export function cppNavigationCommands(
       route:
         coverage.boardHeroModes?.[board.id] === 'wall-editor'
           ? `/climbs/create?screenshotCppScene=${index < 3 ? 'hero' : 'other'}-${(index % 3) + 1}`
-          : `/climbs?screenshotOpenFirst=1&screenshotBoardIndex=${index}&screenshotCppScene=${index < 3 ? 'hero' : 'other'}-${(index % 3) + 1}`,
+          : `/climbs?screenshotOpenFirst=1&screenshotBoardIndex=${index}&screenshotCppScene=${index < 3 ? 'hero' : 'other'}-${(index % 3) + 1}${coverage.heroClimbs?.[board.id] ? `&screenshotClimbId=${encodeURIComponent(coverage.heroClimbs[board.id].climbId)}` : ''}`,
     };
   }
   const primary = page.primaryBoard;
@@ -374,6 +422,11 @@ export function cppNavigationCommands(
   const boardId = identityFor(primary).uuid;
   const routes: Record<string, string> = {
     search: `/climbs?screenshotBoardIndex=${index}&screenshotOpenFilters=1`,
+    ...(coverage.scenes.search.gradeFilter
+      ? {
+          'search-grade': `/climbs?screenshotBoardIndex=${index}&screenshotOpenFilters=1&screenshotMinGrade=${coverage.scenes.search.gradeFilter.minGradeId}&screenshotMaxGrade=${coverage.scenes.search.gradeFilter.maxGradeId}`,
+        }
+      : {}),
     logbook: `/profile?screenshotTab=logbook&screenshotBoardType=${primary.boardType}`,
     led:
       coverage.target === 'spray'
@@ -382,7 +435,10 @@ export function cppNavigationCommands(
     'queue-join': `/join/${encodeURIComponent(coverage.scenes.queue.sessionId ?? '')}`,
     queue: `/climbs?screenshotOpenFirst=1&screenshotBoardIndex=${index}`,
     workout: '/record',
-    status: coverage.target === 'spray' ? '/discover/smart/PROJECTS' : `/climbs?screenshotBoardIndex=${index}`,
+    status:
+      coverage.target === 'spray'
+        ? '/discover/smart/PROJECTS'
+        : `/climbs?screenshotBoardIndex=${index}${ipad && coverage.heroClimbs ? `&screenshotClimbId=${encodeURIComponent(coverage.scenes.status.climbId ?? '')}` : ''}`,
     island:
       coverage.target === 'spray'
         ? `/boards/spray/holds?wallUuid=${encodeURIComponent(boardId ?? '')}`

@@ -93,6 +93,7 @@ import {
   type CppRecordedBoard,
   type CppCaptureCoverage,
   type CppPage,
+  type CppSceneCoverage,
 } from './lib/screenshot-cpp';
 import { formatActiveBoardLabel } from '../packages/mobile/src/lib/boards/active-board-label';
 import { captionLocaleForStore, IOS_CAMPAIGN_CAPTURE_NAMES } from './lib/screenshot-presentation';
@@ -695,6 +696,11 @@ function cppRuntimeNavigationCommands(
   if (coverage.target !== 'spray') {
     const tabletStatus = new URL(commands.island.route, 'http://localhost');
     tabletStatus.searchParams.set('screenshotCppScene', 'status-ipad');
+    if (coverage.heroClimbs) {
+      if (!isCppClimbId(coverage.scenes.status.climbId))
+        throw new Error('CPP tablet status requires its genuine original climb ID');
+      tabletStatus.searchParams.set('screenshotClimbId', coverage.scenes.status.climbId);
+    }
     commands['status-ipad'] = { ...commands.island, route: `${tabletStatus.pathname}${tabletStatus.search}` };
   }
   return commands;
@@ -2032,6 +2038,55 @@ export function cppWallStatusReadinessSelector(climbName: string, locale: Locale
   return `^(?:${expand(labels.stripA11yLabel)}|${expand(labels.stripA11yLabelWithSender)})$`;
 }
 
+/** Actual GradeRail labels and its genuine, localized count subtitle. */
+export function cppGradeFilterSelectors(filter: NonNullable<CppSceneCoverage['gradeFilter']>, locale: Locale) {
+  if (
+    !filter.minLabel?.trim() ||
+    (filter.maxLabel !== undefined && !filter.maxLabel.trim()) ||
+    !Number.isInteger(filter.minGradeId) ||
+    !Number.isInteger(filter.maxGradeId) ||
+    filter.minGradeId > filter.maxGradeId ||
+    !Number.isSafeInteger(filter.expectedCount) ||
+    filter.expectedCount < 1
+  )
+    throw new Error('CPP grade filter requires genuine bounds, labels and a positive count');
+  const catalog = JSON.parse(
+    readFileSync(join(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'climbs.json'), 'utf8'),
+  ) as {
+    mobile: {
+      gradeRail: { selectedFilterAria: string };
+      filter: Record<string, string>;
+    };
+  };
+  const grade = (template: string, label: string) =>
+    `^${cppReadinessSelector(template.replaceAll('{{grade}}', () => label))}$`;
+  const countTemplate =
+    catalog.mobile.filter[`matchingCount_${new Intl.PluralRules(locale).select(filter.expectedCount)}`];
+  if (!countTemplate) throw new Error(`Missing native matchingCount plural for ${locale}`);
+  const countLabel = countTemplate.replace(/\{\{count(?:, number)?\}\}/g, () =>
+    new Intl.NumberFormat(locale).format(filter.expectedCount),
+  );
+  return {
+    minSelected: grade(catalog.mobile.gradeRail.selectedFilterAria, filter.minLabel),
+    maxSelected: filter.maxLabel ? grade(catalog.mobile.gradeRail.selectedFilterAria, filter.maxLabel) : undefined,
+    reset: `^${cppReadinessSelector(catalog.mobile.filter.reset)}$`,
+    close: `^${cppReadinessSelector(catalog.mobile.filter.close)}$`,
+    count: `^${cppReadinessSelector(countLabel)}$`,
+  };
+}
+
+export function cppMirrorSelectors(locale: Locale) {
+  const catalog = JSON.parse(
+    readFileSync(join(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'session.json'), 'utf8'),
+  ) as {
+    playView: { actionBar: { mirrorAria: string; unmirrorAria: string } };
+  };
+  return {
+    mirror: `^${cppReadinessSelector(catalog.playView.actionBar.mirrorAria)}$`,
+    unmirror: `^${cppReadinessSelector(catalog.playView.actionBar.unmirrorAria)}$`,
+  };
+}
+
 /** Strict target fixture text supplies content gates; no default campaign scenes are reused. */
 export function renderCppMaestroFlow(
   target: CppTarget,
@@ -2047,14 +2102,20 @@ export function renderCppMaestroFlow(
     ...page.heroBoards.map((board, index) => ({
       command: `hero-${index + 1}`,
       filename: `hero-${index + 1}`,
-      ready: coverage.boardReadyTextByLocale?.[board.id]?.[locale] ?? coverage.boardReadyText[board.id],
+      ready:
+        coverage.heroClimbs?.[board.id]?.readyText ??
+        coverage.boardReadyTextByLocale?.[board.id]?.[locale] ??
+        coverage.boardReadyText[board.id],
       wallEditor: coverage.boardHeroModes?.[board.id] === 'wall-editor',
       variant: board,
     })),
     ...page.otherBoards.map((board, index) => ({
       command: `other-${index + 1}`,
       filename: `other-${index + 1}`,
-      ready: coverage.boardReadyTextByLocale?.[board.id]?.[locale] ?? coverage.boardReadyText[board.id],
+      ready:
+        coverage.heroClimbs?.[board.id]?.readyText ??
+        coverage.boardReadyTextByLocale?.[board.id]?.[locale] ??
+        coverage.boardReadyText[board.id],
       wallEditor: coverage.boardHeroModes?.[board.id] === 'wall-editor',
       variant: board,
     })),
@@ -2080,13 +2141,23 @@ export function renderCppMaestroFlow(
     })),
   ];
   const commands: string[] = [];
+  const gradeFilter = coverage.scenes.search.gradeFilter;
+  const gradeSelectors = gradeFilter ? cppGradeFilterSelectors(gradeFilter, locale) : null;
+  const gradeControl = (text: string, selected?: boolean) => ({
+    text,
+    ...(selected === undefined ? {} : { selected }),
+  });
+  // UIKit's accessibility tree exposes the filter toolbar, column and chips
+  // as peers. Match the real control's exact ID/label/state, not JSX ancestry.
+  const filterReset = { id: '^sheet-top-bar-trailing$', text: gradeSelectors?.reset };
+  const resetFilters = `- tapOn: ${JSON.stringify({ ...filterReset, enabled: true })}\n- extendedWaitUntil:\n    visible: ${JSON.stringify({ ...filterReset, enabled: false })}\n    timeout: 90000\n- waitForAnimationToEnd:\n    timeout: 30000`;
   const dismiss = `- repeat:\n    times: 2\n    commands:\n      - runFlow:\n          when:\n            visible: \${SCREENSHOT_CLOSE_LABEL}\n          commands:\n            - tapOn: \${SCREENSHOT_CLOSE_LABEL}\n            - waitForAnimationToEnd`;
   for (const scene of scenes) {
     const sceneCommands =
       scene.command === 'queue'
         ? ['queue-join', scene.command]
         : scene.command === 'search'
-          ? [scene.command, 'search-results']
+          ? [scene.command, ...(gradeSelectors ? ['search-grade'] : []), 'search-results']
           : [scene.command];
     for (const command of sceneCommands) {
       if (!navigation[command]) throw new Error(`CPP ${target} has no native navigation command for ${command}`);
@@ -2137,11 +2208,27 @@ export function renderCppMaestroFlow(
         '- extendedWaitUntil:\n    visible:\n      id: board-sheet-stats\n    timeout: 60000',
         `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-wall-hero-${status.boardId}-${status.climbId}`))}\n    timeout: 90000`,
       );
+      if (coverage.heroClimbs)
+        commands.push(
+          `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-painted-${status.boardId}-${status.climbId}`))}\n    timeout: 90000`,
+        );
     } else if (scene.command !== 'queue')
       commands.push(
         `- extendedWaitUntil:\n    visible: ${JSON.stringify(cppReadinessSelector(scene.ready))}\n    timeout: 90000`,
       );
     commands.push('- waitForAnimationToEnd:\n    timeout: 30000');
+    const selectedHero = scene.variant ? coverage.heroClimbs?.[scene.variant.id] : undefined;
+    if (selectedHero && !scene.wallEditor) {
+      if (!isCppClimbId(selectedHero.climbId) || selectedHero.boardId !== coverage.boardIds?.[scene.variant!.id])
+        throw new Error(`CPP ${scene.command} requires a genuine selected climb on its actual board`);
+      commands.push(
+        `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-painted-${selectedHero.boardId}-${selectedHero.climbId}`))}\n    timeout: 90000`,
+      );
+      if (selectedHero.gradeLabel)
+        commands.push(
+          `- extendedWaitUntil:\n    visible: ${JSON.stringify(`^${cppReadinessSelector(selectedHero.gradeLabel)}$`)}\n    timeout: 90000`,
+        );
+    }
     if (ipad && scene.variant && !scene.wallEditor) {
       const uuid = coverage.boardIds?.[scene.variant.id];
       if (!uuid?.trim()) throw new Error(`CPP ${scene.variant.id} lacks its genuine board UUID`);
@@ -2168,6 +2255,41 @@ export function renderCppMaestroFlow(
       commands.push('- extendedWaitUntil:\n    visible:\n      id: create-climb-editor\n    timeout: 60000');
     if (scene.command === 'search')
       commands.push('- extendedWaitUntil:\n    visible:\n      id: climb-filter-column\n    timeout: 60000');
+    if (scene.command === 'search' && gradeSelectors) {
+      // Maestro's visible selector finds hierarchy entries even offscreen, and
+      // tapOn uses their coordinates. Use the fixed real header Reset, then
+      // the capture route's validated native live-filter action for the range.
+      commands.push(
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify({ id: '^sheet-top-bar-leading$', text: gradeSelectors.close, enabled: true })}\n    timeout: 90000`,
+        `- runFlow:\n    when:\n      visible: ${JSON.stringify({ ...filterReset, enabled: true })}\n    commands:\n${resetFilters
+          .split('\n')
+          .map((line) => `      ${line}`)
+          .join('\n')}`,
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify({ ...filterReset, enabled: false })}\n    timeout: 90000`,
+        "- evalScript: ${output.cppSequence = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/set?scene=search-grade').body).sequence}",
+        "- retry:\n    maxRetries: 3\n    commands:\n      - evalScript: ${output.cppAcknowledged = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/status?waitFor=' + output.cppSequence).body).acknowledged}\n      - assertTrue: ${output.cppAcknowledged == output.cppSequence}",
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.minSelected, true))}\n    timeout: 90000`,
+      );
+      if (gradeFilter?.maxLabel && gradeFilter.maxLabel !== gradeFilter.minLabel)
+        commands.push(
+          `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.maxSelected!, true))}\n    timeout: 90000`,
+        );
+      commands.push(
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeSelectors.count)}\n    timeout: 90000`,
+        '- waitForAnimationToEnd:\n    timeout: 30000',
+      );
+    }
+    const mirrorHero = target === 'tension' && scene.variant?.id === page.primaryBoard.id && !!selectedHero;
+    const mirrorSelectors = mirrorHero ? cppMirrorSelectors(locale) : null;
+    if (mirrorSelectors && selectedHero)
+      commands.push(
+        `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-local-mirror-${selectedHero.boardId}-${selectedHero.climbId}`))}\n    timeout: 60000`,
+        `- extendedWaitUntil:\n    visible:\n      text: ${JSON.stringify(mirrorSelectors.mirror)}\n      selected: false\n    timeout: 60000`,
+        `- tapOn: ${JSON.stringify(mirrorSelectors.mirror)}`,
+        `- extendedWaitUntil:\n    visible:\n      text: ${JSON.stringify(mirrorSelectors.unmirror)}\n      selected: true\n    timeout: 60000`,
+        `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-painted-${selectedHero.boardId}-${selectedHero.climbId}-mirrored`))}\n    timeout: 60000`,
+        '- waitForAnimationToEnd:\n    timeout: 30000',
+      );
     if (scene.command === 'queue') {
       const selectors = cppQueueReadinessSelectors(scene.ready, locale);
       commands.push(
@@ -2207,7 +2329,21 @@ export function renderCppMaestroFlow(
       );
     }
     commands.push(`- takeScreenshot: ${scene.filename}`);
+    if (mirrorSelectors && selectedHero)
+      commands.push(
+        `- tapOn: ${JSON.stringify(mirrorSelectors.unmirror)}`,
+        `- extendedWaitUntil:\n    visible:\n      text: ${JSON.stringify(mirrorSelectors.mirror)}\n      selected: false\n    timeout: 60000`,
+        `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-painted-${selectedHero.boardId}-${selectedHero.climbId}`))}\n    timeout: 60000`,
+        '- waitForAnimationToEnd:\n    timeout: 30000',
+      );
     if (scene.command === 'search') {
+      if (gradeSelectors)
+        commands.push(
+          `- extendedWaitUntil:\n    visible: ${JSON.stringify({ ...filterReset, enabled: true })}\n    timeout: 90000`,
+          // Reset is disabled iff all live filters, including BOTH grade
+          // bounds and the name, are cleared. Any may be offscreen in the rail.
+          resetFilters,
+        );
       // The current native filter sheet has leading Close and trailing Reset.
       // Close through its real control before clearing the route opener, then
       // require dismissal so the next scene cannot remain behind the sheet.

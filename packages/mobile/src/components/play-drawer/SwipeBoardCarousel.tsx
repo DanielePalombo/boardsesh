@@ -37,6 +37,8 @@ type BoardRenderData = {
 };
 
 type SwipeBoardCarouselProps = {
+  capturePaintedTestID?: string;
+  captureLocalMirrorTestID?: string;
   /** Positive geometry from the player's shared layout owner or validated cache. */
   containerSize?: { width: number; height: number };
   readyBoardArt?: ReadyBoardArtSnapshot;
@@ -220,6 +222,8 @@ const CarouselBoardSlot = React.memo(function CarouselBoardSlot({
 });
 
 export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
+  capturePaintedTestID,
+  captureLocalMirrorTestID,
   containerSize: suppliedContainerSize,
   readyBoardArt,
   onReadyArtDisplayed,
@@ -470,6 +474,8 @@ export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
         recyclingKey={currentFrames}
         style={imageBox}
         overlayTestID="play-drawer-board-overlay"
+        paintedTestID={capturePaintedTestID}
+        paintedExtraTestID={captureLocalMirrorTestID}
         // The one board a climber is actually looking at: `surface: 'play'`
         // on render-failure telemetry, and the only surface that watches
         // for an overlay that never paints. Never a neighbour.

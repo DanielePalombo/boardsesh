@@ -26,6 +26,8 @@ import {
   cppWallStatusReadinessSelector,
   cppQueueReadinessSelectors,
   cppClimbRowReadinessSelector,
+  cppGradeFilterSelectors,
+  cppMirrorSelectors,
   renderCppMaestroFlow,
   renderMaestroFlowForIosDevice,
   deviceSlug,
@@ -100,6 +102,29 @@ function scenario(target: (typeof CPP_TARGETS)[number]) {
   return { page, boards, coverage, fixturesDir };
 }
 
+function selectedScenario(target: (typeof CPP_TARGETS)[number]) {
+  const result = scenario(target);
+  result.coverage.heroClimbs = Object.fromEntries(
+    [...result.page.heroBoards, ...result.page.otherBoards].map((variant, index) => [
+      variant.id,
+      {
+        boardId: result.boards[index].uuid,
+        climbId: `${(index + 1).toString(16).padStart(32, '0')}`,
+        readyText: `Selected ${variant.id} (left)+[1].`,
+        gradeLabel: 'V3',
+      },
+    ]),
+  );
+  result.coverage.scenes.search.gradeFilter = {
+    minLabel: 'V3',
+    maxLabel: 'V4',
+    minGradeId: 14,
+    maxGradeId: 18,
+    expectedCount: 12345,
+  };
+  return result;
+}
+
 function requestedCppScenes(commands: unknown): string[] {
   if (Array.isArray(commands)) return commands.flatMap(requestedCppScenes);
   if (typeof commands !== 'object' || commands === null) return [];
@@ -153,6 +178,305 @@ function readinessCommandTransport() {
 }
 
 describe('custom product page captures', () => {
+  it('resets real filters, ACKs genuine grade setup, and verifies selection/count before capturing and resetting again', () => {
+    for (const target of CPP_TARGETS) {
+      const { coverage } = selectedScenario(target);
+      for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
+        const labels = cppGradeFilterSelectors(coverage.scenes.search.gradeFilter!, locale);
+        const gradeControl = (text: string) => ({ text, selected: true });
+        const reset = (enabled: boolean) => ({
+          id: '^sheet-top-bar-trailing$',
+          text: labels.reset,
+          enabled,
+        });
+        for (const device of IOS_SCREENSHOT_DEVICES) {
+          const source = renderCppMaestroFlow(target, device, coverage, locale);
+          const steps = parseAllDocuments(source)[1].toJS() as Record<string, unknown>[];
+          const searchIndex = steps.findIndex(
+            (step) => typeof step.evalScript === 'string' && step.evalScript.includes("/set?scene=search'"),
+          );
+          const setupIndex = steps.findIndex(
+            (step) => typeof step.evalScript === 'string' && step.evalScript.includes('/set?scene=search-grade'),
+          );
+          const captureIndex = steps.findIndex((step) => step.takeScreenshot === '02-search');
+          const selecting = steps.slice(searchIndex, captureIndex);
+          expect(selecting).toContainEqual({
+            extendedWaitUntil: { visible: { id: 'climb-filter-column' }, timeout: 60000 },
+          });
+          expect(selecting).toContainEqual({
+            extendedWaitUntil: {
+              visible: { id: '^sheet-top-bar-leading$', text: labels.close, enabled: true },
+              timeout: 90000,
+            },
+          });
+          const resetIndex = selecting.findIndex((step) =>
+            JSON.stringify(step.runFlow ?? '').includes('sheet-top-bar-trailing'),
+          );
+          expect(resetIndex).toBeGreaterThan(0);
+          expect(searchIndex + resetIndex).toBeLessThan(setupIndex);
+          expect(setupIndex).toBeLessThan(captureIndex);
+          expect(selecting[resetIndex]).toEqual({
+            runFlow: {
+              when: { visible: reset(true) },
+              commands: [
+                { tapOn: reset(true) },
+                { extendedWaitUntil: { visible: reset(false), timeout: 90000 } },
+                { waitForAnimationToEnd: { timeout: 30000 } },
+              ],
+            },
+          });
+          expect(selecting[resetIndex + 1]).toEqual({ extendedWaitUntil: { visible: reset(false), timeout: 90000 } });
+          expect(steps[setupIndex + 1]).toEqual({
+            retry: {
+              maxRetries: 3,
+              commands: [
+                {
+                  evalScript:
+                    "${output.cppAcknowledged = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/status?waitFor=' + output.cppSequence).body).acknowledged}",
+                },
+                { assertTrue: '${output.cppAcknowledged == output.cppSequence}' },
+              ],
+            },
+          });
+          expect(steps[setupIndex + 2]).toEqual({
+            extendedWaitUntil: { visible: gradeControl(labels.minSelected), timeout: 90000 },
+          });
+          expect(steps[setupIndex + 3]).toEqual({
+            extendedWaitUntil: { visible: gradeControl(labels.maxSelected!), timeout: 90000 },
+          });
+          expect(steps[setupIndex + 4]).toEqual({
+            extendedWaitUntil: {
+              visible: labels.count,
+              timeout: 90000,
+            },
+          });
+          // The fixed header can be reset physically; offscreen chips are
+          // evidence of the real range, never coordinate tap targets.
+          expect(source).not.toContain('cpp-filter-grade-rail');
+          expect(selecting.filter((step) => step.tapOn || step.longPressOn)).toEqual([]);
+          expect(steps[captureIndex + 1]).toEqual({ extendedWaitUntil: { visible: reset(true), timeout: 90000 } });
+          expect(steps[captureIndex + 2]).toEqual({ tapOn: reset(true) });
+          expect(steps[captureIndex + 3]).toEqual({ extendedWaitUntil: { visible: reset(false), timeout: 90000 } });
+          expect(source).not.toContain('Any grade selected');
+          const closing = steps[captureIndex + 5];
+          if (device.name.startsWith('iPad'))
+            expect(closing).toMatchObject({
+              runFlow: { commands: expect.arrayContaining([{ tapOn: { id: 'sheet-top-bar-leading' } }]) },
+            });
+          else expect(closing).toEqual({ tapOn: { id: 'sheet-top-bar-leading' } });
+        }
+      }
+    }
+  });
+  it('matches the genuine disabled Reset peer and rejects its enabled flank without invented AX ancestry', () => {
+    // Run38242551411 / job114789562154 / retry2's actual failure hierarchy:
+    // all these nodes share ancestors with NO resource IDs. The native
+    // climb-filter-column is a peer, although JSX nests the toolbar beneath it.
+    const actualReset = { 'resource-id': 'sheet-top-bar-trailing', accessibilityText: 'Reset', enabled: 'false' };
+    const actualFlank = { 'resource-id': 'sheet-top-bar-trailing-flank', enabled: 'true' };
+    const { coverage } = selectedScenario('kilter');
+    const steps = parseAllDocuments(
+      renderCppMaestroFlow('kilter', IOS_SCREENSHOT_DEVICES[0], coverage),
+    )[1].toJS() as Record<string, unknown>[];
+    const disabledStep = steps.find((step) => {
+      const wait = step.extendedWaitUntil as { visible?: { enabled?: boolean } } | undefined;
+      return wait?.visible?.enabled === false;
+    })!;
+    const selector = (
+      disabledStep.extendedWaitUntil as { visible: { id: string; text: string; enabled: boolean; childOf?: unknown } }
+    ).visible;
+    const matchesReset = (node: { 'resource-id': string; accessibilityText?: string; enabled: string }) =>
+      new RegExp(selector.id).test(node['resource-id']) &&
+      new RegExp(selector.text).test(node.accessibilityText ?? '') &&
+      selector.enabled === (node.enabled === 'true');
+    expect(matchesReset(actualReset)).toBe(true);
+    expect(matchesReset(actualFlank)).toBe(false);
+    expect(matchesReset({ ...actualReset, enabled: 'true' })).toBe(false);
+    expect(matchesReset({ ...actualReset, 'resource-id': 'different-control' })).toBe(false);
+    expect(matchesReset({ ...actualReset, accessibilityText: 'Apply' })).toBe(false);
+    expect(new RegExp(selector.id).test(actualReset['resource-id'])).toBe(true);
+    expect(new RegExp(selector.text).test(actualReset.accessibilityText)).toBe(true);
+    expect(selector.enabled).toBe(actualReset.enabled === 'true');
+    expect(selector).not.toHaveProperty('childOf');
+    expect(new RegExp(selector.id).test(actualFlank['resource-id'])).toBe(false);
+    expect(new RegExp(selector.text).test('Reset another sheet')).toBe(false);
+    expect(new RegExp(selector.text).test('Apply')).toBe(false);
+    // Disabled Reset means anyActive=false. The shared native predicate checks
+    // either grade bound, all board filters, and the name; Any need not be on screen.
+    const captureIndex = steps.findIndex((step) => step.takeScreenshot === '02-search');
+    expect(steps[captureIndex + 3]).toEqual({ extendedWaitUntil: { visible: selector, timeout: 90000 } });
+    expect(steps[captureIndex + 4]).toEqual({ waitForAnimationToEnd: { timeout: 30000 } });
+    expect(steps[captureIndex + 5]).toEqual({ tapOn: { id: 'sheet-top-bar-leading' } });
+    expect(JSON.stringify(steps.slice(captureIndex + 1, captureIndex + 5))).not.toContain('Any grade');
+  });
+  it('uses literal grade labels and actual number/plural formatting and refuses invalid coverage', () => {
+    const actualCounts = {
+      'en-US': '12,345 climbs',
+      es: '12.345 bloques',
+      fr: '12\u202f345 blocs',
+      de: '12.345 Boulder',
+    };
+    const grade = { minLabel: 'V3 (left)+[1].', minGradeId: 14, maxGradeId: 15, expectedCount: 12345 };
+    for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
+      const labels = cppGradeFilterSelectors(grade, locale);
+      expect(new RegExp(labels.count).test(actualCounts[locale])).toBe(true);
+      expect(new RegExp(labels.count).test(actualCounts[locale].replace('345', '346'))).toBe(false);
+      const catalog = JSON.parse(readFileSync(`packages/shared/i18n/locales/${locale}/climbs.json`, 'utf8')) as {
+        mobile: { gradeRail: { selectedFilterAria: string } };
+      };
+      expect(
+        new RegExp(labels.minSelected).test(
+          catalog.mobile.gradeRail.selectedFilterAria.replace('{{grade}}', grade.minLabel),
+        ),
+      ).toBe(true);
+      expect(
+        new RegExp(labels.minSelected).test(
+          catalog.mobile.gradeRail.selectedFilterAria.replace('{{grade}}', 'V3 left1'),
+        ),
+      ).toBe(false);
+    }
+    for (const invalid of [
+      { expectedCount: 0 },
+      { expectedCount: 1.5 },
+      { minLabel: '' },
+      { maxLabel: '' },
+      { minGradeId: 16, maxGradeId: 15 },
+    ])
+      expect(() => cppGradeFilterSelectors({ ...grade, ...invalid }, 'en-US')).toThrow('genuine bounds');
+    const { coverage } = scenario('kilter');
+    coverage.scenes.search.gradeFilter = grade;
+    const source = renderCppMaestroFlow('kilter', IOS_SCREENSHOT_DEVICES[0], coverage);
+    expect(source).not.toContain('- longPressOn: {');
+  });
+  it('binds all optional selected heroes to their own real routes and painted identity while restoring original status', () => {
+    for (const target of CPP_TARGETS) {
+      const { page, coverage, boards, fixturesDir } = selectedScenario(target);
+      expect(() => assertCppCaptureReady(target, page, coverage, boards, fixturesDir)).not.toThrow();
+      for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
+        const options = {
+          ...parseArgs(['--cpp', target, '--fixtures', 'record']),
+          cppCoverage: coverage,
+          cppRecordedBoards: boards,
+        };
+        const registry = JSON.parse(
+          buildScreenshotEnv(options, { NODE_ENV: 'test' }, locale, '2026-10-12T00:00:00Z', 8090)
+            .EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS!,
+        ) as Record<string, CppNavigationCommand>;
+        for (const device of IOS_SCREENSHOT_DEVICES) {
+          const source = renderCppMaestroFlow(target, device, coverage, locale);
+          const steps = parseAllDocuments(source)[1].toJS() as Record<string, unknown>[];
+          for (const [index, variant] of [...page.heroBoards, ...page.otherBoards].entries()) {
+            const hero = coverage.heroClimbs![variant.id];
+            const command = `${index < 3 ? 'hero' : 'other'}-${(index % 3) + 1}`;
+            const route = new URL(registry[command].route, 'https://capture.invalid');
+            expect(route.searchParams.get('screenshotClimbId')).toBe(hero.climbId);
+            expect(registry[command].identity.uuid).toBe(hero.boardId);
+            expect(steps).toContainEqual({
+              extendedWaitUntil: {
+                visible: { id: `cpp-climb-painted-${hero.boardId}-${hero.climbId}` },
+                timeout: 90000,
+              },
+            });
+            expect(steps).toContainEqual({
+              extendedWaitUntil: { visible: cppReadinessSelector(hero.readyText), timeout: 90000 },
+            });
+            expect(steps).toContainEqual({ extendedWaitUntil: { visible: '^V3$', timeout: 90000 } });
+            expect(source).not.toContain(`visible: "${coverage.boardReadyText[variant.id]}"`);
+          }
+          if (device.name.startsWith('iPad') && target !== 'spray') {
+            expect(
+              new URL(registry['status-ipad'].route, 'https://capture.invalid').searchParams.get('screenshotClimbId'),
+            ).toBe(coverage.scenes.status.climbId);
+            expect(steps).toContainEqual({
+              extendedWaitUntil: {
+                visible: {
+                  id: `cpp-climb-painted-${coverage.scenes.status.boardId}-${coverage.scenes.status.climbId}`,
+                },
+                timeout: 90000,
+              },
+            });
+          }
+          const mirror = cppMirrorSelectors(locale);
+          if (target === 'tension') {
+            const captureIndex = steps.findIndex((step) => step.takeScreenshot === 'hero-2');
+            const hero = coverage.heroClimbs![page.primaryBoard.id];
+            const mirrorIndex = steps.findIndex((step) => step.tapOn === mirror.mirror);
+            expect(mirrorIndex).toBeGreaterThan(0);
+            expect(steps[mirrorIndex - 2]).toEqual({
+              extendedWaitUntil: {
+                visible: { id: `cpp-climb-local-mirror-${hero.boardId}-${hero.climbId}` },
+                timeout: 60000,
+              },
+            });
+            expect(steps[mirrorIndex + 2]).toEqual({
+              extendedWaitUntil: {
+                visible: { id: `cpp-climb-painted-${hero.boardId}-${hero.climbId}-mirrored` },
+                timeout: 60000,
+              },
+            });
+            expect(steps.slice(0, captureIndex)).toContainEqual({
+              extendedWaitUntil: { visible: { text: mirror.unmirror, selected: true }, timeout: 60000 },
+            });
+            expect(steps[captureIndex + 1]).toEqual({ tapOn: mirror.unmirror });
+            expect(steps[captureIndex + 2]).toEqual({
+              extendedWaitUntil: { visible: { text: mirror.mirror, selected: false }, timeout: 60000 },
+            });
+            expect(steps[captureIndex + 3]).toEqual({
+              extendedWaitUntil: {
+                visible: { id: `cpp-climb-painted-${hero.boardId}-${hero.climbId}` },
+                timeout: 60000,
+              },
+            });
+            expect(
+              steps.findIndex(
+                (step) => typeof step.evalScript === 'string' && step.evalScript.includes('/set?scene=queue-join'),
+              ),
+            ).toBeGreaterThan(captureIndex + 2);
+          } else expect(steps).not.toContainEqual({ tapOn: mirror.mirror });
+        }
+      }
+      const primary = coverage.heroClimbs![page.primaryBoard.id];
+      for (const invalid of [
+        { boardId: 'another-board' },
+        { climbId: '' },
+        { benchmarkDifficulty: 15, statsAngle: 99 },
+      ])
+        expect(() =>
+          assertCppCaptureReady(
+            target,
+            page,
+            { ...coverage, heroClimbs: { ...coverage.heroClimbs, [page.primaryBoard.id]: { ...primary, ...invalid } } },
+            boards,
+            fixturesDir,
+          ),
+        ).toThrow('selected hero');
+      expect(() =>
+        assertCppCaptureReady(
+          target,
+          page,
+          {
+            ...coverage,
+            scenes: {
+              ...coverage.scenes,
+              search: {
+                ...coverage.scenes.search,
+                gradeFilter: { ...coverage.scenes.search.gradeFilter!, expectedCount: 0 },
+              },
+            },
+          },
+          boards,
+          fixturesDir,
+        ),
+      ).toThrow('grade-filter');
+    }
+    const { coverage, page, boards } = scenario('tension');
+    const oldSource = renderCppMaestroFlow('tension', IOS_SCREENSHOT_DEVICES[0], coverage);
+    expect(oldSource).not.toContain('cpp-climb-painted');
+    expect(oldSource).not.toContain('longPressOn: {');
+    expect(oldSource).not.toContain('Mirror climb');
+    for (const command of Object.values(cppNavigationCommands(page, coverage, boards, true)))
+      expect(new URL(command.route, 'https://capture.invalid').searchParams.has('screenshotClimbId')).toBe(false);
+  });
   it('closes the real open-state UIKit sidebar before every tablet capture without toggling a hidden sidebar', () => {
     const selector = { id: '^ToggleSidebar$', text: '^${SCREENSHOT_SIDEBAR_HIDE_LABEL}$' };
     const actualControls = [
@@ -558,97 +882,121 @@ describe('custom product page captures', () => {
       }
     }
   });
-  it('resolves every emitted command through the actual Metro registry for all 64 CPP recipes', () => {
+  it('resolves all 128 legacy/selected CPP flows through the real Metro registry and strict readiness handler', () => {
     let checkedDocuments = 0;
     const readinessRequest = readinessCommandTransport();
-    for (const target of CPP_TARGETS) {
-      const { coverage, page, boards } = scenario(target);
-      coverage.boardIds = Object.fromEntries(
-        [...page.heroBoards, ...page.otherBoards].map((board, index) => [board.id, boards[index].uuid]),
-      );
-      const options = {
-        ...parseArgs(['--cpp', target, '--fixtures', 'record']),
-        cppCoverage: coverage,
-        cppRecordedBoards: boards,
-      };
-      for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
-        const env = buildScreenshotEnv(options, { NODE_ENV: 'test' }, locale, '2026-10-12T00:00:00Z', 8090);
-        const registry = JSON.parse(env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS!) as Record<string, CppNavigationCommand>;
-        for (const device of IOS_SCREENSHOT_DEVICES) {
-          const ipad = device.name.startsWith('iPad');
-          const finalScene = target !== 'spray' && ipad ? 'kiosk' : 'island';
-          const source = renderMaestroFlowForIosDevice(renderCppMaestroFlow(target, device, coverage, locale), device);
-          const documents = parseAllDocuments(source);
-          expect(documents.flatMap((document) => document.errors)).toEqual([]);
-          const steps = documents[1].toJS() as Record<string, unknown>[];
-          const requestedScenes = requestedCppScenes(steps);
-          // This list is the approved capture sequence, independently of the
-          // implementation's registry and scene builder (including the join).
-          expect(requestedScenes).toEqual([
-            'hero-1',
-            'hero-2',
-            'hero-3',
-            'other-1',
-            'other-2',
-            'other-3',
-            'search',
-            'search-results',
-            'workout',
-            target !== 'spray' && ipad ? 'status-ipad' : 'status',
-            'queue-join',
-            'queue',
-            'logbook',
-            'led',
-            finalScene,
-          ]);
-          for (const [index, scene] of requestedScenes.entries()) {
-            const board = index < 6 ? [...page.heroBoards, ...page.otherBoards][index] : page.primaryBoard;
-            expect(registry[scene], `${target}/${device.name}/${locale}: ${scene}`).toMatchObject({
-              selector: board.selector,
-              identity: { uuid: coverage.boardIds[board.id], boardType: board.boardType },
-            });
-            expect(
-              new URL(registry[scene].route, 'https://capture.invalid').searchParams.get('screenshotCppScene'),
-            ).toBe(scene);
-            const response = readinessRequest(`/cpp/set?scene=${scene}`);
-            expect(response.status).toBe(200);
-            expect(JSON.parse(response.body)).toMatchObject({ scene });
+    for (const target of CPP_TARGETS)
+      for (const makeScenario of [scenario, selectedScenario]) {
+        const { coverage, page, boards } = makeScenario(target);
+        coverage.boardIds = Object.fromEntries(
+          [...page.heroBoards, ...page.otherBoards].map((board, index) => [board.id, boards[index].uuid]),
+        );
+        const options = {
+          ...parseArgs(['--cpp', target, '--fixtures', 'record']),
+          cppCoverage: coverage,
+          cppRecordedBoards: boards,
+        };
+        for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
+          const env = buildScreenshotEnv(options, { NODE_ENV: 'test' }, locale, '2026-10-12T00:00:00Z', 8090);
+          const registry = JSON.parse(env.EXPO_PUBLIC_SCREENSHOT_CPP_COMMANDS!) as Record<string, CppNavigationCommand>;
+          for (const device of IOS_SCREENSHOT_DEVICES) {
+            const ipad = device.name.startsWith('iPad');
+            const finalScene = target !== 'spray' && ipad ? 'kiosk' : 'island';
+            const source = renderMaestroFlowForIosDevice(
+              renderCppMaestroFlow(target, device, coverage, locale),
+              device,
+            );
+            const documents = parseAllDocuments(source);
+            expect(documents.flatMap((document) => document.errors)).toEqual([]);
+            const steps = documents[1].toJS() as Record<string, unknown>[];
+            const requestedScenes = requestedCppScenes(steps);
+            // This list is the approved capture sequence, independently of the
+            // implementation's registry and scene builder (including the join).
+            expect(requestedScenes).toEqual([
+              'hero-1',
+              'hero-2',
+              'hero-3',
+              'other-1',
+              'other-2',
+              'other-3',
+              'search',
+              ...(coverage.scenes.search.gradeFilter ? ['search-grade'] : []),
+              'search-results',
+              'workout',
+              target !== 'spray' && ipad ? 'status-ipad' : 'status',
+              'queue-join',
+              'queue',
+              'logbook',
+              'led',
+              finalScene,
+            ]);
+            for (const [index, scene] of requestedScenes.entries()) {
+              const board = index < 6 ? [...page.heroBoards, ...page.otherBoards][index] : page.primaryBoard;
+              expect(registry[scene], `${target}/${device.name}/${locale}: ${scene}`).toMatchObject({
+                selector: board.selector,
+                identity: { uuid: coverage.boardIds[board.id], boardType: board.boardType },
+              });
+              expect(
+                new URL(registry[scene].route, 'https://capture.invalid').searchParams.get('screenshotCppScene'),
+              ).toBe(scene);
+              const response = readinessRequest(`/cpp/set?scene=${scene}`);
+              expect(response.status).toBe(200);
+              expect(JSON.parse(response.body)).toMatchObject({ scene });
+            }
+            if (coverage.scenes.search.gradeFilter) {
+              const gradeRoute = new URL(registry['search-grade'].route, 'https://capture.invalid');
+              expect(gradeRoute.pathname).toBe('/climbs');
+              expect(gradeRoute.searchParams.get('screenshotOpenFilters')).toBe('1');
+              expect(gradeRoute.searchParams.get('screenshotMinGrade')).toBe(
+                String(coverage.scenes.search.gradeFilter.minGradeId),
+              );
+              expect(gradeRoute.searchParams.get('screenshotMaxGrade')).toBe(
+                String(coverage.scenes.search.gradeFilter.maxGradeId),
+              );
+            } else expect(registry['search-grade']).toBeUndefined();
+            const resultsRoute = new URL(registry['search-results'].route, 'https://capture.invalid');
+            expect(resultsRoute.pathname).toBe('/climbs');
+            expect(resultsRoute.searchParams.has('screenshotOpenFilters')).toBe(false);
+            expect(resultsRoute.searchParams.get('screenshotBoardIndex')).toBe(
+              new URL(registry.search.route, 'https://capture.invalid').searchParams.get('screenshotBoardIndex'),
+            );
+            const statusRoute = new URL(
+              registry[target !== 'spray' && ipad ? 'status-ipad' : 'status'].route,
+              'https://capture.invalid',
+            );
+            expect(statusRoute.searchParams.has('screenshotOpenFirst')).toBe(target !== 'spray' && ipad);
+            expect(registry[target !== 'spray' && ipad ? 'status-ipad' : 'status'].identity.uuid).toBe(
+              coverage.scenes.status.boardId,
+            );
+            const finalRoute = new URL(registry[finalScene].route, 'https://capture.invalid');
+            expect(finalRoute.pathname).toBe(target === 'spray' ? '/boards/spray/holds' : ipad ? '/wall' : '/climbs');
+            if (target === 'spray')
+              expect(finalRoute.searchParams.get('wallUuid')).toBe(coverage.scenes.island.boardId);
+            if (!ipad && target !== 'spray') expect(finalRoute.searchParams.get('screenshotOpenFirst')).toBe('1');
+            const captures = steps.flatMap((step) =>
+              typeof step.takeScreenshot === 'string' ? [`${step.takeScreenshot}.png`] : [],
+            );
+            expect(captures.sort()).toEqual(cppCaptureNames(page, deviceSlug(device.name)));
+            expect(captures).toContain(target === 'spray' ? '08-holds.png' : ipad ? '08-kiosk.png' : '08-island.png');
+            checkedDocuments += 1;
           }
-          const resultsRoute = new URL(registry['search-results'].route, 'https://capture.invalid');
-          expect(resultsRoute.pathname).toBe('/climbs');
-          expect(resultsRoute.searchParams.has('screenshotOpenFilters')).toBe(false);
-          expect(resultsRoute.searchParams.get('screenshotBoardIndex')).toBe(
-            new URL(registry.search.route, 'https://capture.invalid').searchParams.get('screenshotBoardIndex'),
-          );
-          const statusRoute = new URL(
-            registry[target !== 'spray' && ipad ? 'status-ipad' : 'status'].route,
-            'https://capture.invalid',
-          );
-          expect(statusRoute.searchParams.has('screenshotOpenFirst')).toBe(target !== 'spray' && ipad);
-          expect(registry[target !== 'spray' && ipad ? 'status-ipad' : 'status'].identity.uuid).toBe(
-            coverage.scenes.status.boardId,
-          );
-          const finalRoute = new URL(registry[finalScene].route, 'https://capture.invalid');
-          expect(finalRoute.pathname).toBe(target === 'spray' ? '/boards/spray/holds' : ipad ? '/wall' : '/climbs');
-          if (target === 'spray') expect(finalRoute.searchParams.get('wallUuid')).toBe(coverage.scenes.island.boardId);
-          if (!ipad && target !== 'spray') expect(finalRoute.searchParams.get('screenshotOpenFirst')).toBe('1');
-          const captures = steps.flatMap((step) =>
-            typeof step.takeScreenshot === 'string' ? [`${step.takeScreenshot}.png`] : [],
-          );
-          expect(captures.sort()).toEqual(cppCaptureNames(page, deviceSlug(device.name)));
-          expect(captures).toContain(target === 'spray' ? '08-holds.png' : ipad ? '08-kiosk.png' : '08-island.png');
-          checkedDocuments += 1;
         }
       }
-    }
-    expect(checkedDocuments).toBe(64);
+    expect(checkedDocuments).toBe(128);
   });
   it('keeps the readiness command transport restricted to known scenes and loopback clients', () => {
     const request = readinessCommandTransport();
+    expect(request('/cpp/set?scene=search-grade').status).toBe(200);
     const accepted = request('/cpp/set?scene=search-results');
     expect(accepted.status).toBe(200);
     const command = JSON.parse(accepted.body) as { sequence: number };
-    for (const scene of ['', 'search-results-other-board', 'unregistered', 'search%26anything']) {
+    for (const scene of [
+      '',
+      'search-results-other-board',
+      'search-grade-other-board',
+      'unregistered',
+      'search%26anything',
+    ]) {
       expect(request(`/cpp/set?scene=${scene}`).status).toBe(400);
     }
     expect(request('/cpp/set?scene=search-results', '192.0.2.1').status).toBe(403);

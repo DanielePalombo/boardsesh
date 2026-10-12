@@ -70,6 +70,57 @@ row label, using at most five scrolls within the recorded first page if needed.
 Readiness text must identify real captured content. Do not invent records or
 readiness labels.
 
+New recordings also store `heroClimbs`, selecting actual climb IDs from at most
+ten results for each exact board configuration. Trio titles differ and grades
+vary where the real results permit; Kilter excludes the misleading “Moon Landing”
+title. Native navigation opens the requested loaded row through the normal climb
+action, with no first-row fallback. Capture uses the device’s real V-grade
+preference, with personal and Boardsesh grades disabled, and waits for those
+preferences to settle. Existing candidates without this optional contract keep
+their original navigation.
+
+Explicit hero capture waits for the current board's saved search to restore,
+then clears actual filters, committed search text and any pending name debounce.
+It waits for genuine default-query results before resolving the requested ID.
+Returning to that hero starts a new reset; ordinary rerenders do not.
+
+The selected-pane marker identifies the owned board and rendered climb only after
+both current board-art layers have displayed. Hidden tabs, stale image events and
+opening-art bridges cannot satisfy it. Tension’s new mirror capture additionally
+requires a genuine local or preview view before using the normal Mirror action,
+then verifies the mirrored artwork and restores the original orientation.
+
+New search captures reset through the real header action, then use the
+`search-grade` navigation command to apply a range through the existing live
+filter action. Native setup validates both IDs against loaded GetGrades and the
+current exact board configuration, and clears restored search text through the
+existing clear action before applying the range. Capture requires the actual selected
+GradeRail endpoints and genuine API count. It then clears through header Reset
+and closes through leading Close before navigation. Trailing Reset must never
+be treated as Apply; Maestro hierarchy existence does not prove an offscreen
+chip can be tapped.
+
+UIKit exposes the filter header, column and grade chips as accessibility peers.
+Capture matches the real Reset ID, localized label and enabled state, selected
+grade labels, and exact count without imposing a nonexistent parent relation.
+After Reset, its disabled state proves that grade bounds, board filters and name
+are cleared; the offscreen Any chip is not a usable native readiness gate.
+
+The dedicated recording account uses the display name Liz. Bootstrap changes only
+that authenticated owner’s display name and generated private QA board names,
+then rereads ownership, configuration, privacy and avatar state. UUIDs, photos,
+climbs, ascents and third-party setter names remain intact.
+
+Existing public catalogue boards retain their visibility and metadata. Bootstrap
+selects an editable private configuration or creates a separate private QA board
+with the exact same catalogue configuration. Duplicate-config creation is allowed
+only when the authenticated owner already has a verified public source; its UUID
+is retained in checkpoint provenance. A previously checkpointed public source can
+migrate to that private QA copy. An explicit public, foreign, mismatched or
+permission-unknown UUID binding stops before setup writes.
+A pending new QA row must pass fresh name, private-visibility and editability
+checks on retry; it cannot be reclassified as an older public source.
+
 Manufacturer status scenes also require `climbId`, copied unchanged from the
 actual first primary-board climb. Both canonical UUIDs and Aurora's compact
 32-character hexadecimal identifiers are accepted, preserving their casing.
