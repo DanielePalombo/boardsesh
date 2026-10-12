@@ -118,6 +118,8 @@ export interface BootstrapCheckpoint {
     string,
     {
       uuid: string;
+      /** Retained only until the newly created QA row passes a fresh name reread. */
+      expectedCatalogueName?: string;
       sourceSha256?: string;
       storedPhotoSha256?: string;
       provenance?: 'pixel-verified' | 'visually-accepted';
@@ -133,6 +135,8 @@ export interface BootstrapCheckpoint {
     reason: 'ended-checkpoint' | 'nonpermanent';
   }>;
   demoTicks?: Partial<Record<CppTarget, string>>;
+  /** Preserved public catalogue rows while a separate private QA board is selected. */
+  catalogueSourceBoardIds?: Record<string, string[]>;
 }
 export interface BootstrapTransport {
   request<T>(this: void, query: string, variables?: Record<string, unknown>): Promise<T>;
@@ -240,6 +244,75 @@ export function selectCppHeroClimbs(
   return best ? Object.fromEntries(sources.map((source, index) => [source.variantId, best![index]])) : undefined;
 }
 
+export function screenshotCatalogueName(variant: CppBoard): string {
+  return `Liz's ${variant.selector.replace(/^(Kilter|Tension) Board /, '$1 ')}`;
+}
+
+function catalogueBoardProof(variant: CppBoard, board: BootstrapBoard, accountUserId: string): string {
+  return (
+    `${variant.id}: catalogue board proof ownerMatches=${board.ownerId === accountUserId}, ` +
+    `editabilityKnown=${typeof board.canEdit === 'boolean'}, canEdit=${board.canEdit === true}, ` +
+    `visibilityKnown=${typeof board.isPublic === 'boolean'}, isPrivate=${board.isPublic === false}`
+  );
+}
+
+/** Public catalogue metadata is preserved; marketing writes use an owned private QA row. */
+export function selectScreenshotCatalogueBoard(
+  options: Pick<BootstrapOptions, 'accountUserId' | 'bindings' | 'checkpoint'>,
+  variant: CppBoard,
+  roster: readonly BootstrapBoard[],
+): { board?: BootstrapBoard; sourcePublicBoardIds: string[]; problem?: string } {
+  const candidates = roster.filter(
+    (board) => board.ownerId === options.accountUserId && boardMatchesConfig(board, variant),
+  );
+  const sourcePublicBoardIds = candidates.filter((board) => board.isPublic === true).map((board) => board.uuid);
+  const explicitId = options.bindings?.[variant.id];
+  const savedId = options.checkpoint.boards[variant.id]?.uuid;
+  const boundId = explicitId ?? savedId;
+  const bound = boundId ? candidates.find((board) => board.uuid === boundId) : undefined;
+  const expectedName = options.checkpoint.boards[variant.id]?.expectedCatalogueName;
+  if (bound && expectedName && (bound.name !== expectedName || bound.isPublic !== false || bound.canEdit !== true))
+    return {
+      sourcePublicBoardIds,
+      problem:
+        catalogueBoardProof(variant, bound, options.accountUserId) +
+        `, nameMatchesExpected=${bound.name === expectedName}; pending QA creation failed fresh verification; original rows preserved`,
+    };
+  if (boundId && !bound)
+    return {
+      sourcePublicBoardIds,
+      problem: `${variant.id}: bound catalogue board is unavailable or has another owner/configuration`,
+    };
+  if (bound && bound.isPublic === false && bound.canEdit === true) return { board: bound, sourcePublicBoardIds };
+  if (bound && (explicitId || bound.isPublic !== true || typeof bound.canEdit !== 'boolean'))
+    return {
+      sourcePublicBoardIds,
+      problem:
+        catalogueBoardProof(variant, bound, options.accountUserId) +
+        '; binding requires an editable private board; source preserved',
+    };
+  const privateCandidates = candidates.filter((board) => board.isPublic === false && board.canEdit === true);
+  const namedQa = privateCandidates.filter((board) => board.name === screenshotCatalogueName(variant));
+  const matches = namedQa.length ? namedQa : privateCandidates;
+  if (matches.length === 1) return { board: matches[0], sourcePublicBoardIds };
+  if (matches.length > 1)
+    return {
+      sourcePublicBoardIds,
+      problem: `${variant.id}: multiple editable private catalogue boards require an explicit UUID binding`,
+    };
+  const unverified = candidates.find(
+    (board) => typeof board.isPublic !== 'boolean' || typeof board.canEdit !== 'boolean' || board.isPublic === false,
+  );
+  if (unverified)
+    return {
+      sourcePublicBoardIds,
+      problem:
+        catalogueBoardProof(variant, unverified, options.accountUserId) +
+        '; catalogue permissions cannot be verified; no QA board created',
+    };
+  return { sourcePublicBoardIds };
+}
+
 export async function ensureScreenshotCatalogueName(
   options: BootstrapOptions,
   variant: CppBoard,
@@ -254,7 +327,7 @@ export async function ensureScreenshotCatalogueName(
     !boardMatchesConfig(board, variant)
   )
     throw new Error(`${variant.id}: generated QA board name is not an editable private owned configuration`);
-  const name = `Liz's ${variant.selector.replace(/^(Kilter|Tension) Board /, '$1 ')}`;
+  const name = screenshotCatalogueName(variant);
   actions.push(`${variant.id}: set own private QA board name to ${name}`);
   if (!options.apply) return board;
   await options.transport.request(UPDATE_BOARD, { input: { boardUuid: board.uuid, name } });
@@ -787,6 +860,13 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
       };
     }
   }
+  const catalogueProblems = variants
+    .filter((variant) => variant.family !== 'spray')
+    .flatMap((variant) => {
+      const selectedCatalogue = selectScreenshotCatalogueBoard(options, variant, owned);
+      return selectedCatalogue.problem ? [selectedCatalogue.problem] : [];
+    });
+  if (catalogueProblems.length) return { target: options.target, boards: [], actions: [], blockers: catalogueProblems };
   const profileProblem = await ensureScreenshotProfileName(options, actions);
   if (profileProblem) return { target: options.target, boards: [], actions, blockers: [profileProblem] };
   const selected = new Map<string, BootstrapBoard>();
@@ -803,17 +883,25 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
         boardMatchesConfig(board, variant) &&
         (boundId ? board.uuid === boundId : variant.family !== 'spray' || board.name === variant.selector),
     );
-    if (matches.length > 1) {
+    const catalogueSelection =
+      variant.family !== 'spray' ? selectScreenshotCatalogueBoard(options, variant, owned) : undefined;
+    if (catalogueSelection?.problem) {
+      blockers.push(catalogueSelection.problem);
+      continue;
+    }
+    if (catalogueSelection) matches = catalogueSelection.board ? [catalogueSelection.board] : [];
+    if (variant.family === 'spray' && matches.length > 1) {
       const exactName = matches.filter((board) => board.name === variant.selector);
       if (exactName.length === 1) matches = exactName;
     }
-    if (matches.length > 1 || (boundId && matches.length !== 1)) {
+    if (variant.family === 'spray' && (matches.length > 1 || (boundId && matches.length !== 1))) {
       blockers.push(`${variant.id}: binding is missing, ambiguous, or has another board configuration`);
       continue;
     }
     let board = matches[0];
     if (!board) {
-      actions.push(`${variant.id}: create private unlisted demo board (${variant.selector})`);
+      const name = variant.family === 'spray' ? variant.selector : screenshotCatalogueName(variant);
+      actions.push(`${variant.id}: create private demo board (${name}); existing catalogue rows preserved`);
       if (!options.apply) {
         blockers.push(`${variant.id}: missing owned board; creation requires --apply`);
         continue;
@@ -826,7 +914,7 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
       } else {
         const created = await options.transport.request<{ createBoard: BootstrapBoard }>(CREATE_BOARD, {
           input: {
-            name: variant.selector,
+            name,
             boardType: variant.boardType,
             layoutId: variant.layoutId,
             sizeId: variant.sizeId,
@@ -836,16 +924,46 @@ export async function bootstrapCppScenario(options: BootstrapOptions): Promise<B
             isUnlisted: true,
             isOwned: false,
             hideLocation: true,
+            ...(catalogueSelection?.sourcePublicBoardIds.length ? { allowDuplicateConfig: true } : {}),
           },
         });
-        options.checkpoint.boards[variant.id] = { uuid: created.createBoard.uuid };
+        options.checkpoint.boards[variant.id] = { uuid: created.createBoard.uuid, expectedCatalogueName: name };
+        if (catalogueSelection?.sourcePublicBoardIds.length)
+          options.checkpoint.catalogueSourceBoardIds = {
+            ...options.checkpoint.catalogueSourceBoardIds,
+            [variant.id]: [
+              ...new Set([
+                ...(options.checkpoint.catalogueSourceBoardIds?.[variant.id] ?? []),
+                ...catalogueSelection.sourcePublicBoardIds,
+              ]),
+            ],
+          };
       }
       options.saveCheckpoint(options.checkpoint);
       owned = await listOwnedBoards(options);
       board = owned.find((candidate) => candidate.uuid === options.checkpoint.boards[variant.id].uuid)!;
       if (!board || board.ownerId !== options.accountUserId || !boardMatchesConfig(board, variant))
         throw new Error(`${variant.id}: created board failed ownership/configuration verification`);
+      if (variant.family !== 'spray' && (board.canEdit !== true || board.isPublic !== false || board.name !== name))
+        throw new Error(
+          catalogueBoardProof(variant, board, options.accountUserId) +
+            `, nameMatchesExpected=${board.name === name}; newly created QA board failed private/editable/name verification`,
+        );
       walls = (await options.transport.request<{ mySprayWalls: Wall[] }>(GET_MY_SPRAY_WALLS)).mySprayWalls;
+    }
+    if (variant.family !== 'spray' && options.apply) {
+      const previousId = options.checkpoint.boards[variant.id]?.uuid;
+      const pendingName = options.checkpoint.boards[variant.id]?.expectedCatalogueName;
+      const previousSources = options.checkpoint.catalogueSourceBoardIds?.[variant.id] ?? [];
+      const sources = [...new Set([...previousSources, ...(catalogueSelection?.sourcePublicBoardIds ?? [])])].sort();
+      options.checkpoint.boards[variant.id] = { uuid: board.uuid };
+      if (sources.length)
+        options.checkpoint.catalogueSourceBoardIds = {
+          ...options.checkpoint.catalogueSourceBoardIds,
+          [variant.id]: sources,
+        };
+      if (pendingName || previousId !== board.uuid || sources.join(',') !== previousSources.join(','))
+        options.saveCheckpoint(options.checkpoint);
     }
     if (variant.family === 'spray') {
       const wall = walls.find(

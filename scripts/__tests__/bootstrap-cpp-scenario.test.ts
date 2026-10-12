@@ -10,6 +10,7 @@ import {
   selectCppHeroClimbs,
   ensureScreenshotProfileName,
   ensureScreenshotCatalogueName,
+  selectScreenshotCatalogueBoard,
   bootstrapCppScenario,
   photosMatch,
   ensureSprayPhoto,
@@ -140,6 +141,7 @@ function manufacturerHarness(): {
     name: `My actual ${variant.selector}`,
     ownerId: ACCOUNT,
     canEdit: true,
+    isPublic: false,
     boardId: index + 1,
     boardType: variant.boardType,
     layoutId: variant.layoutId!,
@@ -241,7 +243,7 @@ function manufacturerHarness(): {
           };
           const board: BootstrapBoard = {
             ...input,
-            uuid: testUuid(500),
+            uuid: testUuid(499 + operations.filter((operation) => operation.name === 'CreateBoard').length),
             ownerId: ACCOUNT,
             canEdit: true,
             boardId: 500,
@@ -389,6 +391,239 @@ function sprayRenameHarness(variantIndex = 0) {
 }
 
 describe('genuine marketing climb and account coverage', () => {
+  it('creates a distinct private QA copy of a genuine owned public configuration and resumes its exact UUID', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    const original = harness.owned[0];
+    original.name = "Test User's Kilter Original 12×12 with kickboard";
+    original.isPublic = true;
+    const before = structuredClone(original);
+    harness.options.checkpoint.boards[variant.id] = { uuid: original.uuid };
+    const result = await bootstrapCppScenario(harness.options);
+    expect(result.blockers).toEqual([]);
+    expect(original).toEqual(before);
+    expect(harness.operations.filter((operation) => operation.name === 'UpdateBoard')).toEqual([]);
+    const created = harness.operations.find((operation) => operation.name === 'CreateBoard')!;
+    expect(created.variables.input).toEqual({
+      name: "Liz's Kilter Original 12x12",
+      boardType: original.boardType,
+      layoutId: original.layoutId,
+      sizeId: original.sizeId,
+      setIds: original.setIds,
+      angle: original.angle,
+      isPublic: false,
+      isUnlisted: true,
+      isOwned: false,
+      hideLocation: true,
+      allowDuplicateConfig: true,
+    });
+    const privateId = harness.options.checkpoint.boards[variant.id].uuid;
+    expect(privateId).not.toBe(original.uuid);
+    expect(harness.options.checkpoint.catalogueSourceBoardIds?.[variant.id]).toEqual([original.uuid]);
+    expect(result.scenario?.cpp?.boardIds?.[variant.id]).toBe(privateId);
+    expect(result.scenario?.cpp?.scenes.search.boardId).toBe(privateId);
+    const resumed = await bootstrapCppScenario(harness.options);
+    expect(resumed.blockers).toEqual([]);
+    expect(resumed.scenario?.cpp?.boardIds?.[variant.id]).toBe(privateId);
+    expect(harness.operations.filter((operation) => operation.name === 'CreateBoard')).toHaveLength(1);
+    expect(original).toEqual(before);
+  });
+
+  it('selects an already verified Liz QA board and retains the public checkpoint source without another create', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    const original = harness.owned[0];
+    original.isPublic = true;
+    harness.options.checkpoint.boards[variant.id] = { uuid: original.uuid };
+    const qa = { ...original, uuid: testUuid(510), name: "Liz's Kilter Original 12x12", isPublic: false };
+    harness.owned.push(qa);
+    const result = await bootstrapCppScenario(harness.options);
+    expect(result.blockers).toEqual([]);
+    expect(harness.options.checkpoint.boards[variant.id].uuid).toBe(qa.uuid);
+    expect(harness.options.checkpoint.catalogueSourceBoardIds?.[variant.id]).toEqual([original.uuid]);
+    expect(harness.operations.some((operation) => ['CreateBoard', 'UpdateBoard'].includes(operation.name))).toBe(false);
+  });
+
+  it.each(['isPublic', 'canEdit'] as const)(
+    'blocks omitted catalogue %s before any metadata creation or rename',
+    async (field) => {
+      const harness = manufacturerHarness();
+      harness.options.apply = true;
+      Reflect.deleteProperty(harness.owned[0], field);
+      const result = await bootstrapCppScenario(harness.options);
+      expect(result.scenario).toBeUndefined();
+      expect(result.blockers).toContainEqual(
+        expect.stringContaining(field === 'isPublic' ? 'visibilityKnown=false' : 'editabilityKnown=false'),
+      );
+      expect(
+        harness.operations.some((operation) =>
+          ['CreateBoard', 'UpdateBoard', 'UpdateProfile'].includes(operation.name),
+        ),
+      ).toBe(false);
+      expect(harness.save).not.toHaveBeenCalled();
+      expect(harness.operations.some((operation) => operation.name === 'CppBootstrapProfile')).toBe(false);
+    },
+  );
+
+  it('preserves explicit public and foreign bindings without silently substituting a private clone', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    harness.owned[0].isPublic = true;
+    harness.options.bindings = { [variant.id]: harness.owned[0].uuid };
+    expect(selectScreenshotCatalogueBoard(harness.options, variant, harness.owned).problem).toContain(
+      'isPrivate=false',
+    );
+    const bound = await bootstrapCppScenario(harness.options);
+    expect(bound.scenario).toBeUndefined();
+    expect(harness.operations.some((operation) => ['CreateBoard', 'UpdateBoard'].includes(operation.name))).toBe(false);
+    harness.owned[0].ownerId = testUuid(888);
+    const foreign = await bootstrapCppScenario(harness.options);
+    expect(foreign.blockers).toContainEqual(expect.stringContaining('another owner/configuration'));
+    expect(harness.operations.some((operation) => ['CreateBoard', 'UpdateBoard'].includes(operation.name))).toBe(false);
+  });
+
+  it('plans a private clone without creating it or changing the source checkpoint in read-only mode', async () => {
+    const harness = manufacturerHarness();
+    const variant = readCppPage('kilter').primaryBoard;
+    harness.owned[0].isPublic = true;
+    harness.options.checkpoint.boards[variant.id] = { uuid: harness.owned[0].uuid };
+    const before = structuredClone(harness.options.checkpoint);
+    const result = await bootstrapCppScenario(harness.options);
+    expect(result.blockers).toContainEqual(expect.stringContaining('creation requires --apply'));
+    expect(result.actions).toContainEqual(expect.stringContaining('existing catalogue rows preserved'));
+    expect(harness.options.checkpoint).toEqual(before);
+    expect(harness.operations.some((operation) => ['CreateBoard', 'UpdateBoard'].includes(operation.name))).toBe(false);
+  });
+
+  it.each(['explicit', 'saved'] as const)(
+    'fails unavailable or mismatched %s bindings before every metadata write',
+    async (kind) => {
+      const harness = manufacturerHarness();
+      harness.options.apply = true;
+      const variant = readCppPage('kilter').primaryBoard;
+      const boundId = testUuid(991);
+      if (kind === 'explicit') harness.options.bindings = { [variant.id]: boundId };
+      else harness.options.checkpoint.boards[variant.id] = { uuid: boundId };
+      for (const row of [undefined, { ...harness.owned[0], uuid: boundId, sizeId: 999 }]) {
+        if (row) harness.owned.push(row);
+        const result = await bootstrapCppScenario(harness.options);
+        expect(result.blockers).toContainEqual(
+          expect.stringContaining('unavailable or has another owner/configuration'),
+        );
+        expect(
+          harness.operations.some((operation) =>
+            ['CreateBoard', 'UpdateBoard', 'UpdateProfile'].includes(operation.name),
+          ),
+        ).toBe(false);
+        expect(harness.save).not.toHaveBeenCalled();
+        expect(harness.operations.some((operation) => operation.name === 'CppBootstrapProfile')).toBe(false);
+      }
+    },
+  );
+
+  it('blocks ambiguous private configurations rather than minting another row', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    harness.owned.push({ ...harness.owned[0], uuid: testUuid(992), name: 'Another real private board' });
+    const result = await bootstrapCppScenario(harness.options);
+    expect(result.blockers).toContainEqual(expect.stringContaining('multiple editable private catalogue boards'));
+    expect(harness.operations.some((operation) => operation.name === 'CppBootstrapProfile')).toBe(false);
+    expect(
+      harness.operations.some((operation) => ['CreateBoard', 'UpdateBoard', 'UpdateProfile'].includes(operation.name)),
+    ).toBe(false);
+  });
+
+  it('recovers the named private copy after a lost create response without using the duplicate bypass twice', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    const original = harness.owned[0];
+    original.isPublic = true;
+    harness.options.checkpoint.boards[variant.id] = { uuid: original.uuid };
+    const request = harness.options.transport.request;
+    let responseLost = false;
+    harness.options.transport.request = async <T>(
+      query: string,
+      variables: Record<string, unknown> = {},
+    ): Promise<T> => {
+      const response = await request<T>(query, variables);
+      if (getOperationAST(parse(query))?.name?.value === 'CreateBoard' && !responseLost) {
+        responseLost = true;
+        // The server committed, but the client never received its new UUID.
+        throw new Error('lost create response');
+      }
+      return response;
+    };
+    await expect(bootstrapCppScenario(harness.options)).rejects.toThrow('lost create response');
+    expect(harness.options.checkpoint.boards[variant.id].uuid).toBe(original.uuid);
+    const actualPrivate = harness.owned.find((board) => board.name === "Liz's Kilter Original 12x12")!;
+    const resumed = await bootstrapCppScenario(harness.options);
+    expect(resumed.blockers).toEqual([]);
+    expect(harness.options.checkpoint.boards[variant.id].uuid).toBe(actualPrivate.uuid);
+    expect(harness.options.checkpoint.catalogueSourceBoardIds?.[variant.id]).toEqual([original.uuid]);
+    expect(harness.operations.filter((operation) => operation.name === 'CreateBoard')).toHaveLength(1);
+    expect(original.isPublic).toBe(true);
+  });
+
+  it('rejects a wrong-name fresh private reread and keeps its pending proof blocked on retry', async () => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    const original = harness.owned[0];
+    original.isPublic = true;
+    const request = harness.options.transport.request;
+    harness.options.transport.request = async <T>(
+      query: string,
+      variables: Record<string, unknown> = {},
+    ): Promise<T> => {
+      const response = await request<T>(query, variables);
+      if (getOperationAST(parse(query))?.name?.value === 'CreateBoard')
+        harness.owned.at(-1)!.name = 'Unrelated private resource';
+      return response;
+    };
+    await expect(bootstrapCppScenario(harness.options)).rejects.toThrow('nameMatchesExpected=false');
+    expect(harness.options.checkpoint.boards[variant.id].expectedCatalogueName).toBe("Liz's Kilter Original 12x12");
+    const resumed = await bootstrapCppScenario(harness.options);
+    expect(resumed.scenario).toBeUndefined();
+    expect(resumed.blockers).toContainEqual(expect.stringContaining('pending QA creation failed fresh verification'));
+    expect(harness.operations.filter((operation) => operation.name === 'CreateBoard')).toHaveLength(1);
+    expect(harness.operations.some((operation) => operation.name === 'UpdateBoard')).toBe(false);
+    expect(original.isPublic).toBe(true);
+  });
+
+  it.each([
+    { isPublic: true, canEdit: true },
+    { isPublic: false, canEdit: false },
+  ])('never mints a replacement for a pending QA creation failing privacy or editability: %o', async (permissions) => {
+    const harness = manufacturerHarness();
+    harness.options.apply = true;
+    const variant = readCppPage('kilter').primaryBoard;
+    const pending = harness.owned[0];
+    pending.name = "Liz's Kilter Original 12x12";
+    Object.assign(pending, permissions);
+    harness.options.checkpoint.boards[variant.id] = {
+      uuid: pending.uuid,
+      expectedCatalogueName: pending.name,
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await bootstrapCppScenario(harness.options);
+      expect(result.scenario).toBeUndefined();
+      expect(result.blockers).toContainEqual(expect.stringContaining('pending QA creation failed fresh verification'));
+    }
+    expect(
+      harness.operations.some((operation) =>
+        ['CreateBoard', 'UpdateBoard', 'UpdateProfile', 'CppBootstrapProfile'].includes(operation.name),
+      ),
+    ).toBe(false);
+    expect(harness.options.saveCheckpoint).not.toHaveBeenCalled();
+    expect(pending.isPublic).toBe(permissions.isPublic);
+    expect(pending.canEdit).toBe(permissions.canEdit);
+    expect(harness.options.checkpoint.boards[variant.id].uuid).toBe(pending.uuid);
+  });
+
   it('chooses three distinct titles and displayed grades without changing primary scene climbs', async () => {
     const harness = manufacturerHarness();
     harness.options.apply = true;
