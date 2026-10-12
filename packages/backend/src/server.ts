@@ -116,7 +116,7 @@ async function dispatchLiveActivityForSession(sessionId: string): Promise<void> 
   sendLiveActivityUpdate(sessionId, contentState);
 }
 
-export async function startServer(): Promise<ServerResources> {
+export async function startServer(options: { host?: string } = {}): Promise<ServerResources> {
   // Surface database connect retries. `warn`, not `error`: SentryWinstonTransport
   // is constructed with `level: 'error'` (utils/sentry-transport.ts:80), so a
   // warn stays log-only and cannot double-report alongside the
@@ -778,38 +778,44 @@ export async function startServer(): Promise<ServerResources> {
   // Start HTTP server (WebSocket server is attached to it)
   const httpScheme = tlsEnabled ? 'https' : 'http';
   const wsScheme = tlsEnabled ? 'wss' : 'ws';
-  httpServer.listen(PORT, () => {
+  httpServer.listen({ port: PORT, host: options.host }, () => {
+    const boundAddress = httpServer.address();
+    const boundHost =
+      boundAddress && typeof boundAddress === 'object' ? boundAddress.address : (options.host ?? '0.0.0.0');
+    const urlHost = boundHost.includes(':') ? `[${boundHost}]` : boundHost;
     logger.info(`Boardsesh Backend is running on port ${PORT}${tlsEnabled ? ' (TLS)' : ''}`);
-    logger.info(`  GraphQL HTTP: ${httpScheme}://0.0.0.0:${PORT}/graphql`);
-    logger.info(`  GraphQL WS: ${wsScheme}://0.0.0.0:${PORT}/graphql`);
-    logger.info(`  Health check: ${httpScheme}://0.0.0.0:${PORT}/health`);
-    logger.info(`  Database health: ${httpScheme}://0.0.0.0:${PORT}/health/db`);
-    logger.info(`  Join session: ${httpScheme}://0.0.0.0:${PORT}/join/:sessionId`);
-    logger.info(`  Avatar upload: ${httpScheme}://0.0.0.0:${PORT}/api/avatars`);
-    logger.info(`  Avatar files: ${httpScheme}://0.0.0.0:${PORT}/static/avatars/`);
-    logger.info(`  Gym logo upload: ${httpScheme}://0.0.0.0:${PORT}/api/gym-logos`);
-    logger.info(`  Gym logo files: ${httpScheme}://0.0.0.0:${PORT}/static/gym-logos/`);
-    logger.info(`  Gym photo upload: ${httpScheme}://0.0.0.0:${PORT}/api/gym-photos`);
-    logger.info(`  Gym photo files: ${httpScheme}://0.0.0.0:${PORT}/static/gym-photos/`);
-    logger.info(`  OCR test data: ${httpScheme}://0.0.0.0:${PORT}/api/ocr-test-data`);
-    logger.info(`  Spray wall test data: ${httpScheme}://0.0.0.0:${PORT}/api/spray-wall-test-data`);
-    logger.info(`  PostHog proxy: ${httpScheme}://0.0.0.0:${PORT}/api/posthog/*`);
-    logger.info(`  User data export: ${httpScheme}://0.0.0.0:${PORT}/api/user-data-export`);
-    logger.info(`  Aurora credentials: ${httpScheme}://0.0.0.0:${PORT}/api/aurora-credentials`);
-    logger.info(`  Aurora import: ${httpScheme}://0.0.0.0:${PORT}/api/aurora-import`);
-    logger.info(`  MoonBoard import: ${httpScheme}://0.0.0.0:${PORT}/api/moonboard-import`);
-    logger.info(`  Kilter credential OAuth: ${httpScheme}://0.0.0.0:${PORT}/board-credentials/kilter/start`);
-    logger.info(`  Kilter credential password: ${httpScheme}://0.0.0.0:${PORT}/api/board-credentials/kilter/password`);
-    logger.info(`  Widget navigate: ${httpScheme}://0.0.0.0:${PORT}/api/widget/navigate`);
-    logger.info(`  Widget take-control: ${httpScheme}://0.0.0.0:${PORT}/api/widget/take-control`);
-    logger.info(`  Native auth exchange: ${httpScheme}://0.0.0.0:${PORT}/auth/native/exchange`);
-    logger.info(`  Native auth credentials: ${httpScheme}://0.0.0.0:${PORT}/auth/native/credentials`);
-    logger.info(`  Native auth register: ${httpScheme}://0.0.0.0:${PORT}/auth/native/register`);
-    logger.info(`  Native auth oauth: ${httpScheme}://0.0.0.0:${PORT}/auth/native/oauth`);
-    logger.info(`  Native auth refresh: ${httpScheme}://0.0.0.0:${PORT}/auth/native/refresh`);
-    logger.info(`  Native auth revoke: ${httpScheme}://0.0.0.0:${PORT}/auth/native/revoke`);
-    logger.info(`  Integration OAuth start: ${httpScheme}://0.0.0.0:${PORT}/integrations/:provider/start`);
-    logger.info(`  Integration OAuth callback: ${httpScheme}://0.0.0.0:${PORT}/integrations/:provider/callback`);
+    logger.info(`  GraphQL HTTP: ${httpScheme}://${urlHost}:${PORT}/graphql`);
+    logger.info(`  GraphQL WS: ${wsScheme}://${urlHost}:${PORT}/graphql`);
+    logger.info(`  Health check: ${httpScheme}://${urlHost}:${PORT}/health`);
+    logger.info(`  Database health: ${httpScheme}://${urlHost}:${PORT}/health/db`);
+    logger.info(`  Join session: ${httpScheme}://${urlHost}:${PORT}/join/:sessionId`);
+    logger.info(`  Avatar upload: ${httpScheme}://${urlHost}:${PORT}/api/avatars`);
+    logger.info(`  Avatar files: ${httpScheme}://${urlHost}:${PORT}/static/avatars/`);
+    logger.info(`  Gym logo upload: ${httpScheme}://${urlHost}:${PORT}/api/gym-logos`);
+    logger.info(`  Gym logo files: ${httpScheme}://${urlHost}:${PORT}/static/gym-logos/`);
+    logger.info(`  Gym photo upload: ${httpScheme}://${urlHost}:${PORT}/api/gym-photos`);
+    logger.info(`  Gym photo files: ${httpScheme}://${urlHost}:${PORT}/static/gym-photos/`);
+    logger.info(`  OCR test data: ${httpScheme}://${urlHost}:${PORT}/api/ocr-test-data`);
+    logger.info(`  Spray wall test data: ${httpScheme}://${urlHost}:${PORT}/api/spray-wall-test-data`);
+    logger.info(`  PostHog proxy: ${httpScheme}://${urlHost}:${PORT}/api/posthog/*`);
+    logger.info(`  User data export: ${httpScheme}://${urlHost}:${PORT}/api/user-data-export`);
+    logger.info(`  Aurora credentials: ${httpScheme}://${urlHost}:${PORT}/api/aurora-credentials`);
+    logger.info(`  Aurora import: ${httpScheme}://${urlHost}:${PORT}/api/aurora-import`);
+    logger.info(`  MoonBoard import: ${httpScheme}://${urlHost}:${PORT}/api/moonboard-import`);
+    logger.info(`  Kilter credential OAuth: ${httpScheme}://${urlHost}:${PORT}/board-credentials/kilter/start`);
+    logger.info(
+      `  Kilter credential password: ${httpScheme}://${urlHost}:${PORT}/api/board-credentials/kilter/password`,
+    );
+    logger.info(`  Widget navigate: ${httpScheme}://${urlHost}:${PORT}/api/widget/navigate`);
+    logger.info(`  Widget take-control: ${httpScheme}://${urlHost}:${PORT}/api/widget/take-control`);
+    logger.info(`  Native auth exchange: ${httpScheme}://${urlHost}:${PORT}/auth/native/exchange`);
+    logger.info(`  Native auth credentials: ${httpScheme}://${urlHost}:${PORT}/auth/native/credentials`);
+    logger.info(`  Native auth register: ${httpScheme}://${urlHost}:${PORT}/auth/native/register`);
+    logger.info(`  Native auth oauth: ${httpScheme}://${urlHost}:${PORT}/auth/native/oauth`);
+    logger.info(`  Native auth refresh: ${httpScheme}://${urlHost}:${PORT}/auth/native/refresh`);
+    logger.info(`  Native auth revoke: ${httpScheme}://${urlHost}:${PORT}/auth/native/revoke`);
+    logger.info(`  Integration OAuth start: ${httpScheme}://${urlHost}:${PORT}/integrations/:provider/start`);
+    logger.info(`  Integration OAuth callback: ${httpScheme}://${urlHost}:${PORT}/integrations/:provider/callback`);
 
     // Once-a-minute per-client operation summary (services/client-usage.ts).
     startClientUsageReporter();
