@@ -3,7 +3,12 @@ import { PostHog } from 'posthog-js-lite';
 import { createAnalytics } from '@boardsesh/analytics';
 import { isAdminAnalyticsUrl, isEmbedAnalyticsUrl, isKioskAnalyticsUrl } from './analytics-paths';
 import { getWebConsentRecord, hasAnalyticsConsent, subscribeWebConsent } from './consent';
-import { isAnalyticsGranted } from '@boardsesh/consent';
+import {
+  ANALYTICS_CONSENT_HEADER,
+  ANALYTICS_CONSENT_HEADER_GRANTED,
+  isAnalyticsCaptureUrl,
+  isAnalyticsGranted,
+} from '@boardsesh/consent';
 
 import { getBackendHttpUrl } from './backend-url';
 import { getSessionInboundCampaign, type InboundCampaign } from './inbound-campaign';
@@ -54,7 +59,28 @@ function retirePosthog(client: PostHog): void {
   client.setPersistedProperty = () => {};
   void client.shutdown(100).catch(() => {});
 }
-function installConsentTransport(client: PostHog): void {
+const BACKEND_POSTHOG_PROXY_PATH = '/api/posthog';
+
+/**
+ * True only when `host` is exactly our backend's PostHog proxy: the same origin
+ * and the same path (a trailing slash aside). Only that proxy reads the consent
+ * header, so any other host, including a direct-to-PostHog override or a
+ * mistyped proxy path, gets no header and capture simply keeps no location.
+ */
+export function isBackendPosthogProxy(host: string, backendUrl: string | null): boolean {
+  if (!backendUrl) return false;
+  try {
+    const target = new URL(host);
+    // Built exactly as getPosthog() builds the default host.
+    const proxy = new URL(`${backendUrl}${BACKEND_POSTHOG_PROXY_PATH}`);
+    const path = (url: URL) => url.pathname.replace(/\/+$/, '');
+    return target.origin === proxy.origin && path(target) === path(proxy);
+  } catch {
+    return false;
+  }
+}
+
+function installConsentTransport(client: PostHog, backendProxyHost: string | null): void {
   const sdkFetch = client.fetch.bind(client);
   const requests = new Set<AbortController>();
   activeRequests.set(client, requests);
@@ -68,8 +94,16 @@ function installConsentTransport(client: PostHog): void {
     options.signal?.addEventListener('abort', abort, { once: true });
     if (options.signal?.aborted) controller.abort();
     requests.add(controller);
+    // Consented capture tells our proxy it may forward the visitor IP for GeoIP.
+    // Only capture paths carry it: never flags or the SDK config request. A
+    // direct-to-PostHog override never sends it: only our proxy reads it, and a
+    // header PostHog's CORS policy does not allow would fail the preflight.
+    const headers =
+      backendProxyHost !== null && isAnalyticsCaptureUrl(url, backendProxyHost)
+        ? { ...options.headers, [ANALYTICS_CONSENT_HEADER]: ANALYTICS_CONSENT_HEADER_GRANTED }
+        : options.headers;
     try {
-      return await sdkFetch(url, { ...options, signal: controller.signal });
+      return await sdkFetch(url, { ...options, headers, signal: controller.signal });
     } finally {
       requests.delete(controller);
       options.signal?.removeEventListener('abort', abort);
@@ -177,7 +211,7 @@ function getPosthog(): PostHog | null {
   // recovery (point straight at us.i.posthog.com if the proxy is down).
   const backendUrl = getBackendHttpUrl();
   const configuredHost = process.env.NEXT_PUBLIC_POSTHOG_HOST?.trim() || null;
-  const host = configuredHost ?? (backendUrl ? `${backendUrl}/api/posthog` : DEFAULT_POSTHOG_HOST);
+  const host = configuredHost ?? (backendUrl ? `${backendUrl}${BACKEND_POSTHOG_PROXY_PATH}` : DEFAULT_POSTHOG_HOST);
   if (!configuredHost && !backendUrl) {
     const message =
       'PostHog proxy URL could not be derived on a production host; using direct PostHog ingestion. Check NEXT_PUBLIC_WS_URL or NEXT_PUBLIC_POSTHOG_HOST in the web build env.';
@@ -200,7 +234,7 @@ function getPosthog(): PostHog | null {
   });
 
   posthogPersisted = hasAnalyticsConsent();
-  installConsentTransport(posthogClient);
+  installConsentTransport(posthogClient, isBackendPosthogProxy(host, backendUrl) ? host : null);
   if (posthogPersisted) void posthogClient.optIn().catch(() => {});
   else void posthogClient.optOut().catch(() => {});
   registerWebSuperProperties(posthogClient);

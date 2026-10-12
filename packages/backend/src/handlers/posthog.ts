@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { gunzipSync } from 'node:zlib';
+import { ANALYTICS_CAPTURE_PATH, ANALYTICS_CONSENT_HEADER, ANALYTICS_CONSENT_HEADER_GRANTED } from '@boardsesh/consent';
 import { applyCorsHeaders } from './cors';
 import { logger } from '../utils/logger';
-import { resolveFlagCountry } from '../utils/flag-country';
+import { resolveEdgeVisitorIp, resolveFlagCountry } from '../utils/flag-country';
 
 const POSTHOG_UPSTREAM = 'https://us.i.posthog.com';
 const MAX_BODY_BYTES = 64 * 1024;
@@ -36,9 +37,16 @@ function readBody(req: IncomingMessage, limitBytes: number): Promise<Buffer | { 
  * binary, not text). GET is allowed only for the SDK's public project config
  * endpoint, so flag/replay configuration uses the same privacy boundary.
  *
- * Never forwards client IP or User-Agent headers: feature flags and anonymous
- * operational reports use this proxy without analytics consent. Consented web
- * analytics registers `$raw_user_agent` in its event payload instead (#5653).
+ * Forwards the visitor IP (X-Forwarded-For) only on capture paths
+ * (`ANALYTICS_CAPTURE_PATH` from `@boardsesh/consent`) from a client that says it holds a current Allow
+ * (`x-boardsesh-analytics-consent: granted`), and only the `cf-connecting-ip` a
+ * trusted Cloudflare edge reports, so PostHog geolocates consented events to the
+ * visitor rather than to our egress. Everything else is stripped: every other
+ * path, capture without the header (the anonymous OTA health event, kiosk
+ * telemetry, an older client), and requests that did not come through a
+ * Cloudflare edge. A missing header can only lose location, never add it.
+ * Never forwards the HTTP User-Agent: consented analytics registers
+ * `$raw_user_agent` in its event payload instead (#5653).
  */
 export async function handlePosthogProxy(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   if (!applyCorsHeaders(req, res)) return;
@@ -71,6 +79,16 @@ export async function handlePosthogProxy(req: IncomingMessage, res: ServerRespon
   const contentEncoding = req.headers['content-encoding'];
   if (typeof contentEncoding === 'string' && contentEncoding.length > 0) {
     headers['Content-Encoding'] = contentEncoding;
+  }
+  if (
+    req.method === 'POST' &&
+    ANALYTICS_CAPTURE_PATH.test(rest) &&
+    req.headers[ANALYTICS_CONSENT_HEADER] === ANALYTICS_CONSENT_HEADER_GRANTED
+  ) {
+    // Only the address Cloudflare vouches for. Earlier X-Forwarded-For entries
+    // are caller-controlled, and the socket peer is our own ingress.
+    const visitorIp = resolveEdgeVisitorIp(req);
+    if (visitorIp) headers['X-Forwarded-For'] = visitorIp;
   }
   if (/^\/(flags|decide)\/?$/.test(rest) && body) {
     // Flag evaluation is functional without consent. Supply only a coarse

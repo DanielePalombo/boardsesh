@@ -2,10 +2,11 @@
  * The analytics consent model shared by web, mobile and the backend.
  *
  * One record says whether a climber allowed product analytics (PostHog capture,
- * session replay, EAS Observe, install attribution) and when. It lives in two
- * places: on the device (a cookie on web, local storage in the app) and on the
- * account (`user_analytics_consent_events`, newest row wins). The two are merged
- * by {@link resolveConsent}. See `docs/analytics-consent.md`.
+ * session replay, install attribution) and when. Self-hosted Observe and Sentry
+ * run under legitimate interest and do not read it. It lives in two places: on
+ * the device (a cookie on web, local storage in the app) and on the account
+ * (`user_analytics_consent_events`, newest row wins). The two are merged by
+ * {@link resolveConsent}. See `docs/analytics-consent.md`.
  */
 
 /**
@@ -28,6 +29,51 @@ export type ConsentRecord = {
   decidedAt: string;
   source: ConsentSource;
 };
+
+/**
+ * The device's copy of an answer. See `createConsentSyncCoordinator`.
+ *
+ * - `ownerAccountId` is the account that was signed in when this device made
+ *   the answer or adopted it from the account. Null or missing means it was
+ *   made signed out (or predates this field, or came from the shared web
+ *   cookie, which never carries an account): a device-only answer that is
+ *   never written to any account.
+ * - `basedOnDecidedAt` is present only on a decision this device made signed in
+ *   that the account has not confirmed yet: the account `decidedAt` it was made
+ *   against (null when the account had no answer). A copy adopted from the
+ *   account never has it, so an adopted copy is never written back.
+ */
+export type DeviceConsentRecord = ConsentRecord & {
+  ownerAccountId?: string | null;
+  basedOnDecidedAt?: string | null;
+};
+
+/** True when this device answer was made or adopted while `accountId` was signed in. */
+export function isConsentRecordOwnedBy(record: DeviceConsentRecord | null, accountId: string | null): boolean {
+  return (
+    accountId !== null &&
+    record !== null &&
+    typeof record.ownerAccountId === 'string' &&
+    record.ownerAccountId === accountId
+  );
+}
+
+/**
+ * Field-by-field equality, including `ownerAccountId` (missing equals null) and
+ * `basedOnDecidedAt` (missing differs from null: confirmed vs made against no
+ * answer). Key order and extra wire fields (`__typename`) do not matter.
+ */
+export function isSameConsentRecord(left: DeviceConsentRecord | null, right: DeviceConsentRecord | null): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.analytics === right.analytics &&
+    left.version === right.version &&
+    left.decidedAt === right.decidedAt &&
+    left.source === right.source &&
+    (left.ownerAccountId ?? null) === (right.ownerAccountId ?? null) &&
+    left.basedOnDecidedAt === right.basedOnDecidedAt
+  );
+}
 
 export function isAnalyticsConsentChoice(candidate: unknown): candidate is AnalyticsConsentChoice {
   return candidate === 'granted' || candidate === 'denied';

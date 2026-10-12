@@ -10,6 +10,7 @@ import {
   updateConsentState,
 } from '../consent-state';
 import { applySessionReplayConsent } from '../session-replay-consent';
+import { BACKEND_URL } from '../env';
 import { deferConsentDestination, consumeConsentDestination } from '../consent-navigation';
 import { grantedConsent, grantAnalyticsForTest } from '../../../test/consent-fixture';
 vi.mock('../replay-privacy', () => ({
@@ -59,6 +60,25 @@ describe('mobile consent privacy boundaries', () => {
     invalidateConsentAccount();
     expect(requestSignal?.aborted).toBe(true);
     await pending;
+  });
+  it('marks only consented capture for the proxy: never flags or the SDK config request', async () => {
+    const fetchSpy = vi
+      .spyOn(PostHog.prototype, 'fetch')
+      .mockResolvedValue({ status: 200, text: async () => '', json: async () => ({}) });
+    const client = new ConsentPostHog('phc_test');
+    const headers = { 'Content-Type': 'application/json' };
+    const proxy = `${BACKEND_URL}/api/posthog`;
+    await client.fetch(`${proxy}/batch/`, { method: 'POST', headers });
+    expect(fetchSpy.mock.calls.at(-1)?.[1]?.headers).toEqual({
+      ...headers,
+      'x-boardsesh-analytics-consent': 'granted',
+    });
+    await client.fetch(`${proxy}/flags/?v=2`, { method: 'POST', headers, body: '{}' });
+    expect(fetchSpy.mock.calls.at(-1)?.[1]?.headers).toEqual(headers);
+    await client.fetch(`${proxy}/array/phc_test/config`, { method: 'GET', headers });
+    expect(fetchSpy.mock.calls.at(-1)?.[1]?.headers).toEqual(headers);
+    await client.fetch(`${proxy}/api/surveys/`, { method: 'POST', headers });
+    expect(fetchSpy.mock.calls.at(-1)?.[1]?.headers).toEqual(headers);
   });
   it('flags retain functional build targeting without consent and scrub personal traits', async () => {
     const fetchSpy = vi.spyOn(PostHog.prototype, 'fetch');

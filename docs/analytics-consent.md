@@ -45,6 +45,30 @@ Because rule 2 lets the account override a newer device grant, a client must
 push a new decision with `setAnalyticsConsent` before it next resolves against
 the server.
 
+## Whose answer is it
+
+The device copy remembers the account that was signed in when the answer was
+given or adopted from the account (`ownerAccountId` on `DeviceConsentRecord`;
+the app stores it beside the answer). An answer given signed out has no owner,
+and neither has one saved before this field existed. The web cookie never names
+an account, so every cookie answer is ownerless. A decision this device made
+signed in also keeps `basedOnDecidedAt`, the account answer it was made
+against, until the account confirms it; a copy adopted from the account never
+has it.
+
+`mergeAccountConsent` applies the merge rule only to an answer this device gave
+under the signed-in account. For anything else:
+
+| Device answer (signed out, other account, cookie) | Account answer | Device holds | Written to the account |
+| --- | --- | --- | --- |
+| any | none | nothing: ask again, no tracking until answered | nothing |
+| any | denied | the account's denial | nothing |
+| Allow | Allow | the account's Allow | nothing |
+| No thanks | Allow | its own No thanks (rule 3) | nothing |
+
+So on a shared phone or browser, one person's signed-out Allow never becomes
+another person's recorded consent: the second person is asked after signing in.
+
 ## The account copy
 
 `user_analytics_consent_events` (migration 0262) is append-only. The newest row
@@ -59,20 +83,29 @@ operations in `@boardsesh/graphql/operations/analytics-consent`):
 
 - `myAnalyticsConsent: AnalyticsConsent` is the newest row, or null when the
   climber never answered. Signed-in only.
-- `setAnalyticsConsent(input: { analytics, version, source, basedOnDecidedAt })`
-  appends a row and returns the account's current answer.
+- `setAnalyticsConsent(input: { analytics, version, source, basedOnDecidedAt, conditional })`
+  appends a row and returns the account's current answer. `version` must be
+  between 1 and the server's `CONSENT_VERSION`; deploy the backend first when
+  bumping it.
   - The server stamps `decided_at`; a client clock is never trusted. The stamp
     is whole milliseconds and at least 1 ms after the user's previous row, so
     the ISO string a client echoes back names exactly one row.
-  - A **denial is always written**.
+  - A **denial is always written**, unless the client marks it `conditional`.
   - A **grant is compare-and-set**: `basedOnDecidedAt` must exactly equal the
     canonical ISO millisecond stamp of the latest account answer. A null stamp
     is accepted only when there is no answer or the current answer is already
     granted. Otherwise nothing is written and the current answer comes back. This stops a
     device that last synced before "No thanks" elsewhere from turning tracking
     back on.
+  - A **`conditional` write is compare-and-set whatever its answer**: it is
+    written only while the latest account answer is exactly `basedOnDecidedAt`
+    (no answer when null), and otherwise the current answer comes back. Clients
+    set it only on a recovered write (see Account synchronization). Older
+    clients never send it, so their denials stay unconditional. A backend that
+    predates the field rejects the input, so a recovered write stays pending
+    until the backend deploys and never lands unconditionally.
   - Writes for one user run under a transaction-scoped advisory lock, so a
-    racing grant and denial always end denied.
+    racing grant and explicit denial always end denied.
   - Rate limited to 20 a minute per user.
 
 ## Legal basis per tracker
@@ -172,6 +205,51 @@ network request. Offline withdrawals survive restart. Pending decisions are
 pushed before old account answers are merged, so changing No thanks to Allow
 is not immediately undone by the old account denial.
 
+Only two things are ever written to an account:
+
+1. A decision the climber makes on this device while signed in to it (`decide`),
+   including its durable retries.
+2. A decision this device made under the same account whose write was lost,
+   and only while the account still holds exactly the answer that decision was
+   made against (`basedOnDecidedAt`). It is written with that answer as its
+   compare-and-set token. No clocks are compared, so a phone whose clock runs
+   ahead cannot re-deny a newer answer, and a copy adopted from the account is
+   never written back. The recovered write stays conditional all the way to
+   the database: its pending record carries `conditional: true` and the token,
+   and the server checks the token under the per-user lock for a denial too. A
+   retry or a restart sends it again without reading the account, so this is
+   what stops it overwriting an Allow another device wrote in between. When the
+   server refuses it, the device merges the answer it gets back like a fresh
+   read: a newer Allow leaves this device on its own No thanks (rule 3), a newer
+   denial is adopted (rule 2).
+
+An explicit No thanks and its durable retries are never conditional: they send
+`basedOnDecidedAt: null`, so the climber's own withdrawal always lands. An
+explicit Allow keeps its token, which the server checks for every grant.
+
+A stored answer is never pushed over a newer account answer. Say No thanks on
+phone A, later Allow on phone B: when A comes back, the account stays Allow and
+no event is appended; A keeps its own No thanks (rule 3). A shared-cookie
+withdrawal that arrives while a grant is in flight stops tracking on this
+device and drops the grant, but is not written by this tab: the origin that
+took it writes it if it was signed in.
+If the app is killed before that dropped grant leaves pending storage, the
+restored grant meets the newer denial on the next launch, loses, and is
+discarded. The denial is not written before the account is read: after the
+read, rule 2 decides, so an adopted or stale denial never flips a newer grant
+made on another device.
+
+The app's consent gate waits for the account read (at most 5 s, as for a
+first answer) before it trusts an answer that is not this account's. While the
+profile id is still loading it waits on an answer with no owner, and settles
+at once on one bound to an account. When the account has none, the prompt
+opens; when the read never returns, the gate settles on the device answer and
+tracking stays off until the account resolves. On the browser app the cookie
+never names an account, so every signed-in page load waits for that one read
+before deep links, share targets and the onboarding steps proceed. That is the
+cost of the cookie carrying no account, not a bug.
+The website clears the cookie, which shows the banner again.
+
 The coordinator retains the precise last-server `decidedAt` for compare-and-set.
 The browser cookie rounds to whole seconds and is never used as a server token.
 A pending grant keeps the token from when it was decided; a retry does not fetch
@@ -230,9 +308,30 @@ Withdrawing discards the buffered metrics. Reset on sign-out reapplies the
 existing device opt state and web super properties. HTTP GraphQL requests send
 x-boardsesh-platform: web so signed-in first-party activity remains counted.
 
-The backend PostHog proxy strips client IP and HTTP User-Agent headers from
-flags and capture traffic. Granted analytics explicitly supplies its consented
-user-agent event property; operational events use minimal payloads.
+The backend PostHog proxy never forwards the HTTP User-Agent. It forwards the
+visitor IP as `X-Forwarded-For` only when all of these hold:
+
+- the path is a capture path (`/batch`, `/e`, `/i/v0/e`, `/s`);
+- the request carries `x-boardsesh-analytics-consent: granted`
+  (`ANALYTICS_CONSENT_HEADER` in `@boardsesh/consent`);
+- it came through a trusted Cloudflare edge, and the address is the public
+  `CF-Connecting-IP` that edge reports (`resolveEdgeVisitorIp` in
+  `packages/backend/src/utils/flag-country.ts`, the same trust boundary as the
+  flag country in [Cloudflare](./cloudflare.md)).
+
+Earlier `X-Forwarded-For` entries are caller-controlled and are never used, nor
+is the socket peer (our own ingress), a private or carrier-grade NAT address,
+or a request that did not come through Cloudflare. Web and app add the header
+only to capture sent with a current Allow (not to flags or the SDK config
+request); www adds it only when it talks to exactly our proxy, not to a
+direct-to-PostHog override. Everything else is stripped: flags, the public
+config request, surveys, logs, the anonymous OTA health event, kiosk telemetry
+and any older client. The default is strip, so a missing or
+mistyped header can only lose a consented event's location, never locate an
+anonymous one. Without the forwarded IP, PostHog geolocated consented events
+and overwrote person `$geoip_*` properties with the backend's own location.
+Granted analytics explicitly supplies its consented user-agent event property;
+operational events use minimal payloads.
 Functional flag requests retain allowlisted OS, app version/build, namespace,
 and device-type properties without analytics consent. The proxy overwrites
 GeoIP properties with only a current, edge-verified country and sets
