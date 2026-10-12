@@ -77,6 +77,10 @@ const privacySchema = readFileSync(
   new URL('../../../db/drizzle/0261_account_resource_privacy.sql', import.meta.url),
   'utf8',
 );
+const anonymousOnForeignBoardsSchema = readFileSync(
+  new URL('../../../db/drizzle/0266_anonymous_on_foreign_boards.sql', import.meta.url),
+  'utf8',
+);
 
 export const schemaSQL = `
   DROP TABLE IF EXISTS resource_grants, resource_privacy, content_privacy, user_follow_requests, session_boards CASCADE;
@@ -2154,4 +2158,5 @@ CREATE INDEX "board_climb_events_chronological_idx" ON "board_climb_events" USIN
   ${sprayWallDeletionSchema}
   ${sessionBoardsSchema}
   ${privacySchema}
+  ${anonymousOnForeignBoardsSchema};
 `;

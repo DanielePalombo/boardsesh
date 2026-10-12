@@ -27,6 +27,8 @@ const privacyAccess = vi.hoisted(() => ({ allowed: true }));
 vi.mock('../services/privacy', () => ({
   canAccessResource: async () => privacyAccess.allowed,
   canViewActivityIdentity: async () => true,
+  visibleActivityUserIds: async (userIds: readonly (string | null | undefined)[]) =>
+    new Set(userIds.filter((userId): userId is string => !!userId)),
   requireResourceAccess: async () => {
     if (!privacyAccess.allowed) throw new Error('Not found');
   },

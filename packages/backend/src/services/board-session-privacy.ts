@@ -7,25 +7,51 @@ import type {
   BoardPresenceClimb,
   BoardPresenceEvent,
   BoardPresenceStats,
+  BoardPresenceHardestSend,
   SessionUser,
   ClimbQueueItem,
   Climb,
 } from '@boardsesh/shared-schema';
 import { db } from '../db/client';
-import { boardClimbs, boardSessions, resourceGrants, userBoards } from '@boardsesh/db/schema';
+import { boardClimbs, boardSessions, contentPrivacy, resourceGrants, userBoards } from '@boardsesh/db/schema';
 import {
+  anonymousOnBoardUserIds,
   canAccessResource,
   canViewActivityIdentity,
   canViewContent,
+  anonymousOnBoardUserIdsByBoard,
   visibleActivityUserIds,
+  visibleActivityUserIdsByBoard,
   visibleBoardIdentityIds,
 } from './privacy';
+import { resolveSessionBoards, type SessionBoardSource } from './session-board';
+
+type ViewerId = string | null | undefined;
+
+// Provenance belongs to a cloned server projection, never a client-supplied field.
+const rosterSourceSessions = new WeakMap<SessionUser, string>();
+const queueSourceSessions = new WeakMap<ClimbQueueItem, string | null>();
+const hardestSendSourceBoards = new WeakMap<BoardPresenceHardestSend, number>();
+
+export const sessionUserSourceSessionId = (user: SessionUser) => rosterSourceSessions.get(user);
+export const queueItemSourceSessionId = (item: ClimbQueueItem) => queueSourceSessions.get(item);
+export const hardestSendSourceBoardId = (send: BoardPresenceHardestSend) => hardestSendSourceBoards.get(send);
 
 /** Session protocol IDs must never double as profile IDs. */
 export function sessionParticipantId(sessionId: string, userId: string): string {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error('NEXTAUTH_SECRET is required for authenticated session identity');
   return createHmac('sha256', secret).update(`boardsesh:session-participant:v1:${sessionId}:${userId}`).digest('hex');
+}
+
+/**
+ * An opaque stand-in for the climber on one anonymous log. Unique to the log,
+ * so a page of them never becomes a list of stable pseudonyms.
+ */
+export function anonymousLogAuthorId(tickUuid: string): string {
+  const secret = process.env.NEXTAUTH_SECRET;
+  if (!secret) throw new Error('NEXTAUTH_SECRET is required for anonymous log identity');
+  return createHmac('sha256', secret).update(`boardsesh:anonymous-log-author:v1:${tickUuid}`).digest('hex');
 }
 
 /** Unknown persisted event IDs may be account IDs, regardless of their format. */
@@ -37,19 +63,181 @@ export function sessionEventParticipantId(
   return knownProtocolIds.get(eventId) ?? sessionParticipantId(sessionId, eventId);
 }
 
+const distinctIds = (userIds: readonly (string | null | undefined)[]): string[] => [
+  ...new Set(userIds.filter((userId): userId is string => !!userId)),
+];
+
+type SessionRows = readonly { session: SessionBoardSource; userIds: readonly (string | null | undefined)[] }[];
+
+/**
+ * The (climbers, board) rows a live session's climbers are judged on: the one
+ * board the session is on (`resolveSessionBoards`; pass `boards` when that is
+ * already resolved). A session nothing places on an identified board fails
+ * closed, even when the climber owns a board with the same config: a common
+ * layout cannot establish which physical wall the session is using.
+ */
+async function sessionBoardRows(rows: SessionRows, viewerId: ViewerId, boards?: ReadonlyMap<string, number>) {
+  const candidates = rows.map(({ session, userIds }) => ({ session, userIds: distinctIds(userIds) }));
+  if (candidates.every(({ userIds }) => userIds.length === 0)) return { candidates, queryRows: [] };
+  const boardBySession =
+    boards ??
+    (await resolveSessionBoards(candidates.flatMap(({ session, userIds }) => (userIds.length ? [session] : []))));
+  const queryRows = candidates.map(({ session, userIds }, rowIndex) => ({
+    rowIndex,
+    userIds,
+    onBoard: { boardId: boardBySession.get(session.id) ?? null, sessionId: session.id },
+  }));
+  return { candidates, queryRows };
+}
+
+/** Fold per-query-row results back onto the caller's rows. */
+function mergeRows(count: number, queryRows: readonly { rowIndex: number }[], found: readonly Set<string>[]) {
+  const merged = Array.from({ length: count }, () => new Set<string>());
+  queryRows.forEach(({ rowIndex }, queryIndex) => {
+    for (const userId of found[queryIndex]) merged[rowIndex].add(userId);
+  });
+  return merged;
+}
+
+/**
+ * `visibleActivityUserIds` for rows of live sessions, each judged on the one
+ * board its session is on (`sessionBoardRows`). One query for every row, plus
+ * the board resolution. Unidentified sessions use the same anonymous rule.
+ */
+export async function sessionsVisibleUserIds(
+  rows: SessionRows,
+  viewerId: ViewerId,
+  boards?: ReadonlyMap<string, number>,
+): Promise<Set<string>[]> {
+  const { candidates, queryRows } = await sessionBoardRows(rows, viewerId, boards);
+  return mergeRows(candidates.length, queryRows, await visibleActivityUserIdsByBoard(queryRows, viewerId));
+}
+
+/** A session's own row, for the board resolution; a vanished session has nothing to place it. */
+async function loadSessionBoardSource(sessionId: string): Promise<SessionBoardSource> {
+  const [session] = await db
+    .select({
+      id: boardSessions.id,
+      boardId: boardSessions.boardId,
+      boardPath: boardSessions.boardPath,
+      createdByUserId: boardSessions.createdByUserId,
+    })
+    .from(boardSessions)
+    .where(eq(boardSessions.id, sessionId))
+    .limit(1);
+  return session ?? { id: sessionId, boardId: null, boardPath: null, createdByUserId: null };
+}
+
+/**
+ * Climbers who show as anonymous in this live session: they stay anonymous on
+ * boards they don't own and the session's board is not theirs. For rows whose
+ * identity follows the logs' own audience rather than the account (session
+ * detail, the session summary).
+ */
+export async function sessionAnonymousUserIds(
+  userIds: readonly (string | null | undefined)[],
+  viewerId: ViewerId,
+  sessionId: string,
+): Promise<ReadonlySet<string>> {
+  const others = distinctIds(userIds).filter((userId) => userId !== viewerId);
+  if (others.length === 0) return new Set();
+  const { queryRows } = await sessionBoardRows(
+    [{ session: await loadSessionBoardSource(sessionId), userIds: others }],
+    viewerId,
+  );
+  return mergeRows(1, queryRows, await anonymousOnBoardUserIdsByBoard(queryRows, viewerId))[0];
+}
+
+/**
+ * Climbers a live session's board-facing rows (roster, queue attribution, host,
+ * Live Activity holder) may name: their account lets the viewer see them, and
+ * they do not stay anonymous on the session's board (`sessionsVisibleUserIds`).
+ * None of it when the only climber is the viewer, who always sees their own
+ * name. Outside a session (`sessionId` null) only the account decides.
+ */
+export async function sessionVisibleUserIds(
+  userIds: readonly (string | null | undefined)[],
+  viewerId: ViewerId,
+  sessionId: string | null | undefined,
+): Promise<ReadonlySet<string>> {
+  const candidates = distinctIds(userIds);
+  const self = viewerId && candidates.includes(viewerId) ? [viewerId] : [];
+  if (candidates.length === self.length) return new Set(self);
+  const visible = sessionId
+    ? (
+        await sessionsVisibleUserIds(
+          [{ session: await loadSessionBoardSource(sessionId), userIds: candidates }],
+          viewerId,
+        )
+      )[0]
+    : await visibleActivityUserIds(candidates, viewerId);
+  for (const userId of self) visible.add(userId);
+  return visible;
+}
+
+const pendingSessionVisibility = new Map<string, { userIds: Set<string>; visible: Promise<ReadonlySet<string>> }>();
+/**
+ * `sessionVisibleUserIds` for the GraphQL field projections (`ClimbQueueItem`,
+ * `SessionUser`), which graphql-js resolves one item and one field at a time.
+ * Every lookup for the same viewer and session made before the event loop moves
+ * on (all the items of one queue or roster) shares one board resolution and
+ * one query. Nothing outlives that batch, so a privacy change applies to the next
+ * projection.
+ */
+export function batchedSessionVisibleUserIds(
+  userIds: readonly (string | null | undefined)[],
+  viewerId: ViewerId,
+  sessionId: string | null | undefined,
+): Promise<ReadonlySet<string>> {
+  const key = JSON.stringify([viewerId ?? null, sessionId ?? null]);
+  let pending = pendingSessionVisibility.get(key);
+  if (!pending) {
+    const batch = new Set<string>();
+    const visible = new Promise<ReadonlySet<string>>((resolve, reject) => {
+      // Like DataLoader: after the promise jobs already queued, so every sibling
+      // field and list item graphql-js started in this pass has asked.
+      void Promise.resolve().then(() =>
+        process.nextTick(() => {
+          pendingSessionVisibility.delete(key);
+          sessionVisibleUserIds([...batch], viewerId, sessionId).then(resolve, reject);
+        }),
+      );
+    });
+    pending = { userIds: batch, visible };
+    pendingSessionVisibility.set(key, pending);
+  }
+  for (const userId of userIds) if (userId) pending.userIds.add(userId);
+  return pending.visible;
+}
+
+/**
+ * The roster names a climber by their account, except that a climber who stays
+ * anonymous on boards they don't own is anonymous in a session on such a board,
+ * to everyone but themselves. Opaque per-session ids either way. Pass
+ * `visibleUserIds` (`sessionVisibleUserIds`) when it is already known.
+ */
 export async function redactSessionUsers(
   users: readonly SessionUser[],
-  viewerId: string | null | undefined,
+  viewerId: ViewerId,
   sessionId: string,
+  visibleUserIds?: ReadonlySet<string>,
 ): Promise<SessionUser[]> {
-  return Promise.all(
-    users.map(async (user) => {
-      if (!user.userId) return user;
-      const id = sessionParticipantId(sessionId, user.userId);
-      if (await canViewActivityIdentity(user.userId, viewerId)) return { ...user, id };
-      return { ...user, id, userId: null, username: '', avatarUrl: undefined };
-    }),
-  );
+  const visible =
+    visibleUserIds ??
+    (await sessionVisibleUserIds(
+      users.map((user) => user.userId),
+      viewerId,
+      sessionId,
+    ));
+  return users.map((user) => {
+    const id = user.userId ? sessionParticipantId(sessionId, user.userId) : user.id;
+    const projected =
+      user.userId && !visible.has(user.userId)
+        ? { ...user, id, userId: null, username: '', avatarUrl: undefined }
+        : { ...user, id };
+    rosterSourceSessions.set(projected, sessionId);
+    return projected;
+  });
 }
 
 /**
@@ -226,32 +414,50 @@ export async function redactQueueClimb(climb: Climb, viewerId: string | null | u
   };
 }
 
+/** Every climber a queue item names: who added it and who ticked it. */
+export function queueItemUserIds(items: readonly ClimbQueueItem[]): (string | null | undefined)[] {
+  return items.flatMap((item) => [item.addedByUser?.id ?? item.addedBy, ...(item.tickedBy ?? [])]);
+}
+
+/**
+ * `sessionId` is the session the item belongs to (null outside one); pass the
+ * precomputed `visibleUserIds` (`sessionVisibleUserIds` over `queueItemUserIds`)
+ * when redacting a whole queue.
+ */
 export async function redactQueueItem(
   item: ClimbQueueItem,
-  viewerId: string | null | undefined,
+  viewerId: ViewerId,
+  sessionId: string | null | undefined,
+  visibleUserIds?: ReadonlySet<string>,
 ): Promise<ClimbQueueItem> {
+  const visible = visibleUserIds ?? (await sessionVisibleUserIds(queueItemUserIds([item]), viewerId, sessionId));
+  const projected = { ...redactQueueAttribution(item, visible), climb: await redactQueueClimb(item.climb, viewerId) };
+  queueSourceSessions.set(projected, sessionId ?? null);
+  return projected;
+}
+
+/** Who added and ticked a queue item, kept only for the climbers in `visibleUserIds`. */
+export function redactQueueAttribution(item: ClimbQueueItem, visibleUserIds: ReadonlySet<string>): ClimbQueueItem {
   const userId = item.addedByUser?.id ?? item.addedBy;
-  const showAuthor = userId && (await canViewActivityIdentity(userId, viewerId));
-  const visibleTicks = await Promise.all(
-    (item.tickedBy ?? []).map(async (userId) => ((await canViewActivityIdentity(userId, viewerId)) ? userId : null)),
-  );
+  const showAuthor = !!userId && visibleUserIds.has(userId);
   return {
     ...item,
-    climb: await redactQueueClimb(item.climb, viewerId),
     addedBy: showAuthor ? item.addedBy : undefined,
     addedByUser: showAuthor ? item.addedByUser : undefined,
-    tickedBy: visibleTicks.filter((userId): userId is string => userId !== null),
+    tickedBy: (item.tickedBy ?? []).filter((tickerId) => visibleUserIds.has(tickerId)),
   };
 }
 
 /**
  * Preserve chronology while checking current item and author privacy.
- * A verified presence link opens only its own spray layout; other callers
- * retain the no-link reading by omitting wallUuid.
+ * `boardId` is the board the feed is for. A verified presence link opens only
+ * its own spray layout; other callers retain the no-link reading by omitting
+ * wallUuid.
  */
 export async function redactBoardClimbs(
   climbs: readonly BoardPresenceClimb[],
-  viewerId: string | null | undefined,
+  viewerId: ViewerId,
+  boardId: number,
   wallUuid?: string | null,
 ): Promise<BoardPresenceClimb[]> {
   const climbUuids = [...new Set(climbs.map((climb) => climb.climbUuid))];
@@ -278,12 +484,14 @@ export async function redactBoardClimbs(
           );
   const readableUuids = new Set(readableClimbs.map((climb) => climb.uuid));
 
-  // The sender's account privacy alone decides attribution, whatever session
-  // (or none) the send was in and however old the history event is. One query
-  // for every sender on the page.
+  // The sender's account privacy decides attribution, whatever session (or
+  // none) the send was in and however old the history event is, and a sender
+  // who stays anonymous on boards they don't own is anonymous here when this
+  // board is not theirs. One query for every sender on the page.
   const visibleSenders = await visibleActivityUserIds(
     climbs.map((climb) => climb.sentByUserId),
     viewerId,
+    { boardId },
   );
   return climbs.map((climb) => {
     const showIdentity = !!climb.sentByUserId && visibleSenders.has(climb.sentByUserId);
@@ -296,9 +504,43 @@ export async function redactBoardClimbs(
   });
 }
 
+/** Board membership can release default identity, never an explicit tick restriction. */
+export async function canViewBoardTickOverride(userId: string, tickUuid: string, viewerId: ViewerId): Promise<boolean> {
+  if (viewerId === userId) return true;
+  const [policy] = await db
+    .select({ ownerId: contentPrivacy.ownerId })
+    .from(contentPrivacy)
+    .where(
+      and(
+        eq(contentPrivacy.entityType, 'tick'),
+        eq(contentPrivacy.entityId, tickUuid),
+        eq(contentPrivacy.ownerId, userId),
+      ),
+    )
+    .limit(1);
+  return !policy || canViewContent(viewerId, 'tick', tickUuid, userId);
+}
+
+/** Current member visibility names only this board's actor; item visibility remains the fallback. */
+export async function canViewBoardHardestSendIdentity(
+  send: BoardPresenceHardestSend,
+  viewerId: ViewerId,
+  boardId: number,
+): Promise<boolean> {
+  const userId = send.sentByUserId;
+  if (!userId) return false;
+  if (userId === viewerId) return true;
+  if (!send.tickUuid) return false;
+  if (!(await canViewBoardTickOverride(userId, send.tickUuid, viewerId))) return false;
+  if ((await visibleActivityUserIds([userId], viewerId, { boardId })).has(userId)) return true;
+  if ((await anonymousOnBoardUserIds([userId], { boardId }, viewerId)).has(userId)) return false;
+  return canViewActivityIdentity(userId, viewerId, { entityType: 'tick', entityId: send.tickUuid });
+}
+
 export async function redactBoardStats(
   stats: BoardPresenceStats,
   viewerId: string | null | undefined,
+  boardId: number,
   wallUuid?: string | null,
 ): Promise<BoardPresenceStats> {
   const hardest = stats.hardestSend;
@@ -321,47 +563,48 @@ export async function redactBoardStats(
   // Preserve the missing-catalog grade/Unknown fallback, without replaying a
   // copied name after its row disappears.
   const visibleHardest = catalogClimb ? hardest : { ...hardest, name: null };
-  const projectedStats = visibleHardest === hardest ? stats : { ...stats, hardestSend: visibleHardest };
-  const showIdentity =
-    hardest.sentByUserId &&
-    (hardest.sentByUserId === viewerId ||
-      (hardest.tickUuid &&
-        (await canViewActivityIdentity(hardest.sentByUserId, viewerId, {
-          entityType: 'tick',
-          entityId: hardest.tickUuid,
-        }))));
-  return showIdentity
-    ? projectedStats
-    : {
-        ...projectedStats,
-        hardestSend: { ...visibleHardest, sentByUserId: null, sentByDisplayName: null, sentByAvatarUrl: null },
-      };
+  const showIdentity = await canViewBoardHardestSendIdentity(visibleHardest, viewerId, boardId);
+  const projected = showIdentity
+    ? { ...visibleHardest }
+    : { ...visibleHardest, sentByUserId: null, sentByDisplayName: null, sentByAvatarUrl: null };
+  hardestSendSourceBoards.set(projected, boardId);
+  return { ...stats, hardestSend: projected };
 }
 
-/** The Bluetooth holder is named by their own account privacy, session or not. */
+/**
+ * The Bluetooth holder is named by their own account privacy, session or not,
+ * and stays anonymous on a board they don't own when they chose to.
+ */
 export async function redactBoardHolder(
   holder: BoardConnectionHolder | null,
   viewerId: string | null | undefined,
+  boardId: number,
 ): Promise<BoardConnectionHolder | null> {
   if (!holder) return null;
-  if (holder.userId && (await canViewActivityIdentity(holder.userId, viewerId))) return holder;
+  if (
+    holder.userId &&
+    (holder.userId === viewerId ||
+      (await visibleActivityUserIds([holder.userId], viewerId, { boardId })).has(holder.userId))
+  )
+    return holder;
   return { ...holder, userId: null, displayName: null, avatarUrl: null };
 }
 
 export async function redactBoardEvent(
   event: BoardPresenceEvent,
   viewerId: string | null | undefined,
+  boardId: number,
   wallUuid?: string | null,
 ): Promise<BoardPresenceEvent> {
   switch (event.__typename) {
     case 'BoardClimbSet':
-      return { ...event, climb: (await redactBoardClimbs([event.climb], viewerId, wallUuid))[0] };
+      return { ...event, climb: (await redactBoardClimbs([event.climb], viewerId, boardId, wallUuid))[0] };
     case 'BoardHistoryUpdated':
-      return { ...event, climbs: await redactBoardClimbs(event.climbs, viewerId, wallUuid) };
+      return { ...event, climbs: await redactBoardClimbs(event.climbs, viewerId, boardId, wallUuid) };
     case 'BoardStatsUpdated':
-      return { ...event, stats: await redactBoardStats(event.stats, viewerId, wallUuid) };
+      return { ...event, stats: await redactBoardStats(event.stats, viewerId, boardId, wallUuid) };
     case 'BoardConnectionChanged': {
-      return { ...event, holder: await redactBoardHolder(event.holder, viewerId) };
+      return { ...event, holder: await redactBoardHolder(event.holder, viewerId, boardId) };
     }
     default:
       return event;

@@ -87,7 +87,7 @@ export const boardPresenceSubscriptions = {
       for await (const event of asyncIterator) {
         await requireAnonReadableBoard(boardId, ctx.userId, boardUuid);
         if (gate && !(await gate())) return;
-        if (event !== null) yield { boardNowPlaying: await redactBoardEvent(event, ctx.userId, boardUuid) };
+        if (event !== null) yield { boardNowPlaying: await redactBoardEvent(event, ctx.userId, boardId, boardUuid) };
       }
     }),
   },

@@ -1863,6 +1863,13 @@
       "when": 1791752629828,
       "tag": "0265_privacy_reconcile_tick_tombstones",
       "breakpoints": true
+    },
+    {
+      "idx": 266,
+      "version": "7",
+      "when": 1791765691056,
+      "tag": "0266_anonymous_on_foreign_boards",
+      "breakpoints": true
     }
   ]
 }

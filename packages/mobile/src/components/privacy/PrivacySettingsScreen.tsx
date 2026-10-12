@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { router } from 'expo-router';
@@ -7,13 +7,16 @@ import type { PrivacyResourceAudience } from '@boardsesh/graphql/operations/priv
 import { Text } from '../Text';
 import { Button } from '../Button';
 import { ActivityIndicator } from '../ActivityIndicator';
+import { SwitchRow } from '../SwitchRow';
 import { useTheme } from '../../providers/theme-provider';
 import { useConnectivity } from '../../lib/connectivity/use-connectivity';
+import { captureAuthCredentialGeneration, isAuthCredentialGenerationCurrent } from '../../lib/auth-store';
 import { useFollowers, useProfile } from '../../lib/graphql/hooks';
 import {
   useIncomingFollowRequests,
   usePrivacyFollowAction,
   usePrivacySettings,
+  useSetAnonymousOnForeignBoards,
   useUpdatePrivacySettings,
 } from '../../lib/graphql/hooks/use-privacy';
 import { AudiencePicker, SESSION_AUDIENCES } from './AudiencePicker';
@@ -71,8 +74,11 @@ export function PrivacySettingsScreen() {
   const { spacing, systemColors, brandColors } = useTheme();
   const { effectiveOffline } = useConnectivity();
   const { data: profile } = useProfile();
+  const currentViewerId = useRef(profile?.id);
+  currentViewerId.current = profile?.id;
   const settings = usePrivacySettings();
   const update = useUpdatePrivacySettings();
+  const anonymousOnBoards = useSetAnonymousOnForeignBoards();
   const enabled = settings.data?.enabled === true;
   const requests = useIncomingFollowRequests(enabled);
   const followers = useFollowers(profile?.id, enabled);
@@ -108,7 +114,7 @@ export function PrivacySettingsScreen() {
     },
     [followAction],
   );
-  const disabled = effectiveOffline || update.isPending || followAction.isPending;
+  const disabled = effectiveOffline || update.isPending || anonymousOnBoards.isPending || followAction.isPending;
   const renderPerson = useCallback(
     ({ item }: { item: PrivacyPerson }) => (
       <PrivacyPersonRow person={item} onAction={handleAction} disabled={disabled} />
@@ -120,6 +126,7 @@ export function PrivacySettingsScreen() {
       void followers.fetchNextPage();
   }, [peopleMode, followers]);
   const chooseAccount = (next: boolean) => {
+    if (disabled) return;
     setIsPrivate(next);
     setSessionAudience(next ? 'followers' : 'public');
     setDirty(true);
@@ -127,10 +134,14 @@ export function PrivacySettingsScreen() {
   };
   const save = () => {
     if (isPrivate === null || disabled || !enabled) return;
+    const savingViewerId = profile?.id;
+    const credentialGeneration = captureAuthCredentialGeneration();
     update.mutate(
       { isPrivate, defaultSessionAudience: sessionAudience },
       {
         onSuccess: () => {
+          if (currentViewerId.current !== savingViewerId || !isAuthCredentialGenerationCurrent(credentialGeneration))
+            return;
           setDirty(false);
           setSaved(true);
         },
@@ -141,10 +152,35 @@ export function PrivacySettingsScreen() {
     <View style={{ padding: spacing[4], gap: spacing[4] }}>
       <Text variant="title2">{t('privacy.title')}</Text>
       <Text>{t('privacy.intro')}</Text>
+      {/* A plain preference: shown whether or not account privacy controls are on. */}
+      {settings.data ? (
+        <>
+          <SwitchRow
+            label={t('privacy.anonymousOnForeignBoards')}
+            description={t('privacy.anonymousOnForeignBoardsDescription')}
+            wrapDescription
+            value={
+              (anonymousOnBoards.isPending ? anonymousOnBoards.variables : undefined) ??
+              settings.data.anonymousOnForeignBoards
+            }
+            disabled={disabled}
+            onValueChange={(next) => {
+              if (!disabled) anonymousOnBoards.mutate(next);
+            }}
+          />
+          {anonymousOnBoards.isError ? (
+            <Text accessibilityRole="alert" color={brandColors.error}>
+              {t('privacy.saveFailed')}
+            </Text>
+          ) : null}
+        </>
+      ) : null}
       {!settings.data && settings.isPending ? (
         <ActivityIndicator />
       ) : !enabled ? (
-        <Text>{t('privacy.unavailable')}</Text>
+        // Account audience, session defaults and follow requests need the
+        // server's privacy controls; the anonymity switch above does not.
+        <Text variant="footnote">{t('privacy.accountControlsLater')}</Text>
       ) : (
         <>
           <Text variant="headline">{t('privacy.accountAudience')}</Text>
@@ -171,6 +207,7 @@ export function PrivacySettingsScreen() {
             disabled={disabled}
             label={t('privacy.sessionDefault')}
             onChange={(audience) => {
+              if (disabled) return;
               setSessionAudience(audience);
               setDirty(true);
               setSaved(false);

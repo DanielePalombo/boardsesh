@@ -693,14 +693,7 @@ export const sessionMutations = {
     }
     const participantId = ctx.participantId;
 
-    const previousBoardPath = await roomManager.updateSessionBoardPathIfChanged(sessionId, boardPath, ctx.userId);
-    if (previousBoardPath !== null) {
-      pubsub.publishSessionEvent(sessionId, {
-        __typename: 'SessionBoardPathChanged',
-        boardPath,
-        changedByParticipantId: participantId,
-      });
-    }
+    await roomManager.updateSessionBoardPathIfChanged(sessionId, boardPath, ctx.userId, participantId);
 
     // Return the resolved Session. Fan independent reads in parallel —
     // matches setSessionBoardSerial's shape.

@@ -44,6 +44,11 @@ export const privacyTypeDefs = /* GraphQL */ `
     "Always 1. Apps that still ship the retired setup screen open it below 1."
     privacyOnboardingVersion: Int! @deprecated(reason: "Retired with the privacy setup screen. Always 1.")
     defaultSessionAudience: PrivacyResourceAudience!
+    """
+    Show as an anonymous climber on board feeds, leaderboards and live rosters
+    of boards this climber doesn't own. Their sends still count.
+    """
+    anonymousOnForeignBoards: Boolean!
     enabled: Boolean!
   }
   input UpdatePrivacySettingsInput {
@@ -116,6 +121,11 @@ export const privacyTypeDefs = /* GraphQL */ `
   }
   extend type Mutation {
     updatePrivacySettings(input: UpdatePrivacySettingsInput!): PrivacySettings!
+    """
+    Stay anonymous on boards you don't own. A plain preference: available
+    whether or not account privacy controls are enabled.
+    """
+    setAnonymousOnForeignBoards(enabled: Boolean!): PrivacySettings!
     requestFollow(userId: ID!): PrivacyRelationship!
     cancelFollowRequest(userId: ID!): Boolean!
     approveFollowRequest(userId: ID!): Boolean!

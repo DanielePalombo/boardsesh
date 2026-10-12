@@ -1,5 +1,5 @@
-import { canAccessResource, canViewActivityIdentity } from '../privacy';
-import { canReadClimbContent } from '../board-session-privacy';
+import { canAccessResource } from '../privacy';
+import { canReadClimbContent, sessionVisibleUserIds } from '../board-session-privacy';
 import { deriveBoardConnection, type BoardHolder } from './board-connection';
 import type { LiveActivityContentState } from './index';
 
@@ -30,7 +30,11 @@ export async function projectLiveActivityContent(
   delete projected.boardConnection;
   projected.holderDisplayName = '';
   if (holder) {
-    const showIdentity = !!holder.holderUserId && (await canViewActivityIdentity(holder.holderUserId, viewerId));
+    // Named by their account, and anonymous on the session's board when they
+    // chose that and it is not theirs: the roster's rule. One lookup.
+    const holderUserId = holder.holderUserId;
+    const showIdentity =
+      !!holderUserId && (await sessionVisibleUserIds([holderUserId], viewerId, sessionId)).has(holderUserId);
     Object.assign(
       projected,
       deriveBoardConnection({

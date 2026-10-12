@@ -8,6 +8,8 @@ export interface PrivacySettings {
   isPrivate: boolean;
   privacyRevision: number;
   defaultSessionAudience: PrivacyResourceAudience;
+  /** Show as an anonymous climber on boards the climber doesn't own. A plain preference, not behind `enabled`. */
+  anonymousOnForeignBoards: boolean;
   enabled: boolean;
 }
 export interface PrivacyViewer {

@@ -4778,7 +4778,12 @@ describe('board-presence commit degradation', () => {
       effectiveAngle: 40,
       sessionId: null,
     });
-    expect(result).toEqual({ previousWriter: null, writerSlotOk: false, sessionBindingChanged: false });
+    expect(result).toEqual({
+      previousWriter: null,
+      writerSlotOk: false,
+      sessionBindingChanged: false,
+      sessionBoardChanged: false,
+    });
   });
 
   it('reportBoardClimb publishes the climb but no hand-off when the writer slot did not verifiably execute', async () => {
@@ -4797,6 +4802,7 @@ describe('board-presence commit degradation', () => {
       previousWriter: null,
       writerSlotOk: false,
       sessionBindingChanged: false,
+      sessionBoardChanged: false,
     });
     const publishSpy = vi.spyOn(pubsub, 'publishBoardPresenceEvent');
 

@@ -12,6 +12,7 @@ beforeEach(() => {
     isPrivate: true,
     privacyRevision: 4,
     defaultSessionAudience: 'followers',
+    anonymousOnForeignBoards: false,
   };
 });
 describe('publication audience', () => {

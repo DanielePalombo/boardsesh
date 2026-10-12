@@ -27,6 +27,11 @@ import { roomManager } from '../../../services/room-manager';
 import { pubsub } from '../../../pubsub';
 import { buildFramesString } from '@boardsesh/board-constants/led-placements';
 import { forwardLogs, type DeviceLog } from '../../../services/axiom';
+import {
+  queueItemUserIds,
+  redactQueueAttribution,
+  sessionVisibleUserIds,
+} from '../../../services/board-session-privacy';
 
 /**
  * Generate a secure random API key
@@ -465,8 +470,16 @@ export const controllerMutations = {
       return { item: newCurrentClimb, update: updated };
     });
 
+    // A controller's context has no session of its own, so the item's
+    // attribution is projected here, against the session it came from.
+    const projectedItem =
+      outcome.item &&
+      redactQueueAttribution(
+        outcome.item,
+        await sessionVisibleUserIds(queueItemUserIds([outcome.item]), ctx.userId, sessionId),
+      );
     if (!outcome.item || !outcome.update) {
-      return outcome.item;
+      return projectedItem;
     }
 
     // Publish CurrentClimbChanged event WITHOUT clientId
@@ -482,7 +495,7 @@ export const controllerMutations = {
       correlationId: null,
     });
 
-    return outcome.item;
+    return projectedItem;
   },
 
   /**

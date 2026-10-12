@@ -7,23 +7,100 @@ import type {
   SessionParticipant,
   UserBoard,
 } from '@boardsesh/shared-schema';
-import { canViewActivityIdentity, canViewResourceLocation } from '../../../services/privacy';
-import { redactQueueClimb, redactQueueItem, redactSessionUsers } from '../../../services/board-session-privacy';
+import { canViewActivityIdentity, canViewResourceLocation, visibleActivityUserIds } from '../../../services/privacy';
+import {
+  batchedSessionVisibleUserIds,
+  canViewBoardHardestSendIdentity,
+  hardestSendSourceBoardId,
+  queueItemSourceSessionId,
+  sessionUserSourceSessionId,
+  queueItemUserIds,
+  redactQueueAttribution,
+  redactQueueClimb,
+  redactSessionUsers,
+} from '../../../services/board-session-privacy';
 
 // These field projections also cover mutation payloads and buffered events;
 // the source of an identity must never determine its visibility.
 async function visibleIdentity(userId: string | null | undefined, ctx: ConnectionContext): Promise<boolean> {
   return !!userId && canViewActivityIdentity(userId, ctx.userId);
 }
-function queueProjection(item: ClimbQueueItem, ctx: ConnectionContext) {
-  return redactQueueItem(item, ctx.userId);
+// Context belongs to this server projection, never to a client-supplied field.
+// Clone before recording it so a cached sender reused elsewhere cannot inherit
+// another board's authorization. Weak keys retain no cross-request objects.
+const recentSenderBoards = new WeakMap<BoardClimbRecentSender, number>();
+export function withRecentSenderBoardContext(sender: BoardClimbRecentSender, boardId: number): BoardClimbRecentSender {
+  const projected = { ...sender };
+  recentSenderBoards.set(projected, boardId);
+  return projected;
+}
+const pendingRecentSenderVisibility = new Map<
+  string,
+  { userIds: Set<string>; visible: Promise<ReadonlySet<string>> }
+>();
+async function visibleRecentSender(sender: BoardClimbRecentSender, ctx: ConnectionContext): Promise<boolean> {
+  if (!sender.userId) return false;
+  const boardId = recentSenderBoards.get(sender);
+  if (boardId === undefined) return visibleIdentity(sender.userId, ctx);
+  const key = JSON.stringify([ctx.userId ?? null, boardId]);
+  let pending = pendingRecentSenderVisibility.get(key);
+  if (!pending) {
+    const userIds = new Set<string>();
+    const visible = new Promise<ReadonlySet<string>>((resolve, reject) => {
+      void Promise.resolve().then(() =>
+        process.nextTick(() => {
+          pendingRecentSenderVisibility.delete(key);
+          visibleActivityUserIds([...userIds], ctx.userId, { boardId }).then(resolve, reject);
+        }),
+      );
+    });
+    pending = { userIds, visible };
+    pendingRecentSenderVisibility.set(key, pending);
+  }
+  pending.userIds.add(sender.userId);
+  // Recheck current membership/policy for each GraphQL batch, including retained
+  // objects after revocation. Account-only objects keep the narrower fallback.
+  return (await pending.visible).has(sender.userId);
+}
+// Each field of each queue item or roster entry asks separately; the batched
+// lookup answers every one of them for a projection with one board resolution
+// and one query. The `climb` field projects the climb itself. This judges on the
+// connection's session, which is the item's for a session member; a producer
+// whose caller has none (HTTP, the ESP32 controller's navigateQueue) projects
+// the item against its own session before returning it, and this can only
+// narrow that further.
+async function queueProjection(item: ClimbQueueItem, ctx: ConnectionContext) {
+  return redactQueueAttribution(
+    item,
+    await batchedSessionVisibleUserIds(
+      queueItemUserIds([item]),
+      ctx.userId,
+      queueItemSourceSessionId(item) === undefined ? ctx.sessionId : queueItemSourceSessionId(item),
+    ),
+  );
 }
 async function sessionUserProjection(user: SessionUser, ctx: ConnectionContext): Promise<SessionUser> {
-  if (!ctx.sessionId) {
+  const sessionId = sessionUserSourceSessionId(user) ?? ctx.sessionId;
+  if (!sessionId) {
     if (await visibleIdentity(user.userId, ctx)) return user;
     return { ...user, username: '', avatarUrl: undefined, userId: null };
   }
-  return (await redactSessionUsers([user], ctx.userId, ctx.sessionId))[0];
+  const visible = batchedSessionVisibleUserIds([user.userId], ctx.userId, sessionId);
+  return (await redactSessionUsers([user], ctx.userId, sessionId, await visible))[0];
+}
+
+const pendingHardestSendVisibility = new WeakMap<BoardPresenceHardestSend, Map<string | null, Promise<boolean>>>();
+function visibleHardestSend(send: BoardPresenceHardestSend, ctx: ConnectionContext): Promise<boolean> {
+  const boardId = hardestSendSourceBoardId(send);
+  if (boardId === undefined) return visibleIdentity(send.sentByUserId, ctx);
+  const viewerId = ctx.userId ?? null;
+  const pending = pendingHardestSendVisibility.get(send) ?? new Map<string | null, Promise<boolean>>();
+  pendingHardestSendVisibility.set(send, pending);
+  const existing = pending.get(viewerId);
+  if (existing) return existing;
+  const visibility = canViewBoardHardestSendIdentity(send, viewerId, boardId).finally(() => pending.delete(viewerId));
+  pending.set(viewerId, visibility);
+  return visibility;
 }
 
 export const boardSessionPrivacyResolvers = {
@@ -81,18 +158,18 @@ export const boardSessionPrivacyResolvers = {
   },
   BoardPresenceHardestSend: {
     sentByUserId: async (send: BoardPresenceHardestSend, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(send.sentByUserId, ctx)) ? send.sentByUserId : null,
+      (await visibleHardestSend(send, ctx)) ? send.sentByUserId : null,
     sentByDisplayName: async (send: BoardPresenceHardestSend, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(send.sentByUserId, ctx)) ? send.sentByDisplayName : null,
+      (await visibleHardestSend(send, ctx)) ? send.sentByDisplayName : null,
     sentByAvatarUrl: async (send: BoardPresenceHardestSend, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(send.sentByUserId, ctx)) ? send.sentByAvatarUrl : null,
+      (await visibleHardestSend(send, ctx)) ? send.sentByAvatarUrl : null,
   },
   BoardClimbRecentSender: {
     userId: async (sender: BoardClimbRecentSender, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(sender.userId, ctx)) ? sender.userId : null,
+      (await visibleRecentSender(sender, ctx)) ? sender.userId : null,
     displayName: async (sender: BoardClimbRecentSender, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(sender.userId, ctx)) ? sender.displayName : null,
+      (await visibleRecentSender(sender, ctx)) ? sender.displayName : null,
     avatarUrl: async (sender: BoardClimbRecentSender, _: unknown, ctx: ConnectionContext) =>
-      (await visibleIdentity(sender.userId, ctx)) ? sender.avatarUrl : null,
+      (await visibleRecentSender(sender, ctx)) ? sender.avatarUrl : null,
   },
 };

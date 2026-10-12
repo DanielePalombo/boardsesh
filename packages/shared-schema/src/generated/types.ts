@@ -4547,6 +4547,11 @@ export type Mutation = {
   sendDeviceLogs: SendDeviceLogsResponse;
   /** Record the signed-in climber's analytics consent answer and return the account's current answer. */
   setAnalyticsConsent: AnalyticsConsent;
+  /**
+   * Stay anonymous on boards you don't own. A plain preference: available
+   * whether or not account privacy controls are enabled.
+   */
+  setAnonymousOnForeignBoards: PrivacySettings;
   setClimbFromLedPositions: ClimbMatchResult;
   /** Set a community setting (admin/leader only). */
   setCommunitySettings: CommunitySetting;
@@ -5361,6 +5366,11 @@ export type MutationSetAnalyticsConsentArgs = {
 };
 
 /** Root mutation type for all write operations. */
+export type MutationSetAnonymousOnForeignBoardsArgs = {
+  enabled: Scalars['Boolean']['input'];
+};
+
+/** Root mutation type for all write operations. */
 export type MutationSetClimbFromLedPositionsArgs = {
   frames?: InputMaybe<Scalars['String']['input']>;
   positions?: InputMaybe<Array<LedCommandInput>>;
@@ -6167,6 +6177,11 @@ export type PrivacyResourceKind = 'board' | 'session';
 
 export type PrivacySettings = {
   __typename?: 'PrivacySettings';
+  /**
+   * Show as an anonymous climber on board feeds, leaderboards and live rosters
+   * of boards this climber doesn't own. Their sends still count.
+   */
+  anonymousOnForeignBoards: Scalars['Boolean']['output'];
   defaultSessionAudience: PrivacyResourceAudience;
   enabled: Scalars['Boolean']['output'];
   isPrivate: Scalars['Boolean']['output'];
@@ -15038,6 +15053,12 @@ export type MutationResolvers<
     ContextType,
     RequireFields<MutationSetAnalyticsConsentArgs, 'input'>
   >;
+  setAnonymousOnForeignBoards?: Resolver<
+    ResolversTypes['PrivacySettings'],
+    ParentType,
+    ContextType,
+    RequireFields<MutationSetAnonymousOnForeignBoardsArgs, 'enabled'>
+  >;
   setClimbFromLedPositions?: Resolver<
     ResolversTypes['ClimbMatchResult'],
     ParentType,
@@ -15643,6 +15664,7 @@ export type PrivacySettingsResolvers<
   ContextType = ConnectionContext,
   ParentType extends ResolversParentTypes['PrivacySettings'] = ResolversParentTypes['PrivacySettings'],
 > = ResolversObject<{
+  anonymousOnForeignBoards?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
   defaultSessionAudience?: Resolver<ResolversTypes['PrivacyResourceAudience'], ParentType, ContextType>;
   enabled?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;
   isPrivate?: Resolver<ResolversTypes['Boolean'], ParentType, ContextType>;

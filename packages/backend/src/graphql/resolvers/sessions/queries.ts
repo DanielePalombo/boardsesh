@@ -1,4 +1,4 @@
-import { redactQueueEvent } from '../../../services/privacy-queue-events';
+import { redactQueueEvents } from '../../../services/privacy-queue-events';
 import { canAccessResource } from '../../../services/privacy';
 import type {
   ConnectionContext,
@@ -89,7 +89,7 @@ export const sessionQueries = {
     const queueState = await roomManager.getQueueState(sessionId);
 
     return {
-      events: await Promise.all(events.map((event) => redactQueueEvent(event, ctx.userId))),
+      events: await redactQueueEvents(events, ctx.userId, sessionId),
       currentSequence: queueState.sequence,
     };
   },

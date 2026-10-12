@@ -7,6 +7,7 @@ export type PrivacySettings = {
   isPrivate: boolean;
   privacyRevision: number;
   defaultSessionAudience: PrivacyResourceAudience;
+  anonymousOnForeignBoards: boolean;
   enabled: boolean;
 };
 export type PrivacyRelationship = {
@@ -30,6 +31,7 @@ export const GET_PRIVACY_SETTINGS = gql`
       isPrivate
       privacyRevision
       defaultSessionAudience
+      anonymousOnForeignBoards
       enabled
     }
   }
@@ -40,6 +42,18 @@ export const UPDATE_PRIVACY_SETTINGS = gql`
       isPrivate
       privacyRevision
       defaultSessionAudience
+      anonymousOnForeignBoards
+      enabled
+    }
+  }
+`;
+export const SET_ANONYMOUS_ON_FOREIGN_BOARDS = gql`
+  mutation SetAnonymousOnForeignBoards($enabled: Boolean!) {
+    setAnonymousOnForeignBoards(enabled: $enabled) {
+      isPrivate
+      privacyRevision
+      defaultSessionAudience
+      anonymousOnForeignBoards
       enabled
     }
   }

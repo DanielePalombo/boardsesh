@@ -4544,6 +4544,11 @@ export type Mutation = {
   sendDeviceLogs: SendDeviceLogsResponse;
   /** Record the signed-in climber's analytics consent answer and return the account's current answer. */
   setAnalyticsConsent: AnalyticsConsent;
+  /**
+   * Stay anonymous on boards you don't own. A plain preference: available
+   * whether or not account privacy controls are enabled.
+   */
+  setAnonymousOnForeignBoards: PrivacySettings;
   setClimbFromLedPositions: ClimbMatchResult;
   /** Set a community setting (admin/leader only). */
   setCommunitySettings: CommunitySetting;
@@ -5358,6 +5363,11 @@ export type MutationSetAnalyticsConsentArgs = {
 };
 
 /** Root mutation type for all write operations. */
+export type MutationSetAnonymousOnForeignBoardsArgs = {
+  enabled: Scalars['Boolean']['input'];
+};
+
+/** Root mutation type for all write operations. */
 export type MutationSetClimbFromLedPositionsArgs = {
   frames?: InputMaybe<Scalars['String']['input']>;
   positions?: InputMaybe<Array<LedCommandInput>>;
@@ -6164,6 +6174,11 @@ export type PrivacyResourceKind = 'board' | 'session';
 
 export type PrivacySettings = {
   __typename?: 'PrivacySettings';
+  /**
+   * Show as an anonymous climber on board feeds, leaderboards and live rosters
+   * of boards this climber doesn't own. Their sends still count.
+   */
+  anonymousOnForeignBoards: Scalars['Boolean']['output'];
   defaultSessionAudience: PrivacyResourceAudience;
   enabled: Scalars['Boolean']['output'];
   isPrivate: Scalars['Boolean']['output'];
@@ -13596,6 +13611,7 @@ export type PrivacySettingsQuery = {
     isPrivate: boolean;
     privacyRevision: number;
     defaultSessionAudience: PrivacyResourceAudience;
+    anonymousOnForeignBoards: boolean;
     enabled: boolean;
   };
 };
@@ -13611,6 +13627,23 @@ export type UpdatePrivacySettingsMutation = {
     isPrivate: boolean;
     privacyRevision: number;
     defaultSessionAudience: PrivacyResourceAudience;
+    anonymousOnForeignBoards: boolean;
+    enabled: boolean;
+  };
+};
+
+export type SetAnonymousOnForeignBoardsMutationVariables = Exact<{
+  enabled: Scalars['Boolean']['input'];
+}>;
+
+export type SetAnonymousOnForeignBoardsMutation = {
+  __typename?: 'Mutation';
+  setAnonymousOnForeignBoards: {
+    __typename?: 'PrivacySettings';
+    isPrivate: boolean;
+    privacyRevision: number;
+    defaultSessionAudience: PrivacyResourceAudience;
+    anonymousOnForeignBoards: boolean;
     enabled: boolean;
   };
 };
@@ -21439,6 +21472,7 @@ export const PrivacySettingsDocument = {
                 { kind: 'Field', name: { kind: 'Name', value: 'isPrivate' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'privacyRevision' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'defaultSessionAudience' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'anonymousOnForeignBoards' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'enabled' } },
               ],
             },
@@ -21484,6 +21518,7 @@ export const UpdatePrivacySettingsDocument = {
                 { kind: 'Field', name: { kind: 'Name', value: 'isPrivate' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'privacyRevision' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'defaultSessionAudience' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'anonymousOnForeignBoards' } },
                 { kind: 'Field', name: { kind: 'Name', value: 'enabled' } },
               ],
             },
@@ -21493,6 +21528,49 @@ export const UpdatePrivacySettingsDocument = {
     },
   ],
 } as unknown as DocumentNode<UpdatePrivacySettingsMutation, UpdatePrivacySettingsMutationVariables>;
+export const SetAnonymousOnForeignBoardsDocument = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'mutation',
+      name: { kind: 'Name', value: 'SetAnonymousOnForeignBoards' },
+      variableDefinitions: [
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'enabled' } },
+          type: { kind: 'NonNullType', type: { kind: 'NamedType', name: { kind: 'Name', value: 'Boolean' } } },
+        },
+      ],
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'setAnonymousOnForeignBoards' },
+            arguments: [
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'enabled' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'enabled' } },
+              },
+            ],
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'isPrivate' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'privacyRevision' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'defaultSessionAudience' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'anonymousOnForeignBoards' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'enabled' } },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<SetAnonymousOnForeignBoardsMutation, SetAnonymousOnForeignBoardsMutationVariables>;
 export const IncomingFollowRequestsDocument = {
   kind: 'Document',
   definitions: [

@@ -1,6 +1,12 @@
 import { commentPrivacyCondition, listedSessionCondition, tickPrivacyCondition } from '../shared/activity-privacy';
 import { alias } from 'drizzle-orm/pg-core';
-import { canAccessResource, canViewActivityIdentity, visibleBoardIdentityIds } from '../../../services/privacy';
+import {
+  anonymousOnBoardUserIdsByBoard,
+  canAccessResource,
+  canViewActivityIdentity,
+  visibleActivityUserIdsByBoard,
+  visibleBoardIdentityIds,
+} from '../../../services/privacy';
 import { eq, and, desc, sql, count as drizzleCount, isNull, inArray, type SQL } from 'drizzle-orm';
 import { dbRead } from '../../../db/client';
 import * as dbSchema from '@boardsesh/db/schema';
@@ -26,6 +32,12 @@ import type {
   ConnectionContext,
 } from '@boardsesh/shared-schema';
 import { logger } from '../../../utils/logger';
+import {
+  canViewBoardTickOverride,
+  sessionAnonymousUserIds,
+  sessionParticipantId,
+  sessionVisibleUserIds,
+} from '../../../services/board-session-privacy';
 import { buildGradeDistributionFromTicks, computeSessionAggregates } from './session-feed-utils';
 
 type SessionFeedFilterOptions = {
@@ -508,8 +520,38 @@ export async function getSessionFeed(
     fetchFeaturedBetaBatch(sessionIds, dailyHighlightKeys, filterOptions, viewerUserId),
   ]);
 
+  // A board's own feed (Home's gym mode) is board-facing: a climber who stays
+  // anonymous on boards they don't own is unnamed on its cards when this board
+  // is not theirs, as on its wall feed. Their cards and totals stay. The crew
+  // and per-climber feeds follow the account alone. One query for the page.
+  const boardFacingRows =
+    boardIdFilter !== null && !participantFilterEnabled
+      ? resultRows.map((row) => ({
+          userIds: [
+            metaMap.get(row.session_id)?.ownerUserId,
+            row.daily_user_id,
+            ...(dailyParticipantMap.get(row.session_id) ?? []).map((participant) => participant.userId),
+            dailyHardestSendMap.get(row.highlight_tick_uuid ?? '')?.userId,
+            ...(participantMap.get(row.session_id) ?? []).map((participant) => participant.userId),
+            hardestSendMap.get(row.session_id)?.userId,
+            featuredBetaMap.get(row.session_id)?.tick.userId,
+          ],
+          // A party card is judged as that live session; a daily card's
+          // synthetic id names no session, and its logs are the climber's own
+          // on this board.
+          onBoard: { boardId: boardIdFilter, sessionId: row.session_type === 'party' ? row.session_id : undefined },
+        }))
+      : [];
+  const [anonymousOnBoardRows, visibleOnBoardRows] = await Promise.all([
+    anonymousOnBoardUserIdsByBoard(boardFacingRows, viewerUserId),
+    visibleActivityUserIdsByBoard(boardFacingRows, viewerUserId),
+  ]);
+
   const sessions: SessionFeedItem[] = await Promise.all(
-    resultRows.map(async (row) => {
+    resultRows.map(async (row, rowIndex) => {
+      const namedOnBoard = (userId: string | null | undefined) =>
+        !!userId && !anonymousOnBoardRows[rowIndex]?.has(userId);
+      const memberNames = (userId: string | null | undefined) => !!userId && visibleOnBoardRows[rowIndex]?.has(userId);
       const isDailyHighlight = row.session_type === 'daily_highlight';
       const participants = isDailyHighlight
         ? (dailyParticipantMap.get(row.session_id) ?? [])
@@ -528,6 +570,24 @@ export async function getSessionFeed(
           : null
         : (hardestSendMap.get(row.session_id) ?? null);
       const featuredBeta = featuredBetaMap.get(row.session_id) ?? null;
+      // Board members may see an actor's default identity, while notes and
+      // clips still follow that tick's ordinary author/item permissions.
+      const hardestTickReadable =
+        !!hardestSend &&
+        (await canViewActivityIdentity(hardestSend.userId, viewerUserId, {
+          entityType: 'tick',
+          entityId: hardestSend.uuid,
+        }));
+      const hardestMemberIdentity =
+        !!hardestSend &&
+        memberNames(hardestSend.userId) &&
+        (await canViewBoardTickOverride(hardestSend.userId, hardestSend.uuid, viewerUserId));
+      const featuredTickReadable =
+        !!featuredBeta &&
+        (await canViewActivityIdentity(featuredBeta.tick.userId, viewerUserId, {
+          entityType: 'tick',
+          entityId: featuredBeta.tick.uuid,
+        }));
 
       const firstTime = new Date(row.session_first_tick).getTime();
       const lastTime = new Date(row.session_last_tick).getTime();
@@ -538,11 +598,12 @@ export async function getSessionFeed(
         sessionType: isDailyHighlight ? 'daily_highlight' : 'party',
         sessionName: isDailyHighlight ? null : sessionMeta?.name || null,
         ownerUserId:
-          (isDailyHighlight ? row.daily_user_id : sessionMeta?.ownerUserId) &&
-          (await canViewActivityIdentity(
-            (isDailyHighlight ? row.daily_user_id : sessionMeta?.ownerUserId)!,
-            viewerUserId,
-          ))
+          namedOnBoard(isDailyHighlight ? row.daily_user_id : sessionMeta?.ownerUserId) &&
+          (memberNames(isDailyHighlight ? row.daily_user_id : sessionMeta?.ownerUserId) ||
+            (await canViewActivityIdentity(
+              (isDailyHighlight ? row.daily_user_id : sessionMeta?.ownerUserId)!,
+              viewerUserId,
+            )))
             ? isDailyHighlight
               ? row.daily_user_id
               : sessionMeta?.ownerUserId
@@ -550,7 +611,10 @@ export async function getSessionFeed(
         participants: (
           await Promise.all(
             participants.map(async (participant) =>
-              (await canViewActivityIdentity(participant.userId, viewerUserId)) ? participant : null,
+              namedOnBoard(participant.userId) &&
+              (memberNames(participant.userId) || (await canViewActivityIdentity(participant.userId, viewerUserId)))
+                ? participant
+                : null,
             ),
           )
         ).filter((participant): participant is SessionFeedParticipant => participant !== null),
@@ -562,21 +626,13 @@ export async function getSessionFeed(
         boardTypes,
         hardestGrade: hardestSend?.difficultyName ?? (gradeDistribution.length > 0 ? gradeDistribution[0].grade : null),
         hardestSend:
-          hardestSend &&
-          (await canViewActivityIdentity(hardestSend.userId, viewerUserId, {
-            entityType: 'tick',
-            entityId: hardestSend.uuid,
-          }))
-            ? hardestSend
+          hardestSend && namedOnBoard(hardestSend.userId) && (hardestMemberIdentity || hardestTickReadable)
+            ? hardestTickReadable
+              ? hardestSend
+              : { ...hardestSend, comment: null }
             : null,
         featuredBeta:
-          featuredBeta &&
-          (await canViewActivityIdentity(featuredBeta.tick.userId, viewerUserId, {
-            entityType: 'tick',
-            entityId: featuredBeta.tick.uuid,
-          }))
-            ? featuredBeta
-            : null,
+          featuredBeta && namedOnBoard(featuredBeta.tick.userId) && featuredTickReadable ? featuredBeta : null,
         socialEntityType: isDailyHighlight ? 'tick' : 'session',
         socialEntityId: isDailyHighlight ? (row.highlight_tick_uuid ?? row.session_id) : row.session_id,
         firstTickAt:
@@ -967,6 +1023,16 @@ export const sessionFeedQueries = {
     const goal = dailySession ? null : partySession?.goal || null;
     const notes = dailySession ? null : partySession?.notes || null;
     const ownerUserId = dailySession ? dailySession.userId : partySession?.createdByUserId || null;
+    // A live session's leaderboard and logs follow its roster: a climber who
+    // stays anonymous on boards they don't own is unnamed here when the
+    // session's board is not theirs. Their rows and counts stay, under the
+    // session's opaque participant id, without name, avatar, note or clips. A
+    // daily card is one climber's own day, so it is never projected.
+    const anonymous =
+      dailySession || aggregateOnly
+        ? new Set<string>()
+        : await sessionAnonymousUserIds([...userIds, ownerUserId], viewerUserId, sessionId);
+    const anonymousId = (userId: string) => sessionParticipantId(sessionId, userId);
     const [healthKitWorkout] =
       viewerUserId && !dailySession
         ? await dbRead
@@ -986,8 +1052,21 @@ export const sessionFeedQueries = {
       sessionType: dailySession ? 'daily_highlight' : 'party',
       sessionName,
       ownerUserId:
-        !aggregateOnly && ownerUserId && (await canViewActivityIdentity(ownerUserId, ctx?.userId)) ? ownerUserId : null,
-      participants: aggregateOnly ? [] : participants,
+        !aggregateOnly &&
+        ownerUserId &&
+        !anonymous.has(ownerUserId) &&
+        (dailySession
+          ? await canViewActivityIdentity(ownerUserId, viewerUserId)
+          : (await sessionVisibleUserIds([ownerUserId], viewerUserId, sessionId)).has(ownerUserId))
+          ? ownerUserId
+          : null,
+      participants: aggregateOnly
+        ? []
+        : participants.map((participant) =>
+            anonymous.has(participant.userId)
+              ? { ...participant, userId: anonymousId(participant.userId), displayName: null, avatarUrl: null }
+              : participant,
+          ),
       totalSends,
       totalFlashes,
       totalAttempts,
@@ -1000,7 +1079,13 @@ export const sessionFeedQueries = {
       durationMinutes,
       goal,
       notes,
-      ticks: ticks.filter((tick) => readableTickIds.has(tick.uuid)),
+      ticks: ticks
+        .filter((tick) => readableTickIds.has(tick.uuid))
+        .map((tick) =>
+          anonymous.has(tick.userId)
+            ? { ...tick, userId: anonymousId(tick.userId), comment: null, betaLinks: [] }
+            : tick,
+        ),
       upvotes: voteData ? Number(voteData.upvotes) : 0,
       downvotes: voteData ? Number(voteData.downvotes) : 0,
       voteScore: voteData ? Number(voteData.score) : 0,

@@ -61,10 +61,12 @@ async function streamedPaths(userId: string): Promise<string[]> {
       changedByParticipantId: null,
     });
     const changed = await nextPath();
-    // A privacy invalidation re-seeds the roster with the stored path.
+    // The wall event immediately re-baselines the identity-bearing roster.
+    const movedRoster = await nextPath();
+    // A privacy invalidation independently re-seeds with the stored path.
     pubsub.publishPrivacyChanged();
     const reseeded = await nextPath();
-    return [seed, changed, reseeded];
+    return [seed, changed, movedRoster, reseeded];
   } finally {
     await stream.return(undefined);
   }
@@ -127,8 +129,13 @@ describe('a session on a soft-deleted named board', () => {
   });
 
   it('withholds the slug from strangers in roster snapshots and board path changes', async () => {
-    expect(await streamedPaths(STRANGER)).toEqual([GEOMETRY_PATH, '/kilter/1/10/1,2/45', GEOMETRY_PATH]);
-    expect(await streamedPaths(BOARD_OWNER)).toEqual([NAMED_PATH, `/b/${SLUG}/45`, NAMED_PATH]);
+    expect(await streamedPaths(STRANGER)).toEqual([
+      GEOMETRY_PATH,
+      '/kilter/1/10/1,2/45',
+      '/kilter/1/10/1,2/45',
+      GEOMETRY_PATH,
+    ]);
+    expect(await streamedPaths(BOARD_OWNER)).toEqual([NAMED_PATH, `/b/${SLUG}/45`, `/b/${SLUG}/45`, NAMED_PATH]);
   });
 
   it('names a slug a live board reuses by that board’s own rule', async () => {

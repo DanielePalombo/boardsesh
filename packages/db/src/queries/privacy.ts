@@ -216,6 +216,87 @@ export function sessionBoardLocationCondition(sessionIdColumn: SQLWrapper, viewe
   )`;
 }
 
+/**
+ * The author's own action on one exact board: a tick there, or a lit climb that
+ * passed the durable dwell gate (`board_climb_events`). Given a session column,
+ * only an action in that session counts; a NULL session (a row that belongs to
+ * no live session) accepts an action in any session. `alias` keeps the two
+ * subqueries' table names unique where several of these nest in one query.
+ */
+function authorActedOnBoardCondition(
+  authorIdColumn: SQLWrapper,
+  boardIdSql: SQL,
+  sessionIdColumn: SQLWrapper | undefined,
+  alias: 'identity_author' | 'anon_own_action',
+): SQL<boolean> {
+  const tick = sql.raw(`${alias}_tick`);
+  const event = sql.raw(`${alias}_event`);
+  const inSession = (table: SQL) =>
+    sessionIdColumn ? sql`AND (${sessionIdColumn} IS NULL OR ${table}.session_id = ${sessionIdColumn})` : sql``;
+  return sql<boolean>`(EXISTS (SELECT 1 FROM boardsesh_ticks ${tick}
+      WHERE ${tick}.board_id = ${boardIdSql} AND ${tick}.user_id = ${authorIdColumn} ${inSession(tick)})
+    OR EXISTS (SELECT 1 FROM board_climb_events ${event}
+      WHERE ${event}.board_id = ${boardIdSql} AND ${event}.user_id = ${authorIdColumn} ${inSession(event)}))`;
+}
+
+/** Names inside a restricted board may be shared with its current approved members. */
+export function restrictedBoardMemberIdentityCondition(
+  authorIdColumn: SQLWrapper,
+  boardIdColumn: SQLWrapper,
+  viewerId: ViewerId,
+  sessionIdColumn?: SQLWrapper,
+): SQL<boolean> {
+  if (!viewerId) return sql<boolean>`false`;
+  return sql<boolean>`EXISTS (SELECT 1 FROM user_boards identity_member_board
+    LEFT JOIN resource_privacy identity_member_policy ON identity_member_policy.kind = 'board'
+      AND identity_member_policy.resource_id = identity_member_board.uuid
+    WHERE identity_member_board.id = (${boardIdColumn})::bigint AND identity_member_board.deleted_at IS NULL
+      AND COALESCE(identity_member_policy.audience, CASE
+        WHEN identity_member_board.owner_id = '00000000-0000-0000-0000-000000000000' THEN 'public'
+        WHEN identity_member_board.is_unlisted THEN 'unlisted'
+        WHEN identity_member_board.is_public THEN 'public' ELSE 'only_me' END) IN ('only_me', 'followers', 'invite_only')
+      AND (identity_member_board.owner_id = ${viewerId} OR EXISTS (
+        SELECT 1 FROM resource_grants identity_member_grant WHERE identity_member_grant.kind = 'board'
+          AND identity_member_grant.resource_id = identity_member_board.uuid
+          AND identity_member_grant.user_id = ${viewerId} AND identity_member_grant.status = 'approved'))
+      AND ${resourceAccessCondition('board', sql`identity_member_board.uuid`, viewerId, { allowUnlistedLink: false })}
+      AND ${authorActedOnBoardCondition(authorIdColumn, sql`identity_member_board.id`, sessionIdColumn, 'identity_author')})`;
+}
+
+/**
+ * Whether a climber shows as anonymous on a board-facing row (wall feed,
+ * presence stats, leaderboard, live roster, Bluetooth holder) projected for
+ * `boardIdColumn`: they chose to stay anonymous on boards they don't own, they
+ * don't own this one, and the viewer is not them. Read-time only, so it is
+ * retroactive and reversible: rows and counts keep the climber. It fails
+ * closed: a board that no longer exists, a board the app made only to climb on
+ * someone else's wall (`is_owned = false`), or none at all (a live session
+ * nothing places on a board yet), is not theirs. Never NULL, so `NOT` of it is
+ * safe.
+ *
+ * In a live session (`sessionIdColumn`) owning the board is not enough: any
+ * member can move a session onto someone's public board. The owner is named
+ * there only after their own tick or durable lit climb on that board in that
+ * session, the same evidence the restricted-board member exception asks for.
+ */
+export function anonymousOnBoardCondition(
+  authorIdColumn: SQLWrapper,
+  boardIdColumn: SQLWrapper,
+  viewerId: ViewerId,
+  sessionIdColumn?: SQLWrapper,
+): SQL<boolean> {
+  const ownActionInSession = sessionIdColumn
+    ? sql`AND (${sessionIdColumn} IS NULL OR ${authorActedOnBoardCondition(authorIdColumn, sql`anon_own_board.id`, sessionIdColumn, 'anon_own_action')})`
+    : sql``;
+  return sql<boolean>`(${authorIdColumn} IS NOT NULL AND ${authorIdColumn} IS DISTINCT FROM ${viewerId ?? null}
+    AND EXISTS (SELECT 1 FROM user_profiles anon_profile
+      WHERE anon_profile.user_id = ${authorIdColumn} AND anon_profile.anonymous_on_foreign_boards)
+    AND NOT ${restrictedBoardMemberIdentityCondition(authorIdColumn, boardIdColumn, viewerId, sessionIdColumn)}
+    AND NOT EXISTS (SELECT 1 FROM user_boards anon_own_board
+      WHERE anon_own_board.id = (${boardIdColumn})::bigint AND anon_own_board.owner_id = ${authorIdColumn}
+        AND anon_own_board.is_owned AND anon_own_board.deleted_at IS NULL ${ownActionInSession}))`;
+}
+
 /** Separate location policy; knowledge of a board UUID alone cannot reveal its address. */
 export function resourceLocationCondition(boardUuid: SQLWrapper, viewerId: ViewerId): SQL {
   return sql`EXISTS (SELECT 1 FROM user_boards privacy_location_board
