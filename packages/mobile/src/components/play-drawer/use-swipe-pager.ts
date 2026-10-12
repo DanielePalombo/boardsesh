@@ -38,8 +38,7 @@ import {
  * either side of ITS middle page, because those are the boards it has mounted.
  * A second swipe the same way has to wait for it to render the first step, 30 to
  * 66 ms on an iPhone 13 Pro from when it is told; a swipe back never does. A
- * second flick let go inside that wait springs back: the one case left in which
- * a swipe is lost to the JS thread.
+ * second flick let go inside that wait springs back (#6351).
  *
  * The JS thread takes the steps one at a time (`requestStep`). Two of them can
  * be waiting when it has been busy, and the navigation callbacks read state that
@@ -48,8 +47,10 @@ import {
  *
  * Everything a step needs lives here, with the drawer, and not in the carousel:
  * the offset, the step a fling is carrying, and the callbacks that change the
- * climb. The carousel is unmounted while the drawer measures itself again, and
- * a fling or a step in progress has to survive that.
+ * climb. The board/carousel host stays mounted through geometry refinement
+ * (#6383), including section-header changes (#6373). A fling or a step in
+ * progress must still survive any carousel teardown, so its pending step and
+ * callbacks belong to the pager.
  */
 
 /** What the JS thread has rendered. One object, so the UI thread never reads half an update. */

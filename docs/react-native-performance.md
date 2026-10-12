@@ -202,20 +202,22 @@ it can read on the UI thread.
   The gesture `useMemo` reads `enabledSV.value` and the widths inside the worklet and does **not**
   list the props in its deps, so a flag that flips or a layout that changes never recomposes the
   gesture. Reduce Motion needs no flag of its own: under the system setting Reanimated ends a spring
-  the moment it is assigned, so a release changes the climb with no slide.
+  the moment it is assigned, so a release changes the climb with no slide. Reanimated reads the
+  setting once at launch, so a change made while the app runs shows here after a restart.
 - The haptic `runOnJS(triggerHaptic)()` fires once per drag — gated behind
   `!hasTriggeredHaptic.value`, a shared-value latch flipped on the threshold crossing — not on every
   `onUpdate` frame.
-- A swipe does not wait for the JS thread to show the next board or to take the next touch. Which
+- A swipe to a mounted neighbour shows its board and takes the next touch on the UI thread. Which
   climb is in the middle is a shared value (`anchorPage` in `use-swipe-pager.ts`) that the release
   animation moves on the frame the outgoing board is gone; the JS thread is told once, when the
   incoming board has stopped in the middle, and changes the climb while the rest of the fling runs.
   The previous design asked the JS thread which neighbour to draw when a swipe changed sides, and
   waited for it to swap the climb before taking another touch: on an iPhone 13 Pro every swipe
   forward began with the wrong holds on the incoming board, and swipes were ignored for 160 to 230 ms
-  after each release. One wait is left: the page after the next exists only once the JS thread has
-  rendered the step before, so a second flick the same way that is let go inside those 30 to 66 ms
-  springs back (#6351). See rule 9.
+  after each release. The page after the next exists only once the JS thread has rendered the
+  step before, so a second flick the same way that is let go inside those 30 to 66 ms springs back
+  (#6351). The board/carousel host stays mounted when a section header changes and the drawer
+  measures itself again (#6383), including the setter-notes layouts reported in #6373. See rule 9.
 - `packages/mobile/src/components/ClimbListRow.tsx` follows the same pattern: the swipe-commit
   haptic is gated by `useAnimatedReaction` on the `>= COMMIT_THRESHOLD` boolean edge (lines 39–43),
   so `runOnJS(hapticLight)` fires once per arm, not per frame.
@@ -488,7 +490,8 @@ reference numbers):
 
 - `use-swipe-pager.ts` gives every mounted climb a page number that it keeps for as long as it is
   mounted. `SwipeBoardCarousel` and `SwipeableHeader` key their three slots by page, so the board
-  that was the neighbour becomes the current one by a prop change. Its images are never remounted.
+  that was the neighbour becomes the current one by a prop change. The swipe does not remount its
+  images.
 - Every slot has the same view structure, whatever its role. A wrapper that only the current slot
   has would remount the subtree the moment the role moved; an animated style that only the current
   slot has (the zoom) would leave its last transform behind on a slot that stopped being current.
@@ -529,9 +532,10 @@ reference numbers):
 **Do not** pass anything that only the current slot should have by changing the tree. `playSurface`
 moves between mounted boards now, which is why `useNativeClimbRender` reads it through a ref when
 it arms the paint watchdog: a board that becomes the play surface after its holds painted has
-nothing left to wait for. `LayeredClimbImage` reports one image replacing another as the new one
-only; a "nothing is mounted" in between made the watchdog forget an `onLoad` that had arrived ahead
-of the report, and wait four seconds for a paint that had happened.
+nothing left to wait for. `LayeredClimbImage` reports an overlay's mount from a layout effect,
+inside the commit that mounts the image, before its native `onLoad` can arrive. It reports one
+image replacing another as the new one only, and the watchdog keeps no answer between mount
+reports, so a stale event cannot satisfy a later image's paint timeout.
 
 ---
 
