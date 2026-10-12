@@ -19,6 +19,7 @@ import { Icon } from './Icon';
 import { Text } from './Text';
 import { useAnonymousClimbViewEnabled } from '../providers/feature-flags-provider';
 import { useTheme } from '../providers/theme-provider';
+import { useConfirm } from '../providers/dialog-provider';
 import { track } from '../lib/analytics';
 import { buildLoginHrefWithReturn } from '../lib/routing/anonymous-auth-gate';
 import { toBoardPath, type BoardRouteTarget } from '../lib/routing/board-route-target';
@@ -167,6 +168,7 @@ export function BoardRouteHandoff({
   mode,
   activationIntent,
   wallUuid,
+  inviteToken,
 }: {
   target: BoardRouteTarget | null;
   mode?: BoardRouteMode;
@@ -174,7 +176,21 @@ export function BoardRouteHandoff({
   activationIntent?: string | string[];
   /** A spray-wall UUID from a shared link; resolved before board adoption. */
   wallUuid?: string | string[];
+  /** A home board share link's token; redeemed before board adoption. */
+  inviteToken?: string | string[];
 }) {
+  const { t } = useTranslation('boards');
+  const confirm = useConfirm();
+  const confirmBoardJoin = useCallback(
+    (boardName: string) =>
+      confirm({
+        title: t('boardShareLink.joinHeading', { name: boardName }),
+        message: t('boardShareLink.joinBody'),
+        confirmLabel: t('boardShareLink.join'),
+        cancelLabel: t('boardShareLink.cancel'),
+      }),
+    [confirm, t],
+  );
   const report = useBoardRouteHandoffReporter(target, mode);
   const onHandedOff = useCallback(() => report('resolved'), [report]);
   // Read unconditionally, applied only where the gate already relaxes: on native
@@ -185,6 +201,8 @@ export function BoardRouteHandoff({
     mode,
     activationIntent,
     wallUuid,
+    inviteToken,
+    confirmBoardJoin,
     onHandedOff,
     anonymousClimbEnabled,
   });

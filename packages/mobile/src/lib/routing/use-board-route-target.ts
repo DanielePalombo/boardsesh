@@ -54,6 +54,7 @@ import { openClimbInPlayDrawer } from '../open-climb-in-play-drawer';
 import { consumeClimbHandoffIntent } from './climb-handoff-intent';
 import { useLaunchHoldReleased } from '../launch-hold';
 import { isWallUuidParam } from '../spray/use-spray-wall-link';
+import { isBoardInviteToken } from '../board-share/board-share-link';
 
 /**
  * What the entry route should draw.
@@ -206,6 +207,8 @@ function useAdoptedBoard(
   target: BoardRouteTarget | null,
   enabled: boolean,
   wallUuid?: string,
+  inviteToken?: string,
+  confirmBoardJoin?: (boardName: string) => Promise<boolean>,
 ): { board: UserBoard | null; error: boolean } {
   const { isAuthenticated, isLoading: authIsLoading } = useAuth();
   const createBoard = useCreateBoard();
@@ -229,13 +232,13 @@ function useAdoptedBoard(
   // but that's the provider's invariant, not this hook's, and a cold deep-link
   // open is exactly where it would bite. The `/b/{slug}` form needs no session
   // at all (public `boardBySlug`, local `setActiveBoard`), so it stays eager.
-  const waitingForAuth = (needsOwnedBoards || !!wallUuid) && authIsLoading;
+  const waitingForAuth = (needsOwnedBoards || !!wallUuid || !!inviteToken) && authIsLoading;
   // Key the effect on the resolved path rather than the target object so a
   // re-render with an equivalent target doesn't re-run board creation.
   const boardPath = enabled && target && !waitingForAuth ? toBoardPath(target) : null;
   // Capability changes on the same slug are separate resolutions. A denied or
   // pending earlier link must not keep the next link's answer out of the route.
-  const resolutionKey = boardPath ? JSON.stringify([boardPath, wallUuid ?? null]) : null;
+  const resolutionKey = boardPath ? JSON.stringify([boardPath, wallUuid ?? null, inviteToken ?? null]) : null;
   const resolvedPathRef = useRef<string | null>(null);
 
   // Only a resolve that finished for THIS path may be read; see AdoptedBoardState.
@@ -246,9 +249,9 @@ function useAdoptedBoard(
   // The resolve effect deliberately runs once per path, so it must not close
   // over the first render's values — the session is exactly the one that lands
   // late on a cold deep-link open.
-  const queriesRef = useRef({ createBoard, isAuthenticated });
+  const queriesRef = useRef({ createBoard, isAuthenticated, confirmBoardJoin });
   useEffect(() => {
-    queriesRef.current = { createBoard, isAuthenticated };
+    queriesRef.current = { createBoard, isAuthenticated, confirmBoardJoin };
   });
 
   // Same trick for the reconnect watcher, which subscribes once and must not
@@ -297,8 +300,13 @@ function useAdoptedBoard(
         const capabilityModules = wallUuid
           ? await Promise.all([import('../spray/spray-wall-link-board'), import('../auth-store')])
           : null;
+        // A board share link (`?invite=`) asks to Join, and joins before resolving the board only if confirmed.
+        const shareLinkModule =
+          inviteToken && !wallUuid ? await import('../board-share/redeem-board-share-link') : null;
+        const inviteAuthStore = inviteToken && !wallUuid ? await import('../auth-store') : null;
         if (cancelled) return;
-        const credentialGeneration = capabilityModules?.[1].captureAuthCredentialGeneration() ?? null;
+        const credentialStore = capabilityModules?.[1] ?? inviteAuthStore;
+        const credentialGeneration = credentialStore?.captureAuthCredentialGeneration() ?? null;
         const { createBoard: createBoardMutation, isAuthenticated: signedIn } = queriesRef.current;
         // Local first, before anything can wait on the network. The deep-linked
         // board is nearly always the board this device is already on, and on a
@@ -356,16 +364,30 @@ function useAdoptedBoard(
             fetchBoardBySlug:
               wallUuid && capabilityModules
                 ? (slug) => capabilityModules[0].fetchSprayWallBoardFromLink(queryClient, wallUuid, slug)
-                : resolveBoardSlugLocalFirst,
+                : inviteToken && shareLinkModule
+                  ? (slug) =>
+                      shareLinkModule.fetchBoardFromShareLink(
+                        inviteToken,
+                        slug,
+                        resolveBoardSlugLocalFirst,
+                        queriesRef.current.confirmBoardJoin,
+                        () => !cancelled,
+                      )
+                  : resolveBoardSlugLocalFirst,
           }));
         if (cancelled) return;
-        if (
-          credentialGeneration !== null &&
-          !capabilityModules?.[1].isAuthCredentialGenerationCurrent(credentialGeneration)
-        )
+        if (credentialGeneration !== null && !credentialStore?.isAuthCredentialGenerationCurrent(credentialGeneration))
           return;
-        await setActiveBoard(resolved);
-        if (cancelled) return;
+        const adoptionIsCurrent = () =>
+          !cancelled &&
+          (credentialGeneration === null || !!credentialStore?.isAuthCredentialGenerationCurrent(credentialGeneration));
+        // The storage write can queue behind another board choice. Its own
+        // guard must retain this credential scope until persistence commits.
+        const adoptedBoard =
+          credentialGeneration === null
+            ? await setActiveBoard(resolved)
+            : await setActiveBoard(resolved, adoptionIsCurrent);
+        if (!adoptionIsCurrent() || (credentialGeneration !== null && !adoptedBoard)) return;
         settledThisRun = true;
         setAdopted({ path: resolutionKey, board: resolved });
       } catch (resolveError) {
@@ -389,7 +411,7 @@ function useAdoptedBoard(
     };
     // `retryNonce` is a dep purely so a reconnect re-enters this effect; nothing
     // in the body reads it.
-  }, [boardPath, needsOwnedBoards, queryClient, resolutionKey, retryNonce, setActiveBoard, wallUuid]);
+  }, [boardPath, inviteToken, needsOwnedBoards, queryClient, resolutionKey, retryNonce, setActiveBoard, wallUuid]);
 
   return { board, error };
 }
@@ -494,6 +516,9 @@ export function useBoardRouteTarget(
     mode?: BoardRouteMode;
     activationIntent?: string | string[];
     wallUuid?: string | string[];
+    /** A home board share link's token (`?invite=`); redeemed before board adoption. */
+    inviteToken?: string | string[];
+    confirmBoardJoin?: (boardName: string) => Promise<boolean>;
     onHandedOff?: () => void;
     anonymousClimbEnabled?: boolean;
   },
@@ -549,7 +574,19 @@ export function useBoardRouteTarget(
     (target?.kind === 'slug-list' || target?.kind === 'slug-climb') && isWallUuidParam(wallParam)
       ? wallParam.toLowerCase()
       : undefined;
-  const { board: adoptedBoard, error: boardError } = useAdoptedBoard(target, adoptsBoard && !signedOutOnWeb, wallUuid);
+  const inviteParam = Array.isArray(options?.inviteToken) ? options.inviteToken[0] : options?.inviteToken;
+  // Only a board link carries one, and only a well-formed token is read at all.
+  const inviteToken = target?.kind === 'slug-list' && isBoardInviteToken(inviteParam) ? inviteParam : undefined;
+  // A native Join dialog must wait for the launch update gate: a cold-open
+  // update could otherwise reload after the climber approved the invite.
+  const launchHoldReleased = useLaunchHoldReleased();
+  const { board: adoptedBoard, error: boardError } = useAdoptedBoard(
+    target,
+    adoptsBoard && !signedOutOnWeb && (!inviteToken || launchHoldReleased),
+    wallUuid,
+    inviteToken,
+    options?.confirmBoardJoin,
+  );
   const anonymousBoard = anonymousSlugBoard.state === 'resolved' ? anonymousSlugBoard.board : null;
   const board = adoptedBoard ?? anonymousBoard;
 
@@ -611,7 +648,6 @@ export function useBoardRouteTarget(
   // presents above the launch update placeholder. Wait for launch to be ready,
   // so a cold-start climb link does not open a usable player the gate may then
   // reload out from under (#6006). This screen's own spinner covers the wait.
-  const launchHoldReleased = useLaunchHoldReleased();
   useEffect(() => {
     if (!launchHoldReleased) return;
     if (!target || !targetKey || handedOffRef.current === targetKey) return;

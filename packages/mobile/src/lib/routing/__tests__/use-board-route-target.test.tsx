@@ -11,12 +11,13 @@ vi.mock('expo-crypto', () => ({ randomUUID: () => 'internal-tick-intent' }));
 const router = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn(), canGoBack: vi.fn(() => true), push: vi.fn() }));
 const openPlayDrawer = vi.hoisted(() => vi.fn());
 const openClimbInPlayDrawer = vi.hoisted(() => vi.fn());
-const setActiveBoard = vi.hoisted(() => vi.fn(async () => {}));
+const setActiveBoard = vi.hoisted(() => vi.fn(async (_board: UserBoard, _operationIsCurrent?: () => boolean) => true));
 const resolveBoardForSession = vi.hoisted(() => vi.fn());
 const fetchAllMyOwnedBoards = vi.hoisted(() => vi.fn());
 const fetchBoardByUuid = vi.hoisted(() => vi.fn());
 const fetchBoardBySlug = vi.hoisted(() => vi.fn());
 const fetchSprayWallBoardFromLink = vi.hoisted(() => vi.fn());
+const fetchBoardFromShareLink = vi.hoisted(() => vi.fn());
 const routeQueryClient = vi.hoisted(() => ({}));
 const credentialState = vi.hoisted(() => ({ current: true }));
 const createBoardMutateAsync = vi.hoisted(() => vi.fn());
@@ -76,6 +77,7 @@ vi.mock('@tanstack/react-query', () => ({
   },
 }));
 vi.mock('../../spray/spray-wall-link-board', () => ({ fetchSprayWallBoardFromLink }));
+vi.mock('../../board-share/redeem-board-share-link', () => ({ fetchBoardFromShareLink }));
 vi.mock('../../auth-store', () => ({
   captureAuthCredentialGeneration: () => 0,
   isAuthCredentialGenerationCurrent: () => credentialState.current,
@@ -188,6 +190,7 @@ function Harness({
   onHandedOff,
   anonymousClimbEnabled,
   wallUuid,
+  inviteToken,
 }: {
   target: BoardRouteTarget | null;
   mode?: 'deep-link' | 'in-app';
@@ -195,6 +198,7 @@ function Harness({
   onHandedOff?: () => void;
   anonymousClimbEnabled?: boolean;
   wallUuid?: string | string[];
+  inviteToken?: string | string[];
 }) {
   const { status, climb, boardConfig, isAngleAdjustable } = useBoardRouteTarget(target, {
     mode,
@@ -202,6 +206,7 @@ function Harness({
     onHandedOff,
     anonymousClimbEnabled,
     wallUuid,
+    inviteToken,
   });
   return createElement('span', {
     'data-status': status,
@@ -235,6 +240,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // `clearAllMocks` wipes calls, not implementations — and one case below gives
   // `replace` a real one that unmounts the harness.
+  setActiveBoard.mockReset().mockResolvedValue(true);
   router.replace.mockReset();
   router.back.mockReset();
   openClimbInPlayDrawer.mockReset();
@@ -244,6 +250,7 @@ beforeEach(() => {
   fetchBoardByUuid.mockResolvedValue(null);
   fetchBoardBySlug.mockResolvedValue(null);
   fetchSprayWallBoardFromLink.mockReset().mockResolvedValue(null);
+  fetchBoardFromShareLink.mockReset().mockResolvedValue(null);
   credentialState.current = true;
   getStoredActiveBoard.mockResolvedValue(null);
   getOfflineBoards.mockReturnValue([]);
@@ -259,6 +266,128 @@ beforeEach(() => {
 
 describe('useBoardRouteTarget', () => {
   const WALL_UUID = '11111111-2222-3333-4444-555555555555';
+  const INVITE_TOKEN = 'Ab3_dE-fGhIjKlMnOpQrSt';
+
+  it('waits for the launch gate before resolving an invite that can show a Join dialog', async () => {
+    useRealResolver();
+    launchHold.released = false;
+    const memberBoard = board({ uuid: 'friends-board', slug: 'friends-garage', angle: 35 });
+    fetchBoardFromShareLink.mockResolvedValue(memberBoard);
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'friends-garage', angle: null },
+        inviteToken: INVITE_TOKEN,
+      }),
+    );
+    await act(async () => {});
+    expect(fetchBoardFromShareLink).not.toHaveBeenCalled();
+    await act(async () => {
+      launchHold.release();
+    });
+    await waitFor(() => expect(fetchBoardFromShareLink).toHaveBeenCalledOnce());
+    expect(setActiveBoard).toHaveBeenCalledWith(memberBoard, expect.any(Function));
+  });
+
+  it("redeems a board share link's token before adopting the board it names", async () => {
+    useRealResolver();
+    const memberBoard = board({ uuid: 'friends-board', slug: 'friends-garage', angle: 35 });
+    fetchBoardFromShareLink.mockResolvedValue(memberBoard);
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'friends-garage', angle: null },
+        inviteToken: INVITE_TOKEN,
+      }),
+    );
+
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/(tabs)/climbs'));
+    expect(fetchBoardFromShareLink).toHaveBeenCalledWith(
+      INVITE_TOKEN,
+      'friends-garage',
+      expect.any(Function),
+      undefined,
+      expect.any(Function),
+    );
+    expect(setActiveBoard).toHaveBeenCalledWith(memberBoard, expect.any(Function));
+    // The plain slug read is only the fallback the redeem step is handed.
+    expect(fetchBoardBySlug).not.toHaveBeenCalled();
+    expect(createBoardMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not adopt an invite board if credentials change between helper return and outer adoption', async () => {
+    useRealResolver();
+    const memberBoard = board({ uuid: 'friends-board', slug: 'friends-garage' });
+    fetchBoardFromShareLink.mockImplementationOnce(() => {
+      // The helper finished its own credential check; the outer resolver still
+      // has an await boundary before it can adopt the returned board.
+      queueMicrotask(() => {
+        credentialState.current = false;
+      });
+      return Promise.resolve(memberBoard);
+    });
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'friends-garage', angle: null },
+        inviteToken: INVITE_TOKEN,
+      }),
+    );
+    await waitFor(() => expect(fetchBoardFromShareLink).toHaveBeenCalledOnce());
+    await act(async () => {});
+    expect(setActiveBoard).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('keeps the invite credential guard current through queued board persistence', async () => {
+    useRealResolver();
+    const memberBoard = board({ uuid: 'friends-board', slug: 'friends-garage' });
+    fetchBoardFromShareLink.mockResolvedValueOnce(memberBoard);
+    setActiveBoard.mockImplementationOnce(async (_board, operationIsCurrent) => {
+      expect(operationIsCurrent?.()).toBe(true);
+      credentialState.current = false;
+      expect(operationIsCurrent?.()).toBe(false);
+      return false;
+    });
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'friends-garage', angle: null },
+        inviteToken: INVITE_TOKEN,
+      }),
+    );
+    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledOnce());
+    await act(async () => {});
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the plain board link when the share link opens nothing', async () => {
+    useRealResolver();
+    const publicBoard = board({ uuid: 'now-public', slug: 'friends-garage' });
+    fetchBoardBySlug.mockResolvedValue(publicBoard);
+    fetchBoardFromShareLink.mockImplementation(
+      async (_token: string, slug: string, fallback: (slug: string) => Promise<UserBoard | null>) => fallback(slug),
+    );
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'friends-garage', angle: null },
+        inviteToken: INVITE_TOKEN,
+      }),
+    );
+
+    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(publicBoard, expect.any(Function)));
+    expect(fetchBoardBySlug).toHaveBeenCalledWith('friends-garage');
+  });
+
+  it('never sends a malformed token to the server', async () => {
+    useRealResolver();
+    fetchBoardBySlug.mockResolvedValue(board({ uuid: 'garage', slug: 'garage' }));
+    render(
+      createElement(Harness, {
+        target: { kind: 'slug-list', slug: 'garage', angle: null },
+        inviteToken: 'not-a-token',
+      }),
+    );
+    await waitFor(() => expect(setActiveBoard).toHaveBeenCalled());
+    expect(fetchBoardFromShareLink).not.toHaveBeenCalled();
+    expect(fetchBoardBySlug).toHaveBeenCalledWith('garage');
+  });
 
   it('awaits a shared-wall capability and adopts its board without a slug lookup', async () => {
     useRealResolver();
@@ -279,7 +408,7 @@ describe('useBoardRouteTarget', () => {
     expect(setActiveBoard).not.toHaveBeenCalled();
     await act(async () => pending.release());
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/(tabs)/climbs'));
-    expect(setActiveBoard).toHaveBeenCalledWith({ ...wallBoard, angle: 40 });
+    expect(setActiveBoard).toHaveBeenCalledWith({ ...wallBoard, angle: 40 }, expect.any(Function));
     expect(fetchBoardBySlug).not.toHaveBeenCalled();
     expect(fetchAllMyOwnedBoards).not.toHaveBeenCalled();
     expect(createBoardMutateAsync).not.toHaveBeenCalled();
@@ -306,7 +435,7 @@ describe('useBoardRouteTarget', () => {
     );
 
     await waitFor(() => expect(openClimbInPlayDrawer).toHaveBeenCalledTimes(1));
-    expect(setActiveBoard).toHaveBeenCalledWith({ ...wallBoard, angle: 40 });
+    expect(setActiveBoard).toHaveBeenCalledWith({ ...wallBoard, angle: 40 }, expect.any(Function));
     expect(openClimbInPlayDrawer).toHaveBeenCalledWith(
       {
         kind: 'climb',
@@ -371,7 +500,7 @@ describe('useBoardRouteTarget', () => {
       }
       fetchSprayWallBoardFromLink.mockResolvedValue(wallBoard);
       act(() => connectivity.goOnline());
-      await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard));
+      await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard, expect.any(Function)));
       await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/(tabs)/climbs'));
       expect(fetchSprayWallBoardFromLink).toHaveBeenCalledTimes(2);
       expect(fetchSprayWallBoardFromLink).toHaveBeenLastCalledWith(routeQueryClient, WALL_UUID, 'unlisted-wall');
@@ -387,7 +516,7 @@ describe('useBoardRouteTarget', () => {
     const wallBoard = board({ uuid: 'wall-board', slug: 'unlisted-wall', boardType: 'spray' });
     fetchSprayWallBoardFromLink.mockResolvedValue(wallBoard);
     rerender(createElement(Harness, { target, wallUuid: nextUuid }));
-    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard));
+    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard, expect.any(Function)));
     expect(fetchSprayWallBoardFromLink).toHaveBeenLastCalledWith(routeQueryClient, nextUuid, 'unlisted-wall');
   });
 
@@ -412,7 +541,7 @@ describe('useBoardRouteTarget', () => {
     expect(resolveBoardForSession).toHaveBeenCalledTimes(2);
     expect(setActiveBoard).not.toHaveBeenCalled();
     await act(async () => pending.release());
-    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard));
+    await waitFor(() => expect(setActiveBoard).toHaveBeenCalledWith(wallBoard, expect.any(Function)));
     expect(setActiveBoard).toHaveBeenCalledTimes(1);
     expect(fetchSprayWallBoardFromLink).toHaveBeenCalledTimes(2);
   });

@@ -104,6 +104,27 @@ export const privacyTypeDefs = /* GraphQL */ `
     status: PrivacyGrantStatus!
     invitedBy: ID
   }
+  """
+  A home board's share link. A signed-in climber who opens it and chooses Join
+  becomes an approved member of the board; opening it alone grants nothing.
+  """
+  type BoardShareLink {
+    boardUuid: ID!
+    "The link's capability. Treat it like a password: never log it."
+    token: String!
+    "The path on the web host: /b/{slug}?invite={token}"
+    path: String!
+    createdAt: String!
+  }
+  "Where a redeemed share link points, so the client can open the board."
+  type BoardShareLinkRedemption {
+    boardUuid: ID!
+    slug: String!
+  }
+  "What a signed-out visitor holding a share link may see: the board's name only."
+  type BoardShareLinkPreview {
+    name: String!
+  }
   extend type PublicUserProfile {
     isPrivate: Boolean!
     canViewActivity: Boolean!
@@ -117,7 +138,25 @@ export const privacyTypeDefs = /* GraphQL */ `
     privacyRelationship(userId: ID!): PrivacyRelationship!
     contentAudience(entityType: PrivacyContentType!, entityId: ID!): PrivacyContentAudience!
     resourcePrivacy(kind: PrivacyResourceKind!, resourceId: ID!): ResourcePrivacySettings
-    resourceAccessRequests(kind: PrivacyResourceKind!, resourceId: ID!): [PrivacyResourceGrant!]!
+    """
+    The people with a grant on a board or session the viewer owns. Without
+    userIds: pending requests first, then members, newest first, 100 from
+    offset; removed people are left out. With userIds (up to 100): those
+    people's grants, whatever their status.
+    """
+    resourceAccessRequests(
+      kind: PrivacyResourceKind!
+      resourceId: ID!
+      offset: Int
+      userIds: [ID!]
+    ): [PrivacyResourceGrant!]!
+    """
+    The owner's share link for a Followers or Invite-only home board, minted on
+    first read. Null for a Public, Unlisted or Only-me board, and for a spray wall.
+    """
+    boardShareLink(boardUuid: ID!): BoardShareLink
+    "The board name behind an active share link, for a signed-out visitor. Null when the link does not open anything."
+    boardShareLinkPreview(token: String!): BoardShareLinkPreview
   }
   extend type Mutation {
     updatePrivacySettings(input: UpdatePrivacySettingsInput!): PrivacySettings!
@@ -137,5 +176,9 @@ export const privacyTypeDefs = /* GraphQL */ `
     approveResourceAccess(kind: PrivacyResourceKind!, resourceId: ID!, userId: ID!): Boolean!
     revokeResourceAccess(kind: PrivacyResourceKind!, resourceId: ID!, userId: ID!): Boolean!
     inviteResourceMember(kind: PrivacyResourceKind!, resourceId: ID!, userId: ID!): Boolean!
+    "Revoke the board's share link and mint a new one. Owner only; null when the board has no share link."
+    resetBoardShareLink(boardUuid: ID!): BoardShareLink
+    "Join the board a share link names as an approved member. NOT_FOUND for a revoked or unknown link."
+    redeemBoardShareLink(token: String!): BoardShareLinkRedemption!
   }
 `;
