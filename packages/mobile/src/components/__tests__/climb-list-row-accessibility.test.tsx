@@ -100,24 +100,53 @@ vi.mock('react-native-reanimated', () => {
   };
 });
 
+type GestureCapture = {
+  kind: 'tap' | 'longPress' | 'pan';
+  maxDuration?: number;
+  minDuration?: number;
+  onStart?: () => void;
+  reference?: unknown;
+  blockedReferences?: unknown[];
+};
+const rowGestures = vi.hoisted(() => ({
+  captures: new Map<unknown, GestureCapture>(),
+  exclusive: [] as GestureCapture[],
+}));
+
 vi.mock('react-native-gesture-handler', () => {
-  // Chainable no-op gesture builder — this file only cares about the accessibility
-  // channel, so nothing needs capturing off the gestures themselves.
-  const makeBuilder = () => {
+  // Capture the rendered native configuration, without simulating recognition.
+  const makeBuilder = (kind: GestureCapture['kind']) => {
+    const capture: GestureCapture = { kind };
     const builder: Record<string, (...args: unknown[]) => unknown> = {};
     const proxy: typeof builder = new Proxy(builder, {
-      get: () => () => proxy,
+      get:
+        (_target, property) =>
+        (...args: unknown[]) => {
+          if (property === 'maxDuration') capture.maxDuration = args[0] as number;
+          if (property === 'minDuration') capture.minDuration = args[0] as number;
+          if (property === 'onStart') capture.onStart = args[0] as () => void;
+          if (property === 'withRef') capture.reference = args[0];
+          if (property === 'blocksExternalGesture') capture.blockedReferences = args;
+          return proxy;
+        },
     });
+    rowGestures.captures.set(proxy, capture);
     return proxy;
   };
   return {
     GestureDetector: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
     Gesture: {
-      Pan: () => makeBuilder(),
+      Pan: () => makeBuilder('pan'),
       Simultaneous: (...gestures: unknown[]) => gestures[0],
-      Tap: () => makeBuilder(),
-      LongPress: () => makeBuilder(),
-      Exclusive: () => ({}),
+      Tap: () => makeBuilder('tap'),
+      LongPress: () => makeBuilder('longPress'),
+      Exclusive: (...gestures: unknown[]) => {
+        rowGestures.exclusive = gestures.flatMap((gesture) => {
+          const capture = rowGestures.captures.get(gesture);
+          return capture ? [capture] : [];
+        });
+        return {};
+      },
     },
   };
 });
@@ -240,10 +269,50 @@ describe('ClimbListRow screen-reader activation', () => {
   beforeEach(() => {
     a11y.row = null;
     a11y.moreButton = null;
+    rowGestures.captures.clear();
+    rowGestures.exclusive = [];
     panels.enabled = false;
     panels.language = '';
     vi.clearAllMocks();
     resetClimbRowDisplayForTests();
+  });
+
+  it('accepts taps up to the actions hold threshold, with long press taking priority', () => {
+    const onPress = vi.fn();
+    const onOpenActions = vi.fn();
+    render(<ClimbListRow climb={climb} {...boardProps} onPress={onPress} onOpenActions={onOpenActions} />);
+
+    const [longPress, tap] = rowGestures.exclusive;
+    expect(longPress?.kind).toBe('longPress');
+    expect(tap?.kind).toBe('tap');
+    expect(longPress?.minDuration).toBe(400);
+    expect(tap?.maxDuration).toBeGreaterThanOrEqual(longPress?.minDuration ?? Infinity);
+    expect(tap?.maxDuration).toBeGreaterThanOrEqual(350);
+
+    act(() => tap.onStart?.());
+    expect(onPress).toHaveBeenCalledExactlyOnceWith(climb);
+    expect(onOpenActions).not.toHaveBeenCalled();
+    onPress.mockClear();
+    act(() => longPress.onStart?.());
+    expect(onOpenActions).toHaveBeenCalledExactlyOnceWith(climb);
+    expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('keeps slower more-button taps isolated from both row gestures', () => {
+    const onPress = vi.fn();
+    const onOpenActions = vi.fn();
+    render(
+      <ClimbListRow climb={climb} {...boardProps} onPress={onPress} onOpenActions={onOpenActions} showMoreButton />,
+    );
+
+    const [longPress, rowTap] = rowGestures.exclusive;
+    const moreTap = [...rowGestures.captures.values()].find((gesture) => gesture.kind === 'tap' && gesture !== rowTap);
+    expect(moreTap).toBeDefined();
+    expect(moreTap?.maxDuration).toBeGreaterThanOrEqual(rowTap.maxDuration ?? Infinity);
+    expect(moreTap?.blockedReferences).toEqual([rowTap.reference, longPress.reference]);
+    act(() => moreTap?.onStart?.());
+    expect(onOpenActions).toHaveBeenCalledExactlyOnceWith(climb);
+    expect(onPress).not.toHaveBeenCalled();
   });
 
   it('opens the climb from a screen-reader tap and from the activate action', () => {
