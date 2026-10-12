@@ -351,6 +351,8 @@ export type AppleAdsAttributionStatus =
 
 export type AppleAdsConsentInput = {
   analytics: Scalars['String']['input'];
+  /** explicit for the climber's own answer. Anything else (the region default) is refused; absent means explicit. */
+  basis?: InputMaybe<Scalars['String']['input']>;
   decidedAt: Scalars['String']['input'];
   source: Scalars['String']['input'];
   version: Scalars['Int']['input'];
@@ -1854,6 +1856,20 @@ export type CommunityStats = {
   computedAt: Scalars['String']['output'];
   /** Climbs lit on real boards in the last 30 days. */
   litLast30Days: Scalars['Int']['output'];
+};
+
+/**
+ * Whether this visitor is asked before analytics runs, from the Cloudflare
+ * country of the request. See docs/analytics-consent.md.
+ */
+export type ConsentRegion = {
+  __typename?: 'ConsentRegion';
+  /** The ISO 3166-1 country the edge reported, or null when it is unknown or untrusted. */
+  countryCode?: Maybe<Scalars['String']['output']>;
+  /** True when the request carried Sec-GPC: 1 (Global Privacy Control). The website treats it as a no outside the prompt regions. */
+  globalPrivacyControl: Scalars['Boolean']['output'];
+  /** True in the EU, EEA, UK, Switzerland and the other prompt regions, and whenever the country is unknown. */
+  promptRequired: Scalars['Boolean']['output'];
 };
 
 export type ControllerEvent = ControllerPing | ControllerQueueSync | LedUpdate;
@@ -6573,6 +6589,8 @@ export type Query = {
   communitySettings: Array<CommunitySetting>;
   /** Headline usage numbers for the marketing site. Public, cached, no auth. */
   communityStats: CommunityStats;
+  /** Whether this request comes from a region where the analytics prompt is shown. No sign-in needed. */
+  consentRegion: ConsentRegion;
   contentAudience: PrivacyContentAudience;
   /** Sessions and the last 30 days of published climbs from followed authors. */
   crewFeed: CrewFeedResult;
@@ -11841,6 +11859,18 @@ export type SetAnalyticsConsentMutation = {
   };
 };
 
+export type GetConsentRegionQueryVariables = Exact<{ [key: string]: never }>;
+
+export type GetConsentRegionQuery = {
+  __typename?: 'Query';
+  consentRegion: {
+    __typename?: 'ConsentRegion';
+    countryCode?: string | null;
+    promptRequired: boolean;
+    globalPrivacyControl: boolean;
+  };
+};
+
 export type ExchangeAppleAdsAttributionMutationVariables = Exact<{
   token: Scalars['String']['input'];
   consent: AppleAdsConsentInput;
@@ -16937,6 +16967,33 @@ export const SetAnalyticsConsentDocument = {
     },
   ],
 } as unknown as DocumentNode<SetAnalyticsConsentMutation, SetAnalyticsConsentMutationVariables>;
+export const GetConsentRegionDocument = {
+  kind: 'Document',
+  definitions: [
+    {
+      kind: 'OperationDefinition',
+      operation: 'query',
+      name: { kind: 'Name', value: 'GetConsentRegion' },
+      selectionSet: {
+        kind: 'SelectionSet',
+        selections: [
+          {
+            kind: 'Field',
+            name: { kind: 'Name', value: 'consentRegion' },
+            selectionSet: {
+              kind: 'SelectionSet',
+              selections: [
+                { kind: 'Field', name: { kind: 'Name', value: 'countryCode' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'promptRequired' } },
+                { kind: 'Field', name: { kind: 'Name', value: 'globalPrivacyControl' } },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<GetConsentRegionQuery, GetConsentRegionQueryVariables>;
 export const ExchangeAppleAdsAttributionDocument = {
   kind: 'Document',
   definitions: [

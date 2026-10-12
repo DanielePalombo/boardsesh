@@ -1,5 +1,6 @@
 import { BlockList, isIP } from 'node:net';
 import type { IncomingMessage } from 'node:http';
+import { CONSENT_REGION_EDGE_HEADER_NAME } from '@boardsesh/consent';
 
 // https://www.cloudflare.com/ips-v4/ and /ips-v6/, checked 2026-10-08.
 // An outdated list fails closed for newly introduced edge ranges.
@@ -99,6 +100,9 @@ export function resolveEdgeVisitorIp(req: IncomingMessage): string | null {
 /**
  * Accept country only from a trusted Cloudflare edge ({@link isTrustedCloudflareEdge}).
  * This coarse flag input never carries the visitor's IP upstream.
+ *
+ * GraphQL HTTP requests carry the same value as `ConnectionContext.edgeCountry`,
+ * which `consentRegion` turns into the analytics-prompt decision.
  */
 export function resolveFlagCountry(req: IncomingMessage): string {
   const trustedEdge = isTrustedCloudflareEdge(req);
@@ -110,4 +114,22 @@ export function resolveFlagCountry(req: IncomingMessage): string {
     country !== 'ZZ'
     ? country
     : 'XX';
+}
+
+/**
+ * Coarse subdivision from our verified GraphQL edge overwrite/remove rule.
+ * An operator must apply that rule before enabling BOARDSESH_TRUST_EDGE_REGION_HEADER.
+ * Ignore the optional cf-region-code header: a trusted edge hop does not prove
+ * its visitor-location managed transform was enabled to overwrite caller input.
+ */
+export function resolveEdgeRegionCode(req: IncomingMessage): string | undefined {
+  if (!isTrustedCloudflareEdge(req)) return undefined;
+  if (
+    process.env.BOARDSESH_TRUST_EDGE_REGION_HEADER !== 'true' ||
+    req.headers.host !== 'ws.boardsesh.com' ||
+    req.url?.split('?')[0] !== '/graphql'
+  )
+    return undefined;
+  const regionCode = req.headers[CONSENT_REGION_EDGE_HEADER_NAME];
+  return typeof regionCode === 'string' && /^[A-Z0-9]{1,3}$/.test(regionCode) ? regionCode : undefined;
 }
