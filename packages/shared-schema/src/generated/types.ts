@@ -6162,6 +6162,10 @@ export type PrivacySettings = {
   defaultSessionAudience: PrivacyResourceAudience;
   enabled: Scalars['Boolean']['output'];
   isPrivate: Scalars['Boolean']['output'];
+  /**
+   * Always 1. Apps that still ship the retired setup screen open it below 1.
+   * @deprecated Retired with the privacy setup screen. Always 1.
+   */
   privacyOnboardingVersion: Scalars['Int']['output'];
   privacyRevision: Scalars['Int']['output'];
 };
@@ -10757,6 +10761,10 @@ export type UpdatePlaylistInput = {
 export type UpdatePrivacySettingsInput = {
   defaultSessionAudience?: InputMaybe<PrivacyResourceAudience>;
   isPrivate?: InputMaybe<Scalars['Boolean']['input']>;
+  /**
+   * Accepted and ignored.
+   * @deprecated Retired with the privacy setup screen. Accepted and ignored.
+   */
   privacyOnboardingVersion?: InputMaybe<Scalars['Int']['input']>;
 };
 

@@ -29,8 +29,8 @@ import {
 } from './feed-fanout';
 import { resolveClimbNoMatch } from '../graphql/resolvers/shared/helpers';
 import crypto from 'crypto';
-import { canViewContent, canViewUserActivity } from '../services/privacy';
-import { canReadSocialEntity } from '../graphql/resolvers/shared/activity-privacy';
+import { canViewUserActivity } from '../services/privacy';
+import { canReadSocialEntity, canSeeActorOnEntity } from '../graphql/resolvers/shared/activity-privacy';
 
 /**
  * Whether the proposal behind this event is a `hide`.
@@ -398,10 +398,13 @@ export class NotificationWorker {
     if (recipientId === actorId) return;
 
     if (type !== 'new_follower') {
+      // The owner of the item hears about every comment and like on it, private
+      // commenters included: `canReadSocialEntity` admits the owner of a
+      // commented item, and `canSeeActorOnEntity` the owner of a liked one.
       const canSeeActor = commentUuid
         ? await canReadSocialEntity('comment', commentUuid, recipientId)
         : entityType
-          ? await canViewContent(recipientId, entityType, entityId, actorId)
+          ? await canSeeActorOnEntity(entityType, entityId, actorId, recipientId)
           : await canViewUserActivity(recipientId, actorId);
       if (!canSeeActor || (entityType && !(await canReadSocialEntity(entityType, entityId, recipientId)))) return;
     }

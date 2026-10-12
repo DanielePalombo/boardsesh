@@ -94,6 +94,21 @@ proposal have no edit path in the app, and `reason` is only ever overwritten by 
 when a moderator supplies a resolution note. If you add an edit path, update both or drop the
 column; do not rationalise one away without the other.
 
+### Who reads a proposal
+
+A proposal is moderation on a published climb, so whoever can read the climb reads its type, value,
+reason (`climb_proposals.reason`), weighted tally and comment thread. Only identities follow account
+privacy: a private proposer or resolver the viewer cannot see comes back with no id, name or avatar
+(`social/proposals/enrichment.ts`). Each comment in the thread is still its author's activity, so a
+private reporter's reason comment reads for their followers only. A proposal has no owner, so that
+includes the first reporter: unless they follow a later private reporter, they read neither that
+reporter's words nor their name, and their inbox names a private moderator or voter only on the same
+terms. The proposal's own `reason` column carries the first
+reporter's words for everyone. The spray wall rule still hides every part of a proposal on a wall the
+viewer cannot see. `voteOnProposal` applies the listings' climb check before it loads the proposal: a
+draft, a climb its setter's privacy hides, or a climb on a spray wall the voter cannot see reads as
+`Proposal not found`.
+
 ## Approval
 
 Reports use the same threshold as every other proposal: **5 weighted upvotes**, with vote weight from

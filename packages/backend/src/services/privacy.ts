@@ -4,6 +4,7 @@ export {
   boardIdentityVisibleCondition,
   userActivityVisibilityCondition,
   contentVisibilityCondition,
+  entityOwnerCondition,
   resourceAccessCondition,
   resourceLocationCondition,
   sessionBoardLocationCondition,
@@ -51,7 +52,6 @@ export async function getPrivacySettings(userId: string): Promise<PrivacySetting
   return {
     isPrivate: profile?.isPrivate ?? false,
     privacyRevision: profile?.privacyRevision ?? 0,
-    privacyOnboardingVersion: profile?.privacyOnboardingVersion ?? 0,
     defaultSessionAudience: profile?.defaultSessionAudience ?? (profile?.isPrivate ? 'followers' : 'public'),
     enabled: privacyControlsEnabled(),
   };

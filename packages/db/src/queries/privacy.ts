@@ -36,6 +36,69 @@ export function contentVisibilityCondition(
   )), false)`;
 }
 
+/**
+ * The playlist uuid inside a `playlist_climb` entity id, or NULL when the id is
+ * not that shape. The id is `<playlistUuid>:<climbUuid>`, or `<playlistUuid>:_all`
+ * for the playlist's general thread; `validateEntityExists` (backend
+ * `social/entity-validation.ts`) rejects any other shape before a comment or
+ * vote is written, and the web and mobile playlist screens build it. A malformed
+ * id names no playlist, so it grants nothing.
+ */
+export function playlistClimbEntityPlaylistUuid(entityIdColumn: SQLWrapper): SQL<string | null> {
+  return sql<string | null>`CASE WHEN (${entityIdColumn})::text ~ '^[^:]+:[^:]+$'
+    THEN split_part((${entityIdColumn})::text, ':', 1) ELSE NULL END`;
+}
+
+/** The climb uuid (or `_all`) inside a well-formed `playlist_climb` entity id, else NULL. */
+export function playlistClimbEntityClimbUuid(entityIdColumn: SQLWrapper): SQL<string | null> {
+  return sql<string | null>`CASE WHEN (${entityIdColumn})::text ~ '^[^:]+:[^:]+$'
+    THEN split_part((${entityIdColumn})::text, ':', 2) ELSE NULL END`;
+}
+
+/**
+ * Whether the viewer owns the item a comment, like or notification is about:
+ * the tick's climber, the session's host, the climb's setter, the playlist's
+ * owner, the comment's author, the board's or gym's owner. An owner sees every
+ * comment and like on their own item, whatever the commenter's account privacy.
+ * A deleted board or gym has no owner here, and an unknown entity type has none
+ * at all.
+ *
+ * A proposal has no owner. It is moderation on someone else's climb: its
+ * proposer reads other people's comments on it and hears about its votes and
+ * outcome by the same account rule as everyone else: a private moderator, voter
+ * or later reporter is named to them only if they follow that account.
+ *
+ * The entity type is compared as text: social columns are enums, and callers
+ * also pass the non-social types `content_privacy` covers (which own nothing).
+ */
+export function entityOwnerCondition(
+  entityType: string | SQLWrapper,
+  entityIdColumn: SQLWrapper,
+  viewerId: ViewerId,
+): SQL<boolean> {
+  if (!viewerId) return sql<boolean>`false`;
+  return sql<boolean>`COALESCE(CASE (${entityType})::text
+    WHEN 'tick' THEN EXISTS (SELECT 1 FROM boardsesh_ticks owner_tick
+      WHERE owner_tick.uuid = ${entityIdColumn} AND owner_tick.user_id = ${viewerId})
+    WHEN 'session' THEN EXISTS (SELECT 1 FROM board_sessions owner_session
+      WHERE owner_session.id = ${entityIdColumn} AND owner_session.created_by_user_id = ${viewerId})
+    WHEN 'climb' THEN EXISTS (SELECT 1 FROM board_climbs owner_climb
+      WHERE owner_climb.uuid = ${entityIdColumn} AND owner_climb.user_id = ${viewerId})
+    WHEN 'playlist_climb' THEN EXISTS (SELECT 1 FROM playlists owner_playlist
+      JOIN playlist_ownership owner_playlist_role ON owner_playlist_role.playlist_id = owner_playlist.id
+      WHERE owner_playlist.uuid = ${playlistClimbEntityPlaylistUuid(entityIdColumn)}
+        AND owner_playlist_role.user_id = ${viewerId} AND owner_playlist_role.role = 'owner')
+    WHEN 'comment' THEN EXISTS (SELECT 1 FROM comments owner_comment
+      WHERE owner_comment.uuid = ${entityIdColumn} AND owner_comment.user_id = ${viewerId})
+    WHEN 'board' THEN EXISTS (SELECT 1 FROM user_boards owner_board
+      WHERE owner_board.uuid = ${entityIdColumn} AND owner_board.owner_id = ${viewerId}
+        AND owner_board.deleted_at IS NULL)
+    WHEN 'gym' THEN EXISTS (SELECT 1 FROM gyms owner_gym
+      WHERE owner_gym.uuid = ${entityIdColumn} AND owner_gym.owner_id = ${viewerId}
+        AND owner_gym.deleted_at IS NULL)
+    ELSE false END, false)`;
+}
+
 export function resourceAccessCondition(
   kind: PrivacyResourceKind,
   resourceIdColumn: SQLWrapper,
