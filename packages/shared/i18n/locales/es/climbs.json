@@ -495,7 +495,9 @@
       "benchmark": "Benchmarks",
       "showCount_one": "Ver {{count}} vía",
       "showCount_other": "Ver {{count}} vías",
-      "countNote": "Cada bloque cuenta una vez, no una por ángulo.",
+      "close": "Cerrar filtros",
+      "matchingCount_one": "{{count, number}} bloque",
+      "matchingCount_other": "{{count, number}} bloques",
       "sort": {
         "ascents": "Ascensos",
         "quality": "Calidad",
