@@ -7,7 +7,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vite-plus/test';
 import { and, eq, sql } from 'drizzle-orm';
 import * as dbSchema from '@boardsesh/db/schema';
-import type { ConnectionContext } from '@boardsesh/shared-schema';
+import type { ConnectionContext, SessionFeedItem } from '@boardsesh/shared-schema';
 import { db } from '../db/client';
 import { canReadSocialEntity } from '../graphql/resolvers/shared/activity-privacy';
 import { tickQueries } from '../graphql/resolvers/ticks/queries';
@@ -481,6 +481,100 @@ describe('author decides across feeds', () => {
     expect(await recent(GRANTEE)).toMatchObject({ boardId: inviteOnlyBoardId });
     dropRecentBetaLinksFallback();
   });
+
+  it('features the clip attached to the tick over a guessed one, naming its board to the board’s owner', async () => {
+    const [ownBoard] = await db
+      .insert(dbSchema.userBoards)
+      .values({
+        uuid: 'author-decides-own-public',
+        slug: 'author-decides-own-public',
+        ownerId: CLIMBER,
+        name: 'Own Public Wall',
+        boardType: 'kilter',
+        layoutId: 1,
+        sizeId: 10,
+        setIds: '1',
+        isPublic: true,
+      })
+      .returning({ id: dbSchema.userBoards.id });
+    await insertSession('author-decides-own-board-session', { createdBy: CLIMBER, boardId: ownBoard.id });
+    await insertTick('author-decides-own-board-tick', {
+      sessionId: 'author-decides-own-board-session',
+      boardId: ownBoard.id,
+      climbedAt: '2026-09-22T10:00:00Z',
+    });
+    const attachedLink = 'https://www.youtube.com/watch?v=author-decides-attached-clip';
+    await db.insert(dbSchema.boardBetaLinks).values([
+      {
+        boardType: 'kilter',
+        climbUuid: CLIMB_UUID,
+        link: attachedLink,
+        isListed: true,
+        createdByUserId: CLIMBER,
+        tickUuid: 'author-decides-own-board-tick',
+        boardId: ownBoard.id,
+        createdAt: '2026-09-22T11:00:00Z',
+      },
+      // The same climber's clip with no tick matches this send by climb and
+      // author too. It is newer, so only the attached-first key keeps it second.
+      {
+        boardType: 'kilter',
+        climbUuid: CLIMB_UUID,
+        link: 'https://www.youtube.com/watch?v=author-decides-guessed-clip',
+        isListed: true,
+        createdByUserId: CLIMBER,
+        createdAt: '2026-10-05T11:00:00Z',
+      },
+    ]);
+    const card = (
+      (await sessionFeedQueries.sessionGroupedFeed(
+        undefined,
+        { input: { userId: CLIMBER, limit: 50 } },
+        viewer(CLIMBER),
+      )) as { sessions: SessionFeedItem[] }
+    ).sessions.find((session) => session.sessionId === 'author-decides-own-board-session');
+    expect(card?.featuredBeta?.betaLink).toMatchObject({ link: attachedLink, boardId: ownBoard.id });
+  });
+
+  it.each([
+    ['party', '2026-09-28T10:00:00Z'],
+    ['daily', '2026-09-29T10:00:00Z'],
+  ] as const)(
+    'names a featured clip’s hidden board on a %s card only to people who hold it',
+    async (kind, climbedAt) => {
+      const tickUuid = `author-decides-featured-${kind}`;
+      const sessionId = kind === 'party' ? 'author-decides-featured-session' : null;
+      if (sessionId) await insertSession(sessionId, { createdBy: CLIMBER });
+      await insertTick(tickUuid, { sessionId, boardId: inviteOnlyBoardId, climbedAt });
+      const link = `https://www.youtube.com/watch?v=author-decides-featured-${kind}`;
+      await db.insert(dbSchema.boardBetaLinks).values({
+        boardType: 'kilter',
+        climbUuid: CLIMB_UUID,
+        link,
+        isListed: true,
+        createdByUserId: CLIMBER,
+        tickUuid,
+        boardId: inviteOnlyBoardId,
+      });
+      const raw = await db.execute(sql`SELECT board_id FROM board_beta_links WHERE link = ${link}`);
+      // The driver returns a bigint as text, which is what the readers must number.
+      expect(typeof raw[0].board_id).toBe('string');
+      const cardFor = async (reader: string | null) => {
+        const feed = (await sessionFeedQueries.sessionGroupedFeed(
+          undefined,
+          { input: { limit: 50, ...(kind === 'daily' ? { userId: CLIMBER, includeDailyHighlights: true } : {}) } },
+          viewer(reader),
+        )) as { sessions: SessionFeedItem[] };
+        return feed.sessions.find((card) => card.featuredBeta?.betaLink.link === link);
+      };
+      for (const reader of [BOARD_OWNER, GRANTEE]) {
+        expect((await cardFor(reader))?.featuredBeta?.betaLink.boardId).toBe(inviteOnlyBoardId);
+      }
+      for (const reader of [null, STRANGER]) {
+        expect((await cardFor(reader))?.featuredBeta?.betaLink.boardId).toBeNull();
+      }
+    },
+  );
 
   it('gives a joiner who cannot see a named board its geometry instead of its slug', async () => {
     const slugPath = '/b/author-decides-invite-only/35';
