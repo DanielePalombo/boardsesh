@@ -100,6 +100,12 @@ and closes through leading Close before navigation. Trailing Reset must never
 be treated as Apply; Maestro hierarchy existence does not prove an offscreen
 chip can be tapped.
 
+UIKit exposes the filter header, column and grade chips as accessibility peers.
+Capture matches the real Reset ID, localized label and enabled state, selected
+grade labels, and exact count without imposing a nonexistent parent relation.
+After Reset, its disabled state proves that grade bounds, board filters and name
+are cleared; the offscreen Any chip is not a usable native readiness gate.
+
 The dedicated recording account uses the display name Liz. Bootstrap changes only
 that authenticated owner’s display name and generated private QA board names,
 then rereads ownership, configuration, privacy and avatar state. UUIDs, photos,

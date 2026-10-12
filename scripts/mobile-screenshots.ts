@@ -2054,7 +2054,7 @@ export function cppGradeFilterSelectors(filter: NonNullable<CppSceneCoverage['gr
     readFileSync(join(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'climbs.json'), 'utf8'),
   ) as {
     mobile: {
-      gradeRail: { selectedFilterAria: string; anyGradeAria: string };
+      gradeRail: { selectedFilterAria: string };
       filter: Record<string, string>;
     };
   };
@@ -2069,7 +2069,8 @@ export function cppGradeFilterSelectors(filter: NonNullable<CppSceneCoverage['gr
   return {
     minSelected: grade(catalog.mobile.gradeRail.selectedFilterAria, filter.minLabel),
     maxSelected: filter.maxLabel ? grade(catalog.mobile.gradeRail.selectedFilterAria, filter.maxLabel) : undefined,
-    any: `^${cppReadinessSelector(catalog.mobile.gradeRail.anyGradeAria)}$`,
+    reset: `^${cppReadinessSelector(catalog.mobile.filter.reset)}$`,
+    close: `^${cppReadinessSelector(catalog.mobile.filter.close)}$`,
     count: `^${cppReadinessSelector(countLabel)}$`,
   };
 }
@@ -2144,10 +2145,11 @@ export function renderCppMaestroFlow(
   const gradeSelectors = gradeFilter ? cppGradeFilterSelectors(gradeFilter, locale) : null;
   const gradeControl = (text: string, selected?: boolean) => ({
     text,
-    childOf: { id: 'climb-filter-column' },
     ...(selected === undefined ? {} : { selected }),
   });
-  const filterReset = { id: 'sheet-top-bar-trailing', childOf: { id: 'climb-filter-column' } };
+  // UIKit's accessibility tree exposes the filter toolbar, column and chips
+  // as peers. Match the real control's exact ID/label/state, not JSX ancestry.
+  const filterReset = { id: '^sheet-top-bar-trailing$', text: gradeSelectors?.reset };
   const resetFilters = `- tapOn: ${JSON.stringify({ ...filterReset, enabled: true })}\n- extendedWaitUntil:\n    visible: ${JSON.stringify({ ...filterReset, enabled: false })}\n    timeout: 90000\n- waitForAnimationToEnd:\n    timeout: 30000`;
   const dismiss = `- repeat:\n    times: 2\n    commands:\n      - runFlow:\n          when:\n            visible: \${SCREENSHOT_CLOSE_LABEL}\n          commands:\n            - tapOn: \${SCREENSHOT_CLOSE_LABEL}\n            - waitForAnimationToEnd`;
   for (const scene of scenes) {
@@ -2258,6 +2260,7 @@ export function renderCppMaestroFlow(
       // tapOn uses their coordinates. Use the fixed real header Reset, then
       // the capture route's validated native live-filter action for the range.
       commands.push(
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify({ id: '^sheet-top-bar-leading$', text: gradeSelectors.close, enabled: true })}\n    timeout: 90000`,
         `- runFlow:\n    when:\n      visible: ${JSON.stringify({ ...filterReset, enabled: true })}\n    commands:\n${resetFilters
           .split('\n')
           .map((line) => `      ${line}`)
@@ -2272,7 +2275,7 @@ export function renderCppMaestroFlow(
           `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.maxSelected!, true))}\n    timeout: 90000`,
         );
       commands.push(
-        `- extendedWaitUntil:\n    visible:\n      text: ${JSON.stringify(gradeSelectors.count)}\n      childOf:\n        id: sheet-top-bar-title\n        childOf:\n          id: climb-filter-column\n    timeout: 90000`,
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeSelectors.count)}\n    timeout: 90000`,
         '- waitForAnimationToEnd:\n    timeout: 30000',
       );
     }
@@ -2337,8 +2340,9 @@ export function renderCppMaestroFlow(
       if (gradeSelectors)
         commands.push(
           `- extendedWaitUntil:\n    visible: ${JSON.stringify({ ...filterReset, enabled: true })}\n    timeout: 90000`,
+          // Reset is disabled iff all live filters, including BOTH grade
+          // bounds and the name, are cleared. Any may be offscreen in the rail.
           resetFilters,
-          `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.any, true))}\n    timeout: 90000`,
         );
       // The current native filter sheet has leading Close and trailing Reset.
       // Close through its real control before clearing the route opener, then

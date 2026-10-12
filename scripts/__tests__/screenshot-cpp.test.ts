@@ -183,10 +183,10 @@ describe('custom product page captures', () => {
       const { coverage } = selectedScenario(target);
       for (const locale of ['en-US', 'es', 'fr', 'de'] as const) {
         const labels = cppGradeFilterSelectors(coverage.scenes.search.gradeFilter!, locale);
-        const gradeControl = (text: string) => ({ text, childOf: { id: 'climb-filter-column' }, selected: true });
+        const gradeControl = (text: string) => ({ text, selected: true });
         const reset = (enabled: boolean) => ({
-          id: 'sheet-top-bar-trailing',
-          childOf: { id: 'climb-filter-column' },
+          id: '^sheet-top-bar-trailing$',
+          text: labels.reset,
           enabled,
         });
         for (const device of IOS_SCREENSHOT_DEVICES) {
@@ -200,6 +200,15 @@ describe('custom product page captures', () => {
           );
           const captureIndex = steps.findIndex((step) => step.takeScreenshot === '02-search');
           const selecting = steps.slice(searchIndex, captureIndex);
+          expect(selecting).toContainEqual({
+            extendedWaitUntil: { visible: { id: 'climb-filter-column' }, timeout: 60000 },
+          });
+          expect(selecting).toContainEqual({
+            extendedWaitUntil: {
+              visible: { id: '^sheet-top-bar-leading$', text: labels.close, enabled: true },
+              timeout: 90000,
+            },
+          });
           const resetIndex = selecting.findIndex((step) =>
             JSON.stringify(step.runFlow ?? '').includes('sheet-top-bar-trailing'),
           );
@@ -237,10 +246,7 @@ describe('custom product page captures', () => {
           });
           expect(steps[setupIndex + 4]).toEqual({
             extendedWaitUntil: {
-              visible: {
-                text: labels.count,
-                childOf: { id: 'sheet-top-bar-title', childOf: { id: 'climb-filter-column' } },
-              },
+              visible: labels.count,
               timeout: 90000,
             },
           });
@@ -251,10 +257,8 @@ describe('custom product page captures', () => {
           expect(steps[captureIndex + 1]).toEqual({ extendedWaitUntil: { visible: reset(true), timeout: 90000 } });
           expect(steps[captureIndex + 2]).toEqual({ tapOn: reset(true) });
           expect(steps[captureIndex + 3]).toEqual({ extendedWaitUntil: { visible: reset(false), timeout: 90000 } });
-          expect(steps[captureIndex + 5]).toEqual({
-            extendedWaitUntil: { visible: gradeControl(labels.any), timeout: 90000 },
-          });
-          const closing = steps[captureIndex + 6];
+          expect(source).not.toContain('Any grade selected');
+          const closing = steps[captureIndex + 5];
           if (device.name.startsWith('iPad'))
             expect(closing).toMatchObject({
               runFlow: { commands: expect.arrayContaining([{ tapOn: { id: 'sheet-top-bar-leading' } }]) },
@@ -263,6 +267,47 @@ describe('custom product page captures', () => {
         }
       }
     }
+  });
+  it('matches the genuine disabled Reset peer and rejects its enabled flank without invented AX ancestry', () => {
+    // Run38242551411 / job114789562154 / retry2's actual failure hierarchy:
+    // all these nodes share ancestors with NO resource IDs. The native
+    // climb-filter-column is a peer, although JSX nests the toolbar beneath it.
+    const actualReset = { 'resource-id': 'sheet-top-bar-trailing', accessibilityText: 'Reset', enabled: 'false' };
+    const actualFlank = { 'resource-id': 'sheet-top-bar-trailing-flank', enabled: 'true' };
+    const { coverage } = selectedScenario('kilter');
+    const steps = parseAllDocuments(
+      renderCppMaestroFlow('kilter', IOS_SCREENSHOT_DEVICES[0], coverage),
+    )[1].toJS() as Record<string, unknown>[];
+    const disabledStep = steps.find((step) => {
+      const wait = step.extendedWaitUntil as { visible?: { enabled?: boolean } } | undefined;
+      return wait?.visible?.enabled === false;
+    })!;
+    const selector = (
+      disabledStep.extendedWaitUntil as { visible: { id: string; text: string; enabled: boolean; childOf?: unknown } }
+    ).visible;
+    const matchesReset = (node: { 'resource-id': string; accessibilityText?: string; enabled: string }) =>
+      new RegExp(selector.id).test(node['resource-id']) &&
+      new RegExp(selector.text).test(node.accessibilityText ?? '') &&
+      selector.enabled === (node.enabled === 'true');
+    expect(matchesReset(actualReset)).toBe(true);
+    expect(matchesReset(actualFlank)).toBe(false);
+    expect(matchesReset({ ...actualReset, enabled: 'true' })).toBe(false);
+    expect(matchesReset({ ...actualReset, 'resource-id': 'different-control' })).toBe(false);
+    expect(matchesReset({ ...actualReset, accessibilityText: 'Apply' })).toBe(false);
+    expect(new RegExp(selector.id).test(actualReset['resource-id'])).toBe(true);
+    expect(new RegExp(selector.text).test(actualReset.accessibilityText)).toBe(true);
+    expect(selector.enabled).toBe(actualReset.enabled === 'true');
+    expect(selector).not.toHaveProperty('childOf');
+    expect(new RegExp(selector.id).test(actualFlank['resource-id'])).toBe(false);
+    expect(new RegExp(selector.text).test('Reset another sheet')).toBe(false);
+    expect(new RegExp(selector.text).test('Apply')).toBe(false);
+    // Disabled Reset means anyActive=false. The shared native predicate checks
+    // either grade bound, all board filters, and the name; Any need not be on screen.
+    const captureIndex = steps.findIndex((step) => step.takeScreenshot === '02-search');
+    expect(steps[captureIndex + 3]).toEqual({ extendedWaitUntil: { visible: selector, timeout: 90000 } });
+    expect(steps[captureIndex + 4]).toEqual({ waitForAnimationToEnd: { timeout: 30000 } });
+    expect(steps[captureIndex + 5]).toEqual({ tapOn: { id: 'sheet-top-bar-leading' } });
+    expect(JSON.stringify(steps.slice(captureIndex + 1, captureIndex + 5))).not.toContain('Any grade');
   });
   it('uses literal grade labels and actual number/plural formatting and refuses invalid coverage', () => {
     const actualCounts = {
