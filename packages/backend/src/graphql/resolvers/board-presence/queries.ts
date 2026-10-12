@@ -36,7 +36,7 @@ export const boardPresenceQueries = {
   ) => {
     await applyRateLimit(ctx, 60, 'boardRecentHistory');
     const board = await requireActiveBoardWithVisibilityById(boardId);
-    await assertAnonReadableBoard(board, ctx.userId, boardId, boardUuid);
+    await assertAnonReadableBoard(board, ctx.userId, boardUuid);
     await assertSprayBoardIsReadable(board, ctx.userId, boardUuid, db);
     return redactBoardClimbs(await readMergedRecentHistory(boardId), ctx.userId, boardId, boardUuid);
   },
@@ -361,7 +361,7 @@ export const boardPresenceQueries = {
     // id alone, the link reading when `boardUuid` is this board's own.
     // A spray wall's holder is its climbers' identity, so it also takes the
     // wall's own rule, like every other presence read here (hidden = owner only).
-    await requireReadablePresenceBoard(boardId, ctx.userId, boardId, boardUuid);
+    await requireReadablePresenceBoard(boardId, ctx.userId, boardUuid);
     return redactBoardHolder(await resolveBoardHolder(boardId), ctx.userId, boardId);
   },
 };

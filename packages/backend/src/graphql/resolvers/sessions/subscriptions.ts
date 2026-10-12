@@ -146,7 +146,10 @@ export const sessionSubscriptions = {
             // same way; a wall that moved under an unchanged path uses ordinary
             // current board standing, like any other snapshot.
             const boardPath = pathUnchanged
-              ? await projectSessionBoardPath((await roomManager.getSessionById(sessionId))?.boardPath ?? '', ctx.userId)
+              ? await projectSessionBoardPath(
+                  (await roomManager.getSessionById(sessionId))?.boardPath ?? '',
+                  ctx.userId,
+                )
               : await projectPathEvent();
             for (const user of users) {
               protocolIds.set(user.id, user.userId ? sessionParticipantId(sessionId, user.userId) : user.id);
