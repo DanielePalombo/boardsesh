@@ -498,7 +498,8 @@ const ClimbListRow = React.memo(function ClimbListRow({
     () =>
       Gesture.Tap()
         .withRef(singleTapRef)
-        .maxDuration(300)
+        // Cover every release before the long-press threshold, without a dead gap.
+        .maxDuration(400)
         .maxDistance(15)
         .onStart(() => {
           'worklet';
@@ -537,7 +538,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
   const moreButtonGesture = useMemo(
     () =>
       Gesture.Tap()
-        .maxDuration(300)
+        .maxDuration(400)
         .maxDistance(15)
         .blocksExternalGesture(singleTapRef, longPressRef)
         .onStart(() => {
