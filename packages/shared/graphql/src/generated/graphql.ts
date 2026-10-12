@@ -6435,8 +6435,8 @@ export type Query = {
   /**
    * The five most recent distinct climbers to send or flash a climb at the
    * displayed angle on this physical board, newest sender first. Canonical and
-   * aliased climb UUIDs share one sender list. Anonymous access is allowed for
-   * public and system-shared boards; private boards are masked as NOT_FOUND.
+   * aliased climb UUIDs share one sender list. Same board access rule as
+   * `boardHistory`; a board the caller may not read is masked as NOT_FOUND.
    */
   boardClimbRecentSenders: Array<BoardClimbRecentSender>;
   /**
@@ -6457,9 +6457,9 @@ export type Query = {
    * paging never repeats or skips even when several sends share a `sentAt`
    * second. A non-integer `before` is rejected with BAD_USER_INPUT. `limit`
    * is capped at 100. This is the lasting "what was on the wall" record;
-   * `boardRecentClimbs` is the hot 1 week cache. Anonymous access is allowed
-   * for public and system-shared boards; private boards are masked as
-   * NOT_FOUND for anonymous callers.
+   * `boardRecentClimbs` is the hot 1 week cache. Access follows the board's
+   * policy: the board id alone is the no-link reading, `boardUuid` adds the
+   * link. A board the caller may not read is masked as NOT_FOUND.
    */
   boardHistory: Array<BoardPresenceClimb>;
   /** Chronological durable history with an opaque, board-scoped pagination cursor. */
@@ -6474,26 +6474,28 @@ export type Query = {
   boardLeaderboard: BoardLeaderboard;
   /**
    * Sessions climbing right now on one board. Same access rule as
-   * `boardHistory`: anonymous callers only reach public and system-shared
-   * boards and only see public sessions; followed-climber reasons need
-   * authentication.
+   * `boardHistory`. The board id alone is the no-link reading (ids can be
+   * counted); pass `boardUuid` to open an Unlisted board and to have it named
+   * on its sessions. Anonymous callers only see public sessions;
+   * followed-climber reasons need authentication.
    */
   boardLiveSessions: Array<LiveSession>;
   /**
    * Lightweight stats for a board's wall feed — durable counts derived from
    * `boardsesh_ticks` stamped with this board_id, plus the live window.
-   * Anonymous access is allowed for public and system-shared boards; private
-   * boards are masked as NOT_FOUND for anonymous callers.
+   * Same board access rule as `boardHistory`; a board the caller may not
+   * read is masked as NOT_FOUND.
    */
   boardPresenceStats: BoardPresenceStats;
   /**
    * Redacted "Up next" snapshot of the party-session queue bound to a shared
-   * board, for anonymous public displays (gym kiosks). Auth-optional; for
-   * anonymous viewers a private board reads as NOT_FOUND (same existence
-   * hiding as `boardNowPlaying`).
+   * board, for anonymous public displays (gym kiosks). Auth-optional; a board
+   * the caller may not read is NOT_FOUND (same existence hiding as
+   * `boardNowPlaying`, including the `boardUuid` rule).
    *
    * Double privacy gate — returns null unless BOTH hold:
-   * 1. the board is anonymously readable (public / system-shared), and
+   * 1. the board is readable by a signed-out holder of its link (Public or
+   *    Unlisted, or system-shared), and
    * 2. the bound session is `isPublic: true` and still active.
    *
    * Gate 2 deliberately widens `board_sessions.is_public` from "appears in
@@ -7245,12 +7247,14 @@ export type QueryBoardBySlugArgs = {
 export type QueryBoardClimbRecentSendersArgs = {
   angle: Scalars['Int']['input'];
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
   climbUuid: Scalars['String']['input'];
 };
 
 /** Root query type for all read operations. */
 export type QueryBoardConnectionArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
@@ -7262,6 +7266,7 @@ export type QueryBoardDiscoveryArgs = {
 export type QueryBoardHistoryArgs = {
   before?: InputMaybe<Scalars['String']['input']>;
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
   limit?: InputMaybe<Scalars['Int']['input']>;
 };
 
@@ -7269,6 +7274,7 @@ export type QueryBoardHistoryArgs = {
 export type QueryBoardHistoryPageArgs = {
   before?: InputMaybe<Scalars['String']['input']>;
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
   limit?: InputMaybe<Scalars['Int']['input']>;
 };
 
@@ -7280,26 +7286,31 @@ export type QueryBoardLeaderboardArgs = {
 /** Root query type for all read operations. */
 export type QueryBoardLiveSessionsArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
 export type QueryBoardPresenceStatsArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
 export type QueryBoardQueuePreviewArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
 export type QueryBoardRecentClimbsArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
 export type QueryBoardRecentHistoryArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root query type for all read operations. */
@@ -10266,8 +10277,9 @@ export type Subscription = {
   __typename?: 'Subscription';
   /**
    * Subscribe to the live "now on the wall" feed for a shared board (board_id
-   * resolved from the BLE serial). Membership-free: any authenticated user who
-   * has connected to the board can watch. Sessions are not involved.
+   * resolved from the BLE serial). Membership-free; the board's policy decides.
+   * The board id alone is the no-link reading (ids can be counted); pass
+   * `boardUuid` to open an Unlisted board. Sessions are not involved.
    */
   boardNowPlaying: BoardPresenceEvent;
   /**
@@ -10314,11 +10326,13 @@ export type Subscription = {
 /** Root subscription type for real-time updates. */
 export type SubscriptionBoardNowPlayingArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root subscription type for real-time updates. */
 export type SubscriptionBoardQueuePreviewArgs = {
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 };
 
 /** Root subscription type for real-time updates. */
@@ -10905,7 +10919,7 @@ export type UserBoard = {
   __typename?: 'UserBoard';
   /** Default angle for this board */
   angle: Scalars['Int']['output'];
-  /** Numeric board-presence channel id (userBoards.id); null unless the board is public or the viewer can edit it. Feeds boardNowPlaying(boardId) for kiosk/embed surfaces. */
+  /** Numeric board-presence channel id (userBoards.id); set whenever the viewer may read the board. Feeds boardNowPlaying(boardId); the id alone is the no-link reading, so an Unlisted board's presence also needs boardUuid. */
   boardId?: Maybe<Scalars['Int']['output']>;
   /** Board type (kilter, tension, moonboard) */
   boardType: Scalars['String']['output'];
@@ -12708,6 +12722,7 @@ export type FollowedLiveSessionsQuery = {
 
 export type BoardLiveSessionsQueryVariables = Exact<{
   boardId: Scalars['Int']['input'];
+  boardUuid?: InputMaybe<Scalars['ID']['input']>;
 }>;
 
 export type BoardLiveSessionsQuery = {
@@ -19050,6 +19065,11 @@ export const BoardLiveSessionsDocument = {
           variable: { kind: 'Variable', name: { kind: 'Name', value: 'boardId' } },
           type: { kind: 'NonNullType', type: { kind: 'NamedType', name: { kind: 'Name', value: 'Int' } } },
         },
+        {
+          kind: 'VariableDefinition',
+          variable: { kind: 'Variable', name: { kind: 'Name', value: 'boardUuid' } },
+          type: { kind: 'NamedType', name: { kind: 'Name', value: 'ID' } },
+        },
       ],
       selectionSet: {
         kind: 'SelectionSet',
@@ -19062,6 +19082,11 @@ export const BoardLiveSessionsDocument = {
                 kind: 'Argument',
                 name: { kind: 'Name', value: 'boardId' },
                 value: { kind: 'Variable', name: { kind: 'Name', value: 'boardId' } },
+              },
+              {
+                kind: 'Argument',
+                name: { kind: 'Name', value: 'boardUuid' },
+                value: { kind: 'Variable', name: { kind: 'Name', value: 'boardUuid' } },
               },
             ],
             selectionSet: {

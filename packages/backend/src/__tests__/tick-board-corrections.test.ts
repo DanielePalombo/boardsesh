@@ -25,6 +25,7 @@ import { fanoutFeedItems } from '../events/feed-fanout';
 
 const userId = 'tick-board-correction-user';
 const otherUser = 'tick-board-correction-other';
+const thirdUser = 'tick-board-correction-third';
 const climbUuid = 'TICK-BOARD-HOMEWALL';
 const ctx = { isAuthenticated: true, userId, connectionId: 'tick-board-correction' } as ConnectionContext;
 let original: typeof schema.userBoards.$inferSelect;
@@ -69,6 +70,7 @@ describe('tick board corrections', () => {
       .values([
         { id: userId, email: `${userId}@test.com` },
         { id: otherUser, email: `${otherUser}@test.com` },
+        { id: thirdUser, email: `${thirdUser}@test.com` },
       ])
       .onConflictDoNothing();
     await db
@@ -310,6 +312,181 @@ describe('tick board corrections', () => {
       } finally {
         await db.delete(schema.resourcePrivacy).where(eq(schema.resourcePrivacy.resourceId, board.uuid));
         await db.delete(schema.resourceGrants).where(eq(schema.resourceGrants.resourceId, board.uuid));
+        await db.delete(schema.userBoards).where(eq(schema.userBoards.uuid, board.uuid));
+      }
+    },
+  );
+
+  it('names an Unlisted board only when this edit explicitly presents its UUID, outside the picker list', async () => {
+    const [board] = await db
+      .insert(schema.userBoards)
+      .values({
+        uuid: uuidv4(),
+        slug: uuidv4(),
+        ownerId: otherUser,
+        name: 'Link only compatible wall',
+        // Saved the way the current audience control saves Unlisted.
+        isPublic: false,
+        isUnlisted: true,
+        boardType: 'kilter',
+        layoutId: 8,
+        sizeId: 25,
+        setIds: '26,27',
+      })
+      .returning();
+    await db
+      .insert(schema.resourcePrivacy)
+      .values({ kind: 'board', resourceId: board.uuid, ownerId: otherUser, audience: 'unlisted' });
+    try {
+      const uuid = await save(board, { boardUuid: board.uuid });
+      expect((await readTick(uuid)).boardId).toBe(board.id);
+
+      const options = await tickBoardQueries.tickBoardOptions(undefined, { tickUuid: uuid }, ctx);
+      expect(options.currentBoard).toBeNull();
+      expect(JSON.stringify(options)).not.toContain(board.uuid);
+      // The picker list is a listing: the board is not offered there.
+      expect(options.boards.some((choice) => choice.uuid === board.uuid)).toBe(false);
+
+      const edited = await tickMutations.updateTick(undefined, { uuid, input: { comment: 'Linked recap' } }, ctx);
+      expect(edited).toMatchObject({ comment: 'Linked recap', boardDisplayName: null });
+      const selected = await tickMutations.updateTick(undefined, { uuid, input: { boardUuid: board.uuid } }, ctx);
+      expect(selected).toMatchObject({ boardDisplayName: 'Link only compatible wall' });
+      // A later tick-only lookup still has no persisted link provenance.
+      expect((await tickBoardQueries.tickBoardOptions(undefined, { tickUuid: uuid }, ctx)).currentBoard).toBeNull();
+      await db
+        .insert(schema.resourceGrants)
+        .values({ kind: 'board', resourceId: board.uuid, userId, status: 'approved' });
+      expect((await tickBoardQueries.tickBoardOptions(undefined, { tickUuid: uuid }, ctx)).currentBoard?.uuid).toBe(
+        board.uuid,
+      );
+      expect(
+        await tickMutations.updateTick(undefined, { uuid, input: { comment: 'Approved recap' } }, ctx),
+      ).toMatchObject({ boardDisplayName: board.name });
+    } finally {
+      await db.delete(schema.boardseshTicks).where(eq(schema.boardseshTicks.boardId, board.id));
+      await db.delete(schema.resourcePrivacy).where(eq(schema.resourcePrivacy.resourceId, board.uuid));
+      await db.delete(schema.resourceGrants).where(eq(schema.resourceGrants.resourceId, board.uuid));
+      await db.delete(schema.userBoards).where(eq(schema.userBoards.uuid, board.uuid));
+    }
+  });
+
+  it.each(['updateTick', 'saveTick'] as const)(
+    '%s follows a merged-away UUID as a link only when one owner holds both boards',
+    async (operation) => {
+      const insertWall = async (ownerId: string, name: string, flags: { isPublic: boolean; isUnlisted: boolean }) => {
+        const [wall] = await db
+          .insert(schema.userBoards)
+          .values({
+            uuid: uuidv4(),
+            slug: uuidv4(),
+            ownerId,
+            name,
+            ...flags,
+            boardType: 'kilter',
+            layoutId: 8,
+            sizeId: 25,
+            setIds: '26,27',
+          })
+          .returning();
+        return wall;
+      };
+      // The survivor is someone else's wall, Unlisted with the current control.
+      const survivor = await insertWall(otherUser, 'Merged survivor wall', { isPublic: false, isUnlisted: true });
+      await db
+        .insert(schema.resourcePrivacy)
+        .values({ kind: 'board', resourceId: survivor.uuid, ownerId: otherUser, audience: 'unlisted' });
+      // The climber holds the link of a wall another owner merged into it...
+      const foreignLoser = await insertWall(thirdUser, 'Foreign loser wall', { isPublic: true, isUnlisted: false });
+      // ...and of a wall the survivor's own owner merged into it.
+      const sameOwnerLoser = await insertWall(otherUser, 'Same owner loser wall', {
+        isPublic: true,
+        isUnlisted: false,
+      });
+      for (const loser of [foreignLoser, sameOwnerLoser]) {
+        await db
+          .update(schema.userBoards)
+          .set({ deletedAt: new Date(), mergedIntoBoardUuid: survivor.uuid })
+          .where(eq(schema.userBoards.id, loser.id));
+      }
+      try {
+        if (operation === 'updateTick') {
+          const uuid = await save(homewall, { boardUuid: homewall.uuid });
+          await expect(
+            tickMutations.updateTick(undefined, { uuid, input: { boardUuid: foreignLoser.uuid } }, ctx),
+          ).rejects.toThrow('Board is no longer available');
+          expect((await readTick(uuid)).boardId).toBe(homewall.id);
+          const moved = await tickMutations.updateTick(
+            undefined,
+            { uuid, input: { boardUuid: sameOwnerLoser.uuid } },
+            ctx,
+          );
+          expect(moved).toMatchObject({ boardDisplayName: survivor.name });
+          expect((await readTick(uuid)).boardId).toBe(survivor.id);
+        } else {
+          const foreign = await save(survivor, { boardUuid: foreignLoser.uuid });
+          expect((await readTick(foreign)).boardId).toBeNull();
+          const sameOwner = await save(survivor, { boardUuid: sameOwnerLoser.uuid });
+          expect((await readTick(sameOwner)).boardId).toBe(survivor.id);
+        }
+      } finally {
+        await db.delete(schema.boardseshTicks).where(eq(schema.boardseshTicks.boardId, survivor.id));
+        await db.delete(schema.resourcePrivacy).where(eq(schema.resourcePrivacy.resourceId, survivor.uuid));
+        for (const wall of [foreignLoser, sameOwnerLoser, survivor]) {
+          await db.delete(schema.userBoards).where(eq(schema.userBoards.uuid, wall.uuid));
+        }
+      }
+    },
+  );
+
+  it.each(['numeric', 'session'] as const)(
+    'does not mint a link from historical %s tick attribution',
+    async (source) => {
+      const [board] = await db
+        .insert(schema.userBoards)
+        .values({
+          uuid: uuidv4(),
+          slug: uuidv4(),
+          ownerId: otherUser,
+          name: 'Never presented wall',
+          isPublic: false,
+          isUnlisted: true,
+          boardType: 'kilter',
+          layoutId: 8,
+          sizeId: 25,
+          setIds: '26,27',
+        })
+        .returning();
+      await db
+        .insert(schema.resourcePrivacy)
+        .values({ kind: 'board', resourceId: board.uuid, ownerId: otherUser, audience: 'unlisted' });
+      const sessionId = source === 'session' ? uuidv4() : null;
+      if (sessionId)
+        await db.insert(schema.boardSessions).values({
+          id: sessionId,
+          createdByUserId: otherUser,
+          boardId: board.id,
+          boardPath: '/kilter/8/25/26,27/35',
+          isPublic: true,
+        });
+      try {
+        const overrides = sessionId ? { sessionId } : { boardId: board.id };
+        const uuid = await save(board, overrides);
+        // Current saves reject this no-link association. Older records have only
+        // a numeric board ID; reconstruct one without ever presenting its UUID.
+        expect((await readTick(uuid)).boardId).toBeNull();
+        await db.update(schema.boardseshTicks).set({ boardId: board.id }).where(eq(schema.boardseshTicks.uuid, uuid));
+        const options = await tickBoardQueries.tickBoardOptions(undefined, { tickUuid: uuid }, ctx);
+        expect(options.currentBoard).toBeNull();
+        expect(JSON.stringify(options)).not.toContain(board.uuid);
+        expect(JSON.stringify(options)).not.toContain(board.name);
+        expect(options.boards.some((choice) => choice.uuid === board.uuid)).toBe(false);
+        const edited = await tickMutations.updateTick(undefined, { uuid, input: { comment: 'My own notes' } }, ctx);
+        expect(edited).toMatchObject({ comment: 'My own notes', boardDisplayName: null });
+        expect((await readTick(uuid)).boardId).toBe(board.id);
+      } finally {
+        await db.delete(schema.boardseshTicks).where(eq(schema.boardseshTicks.boardId, board.id));
+        if (sessionId) await db.delete(schema.boardSessions).where(eq(schema.boardSessions.id, sessionId));
+        await db.delete(schema.resourcePrivacy).where(eq(schema.resourcePrivacy.resourceId, board.uuid));
         await db.delete(schema.userBoards).where(eq(schema.userBoards.uuid, board.uuid));
       }
     },

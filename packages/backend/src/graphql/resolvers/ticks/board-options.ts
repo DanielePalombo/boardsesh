@@ -83,6 +83,9 @@ export const tickBoardQueries = {
       .limit(1);
     if (!tick) throw new GraphQLError('Tick not found', { extensions: { code: 'TICK_NOT_FOUND' } });
 
+    // A stored numeric attribution does not prove the climber presented a link:
+    // older saves also accepted numeric IDs and another participant's session wall.
+    // Neither the current selection nor the picker list may mint an Unlisted UUID.
     const [currentBoard] =
       tick.boardId == null
         ? []

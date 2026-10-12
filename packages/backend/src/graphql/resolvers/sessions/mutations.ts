@@ -1,3 +1,4 @@
+import { projectSessionBoardPath } from '../../../services/board-session-privacy';
 import { resolveSessionBoardId } from '../../../services/session-board-binding';
 import { canAccessResourceWithoutLink } from '../../../services/privacy';
 import { getPrivacySettings, legacyResourceAudience } from '../../../services/privacy';
@@ -283,10 +284,19 @@ export const sessionMutations = {
           .select({ id: userBoards.id, uuid: userBoards.uuid, gymId: userBoards.gymId })
           .from(userBoards)
           .where(inArray(userBoards.id, attachedIds));
+        // A numeric board id is a sequential bigserial anyone can count, so it is
+        // never a board's link: each attached board takes the no-link reading.
+        // The one exception is the board the session path itself named, which
+        // `resolveSessionBoardId` already admitted through its link.
         if (
           boards.length !== attachedIds.length ||
           (
-            await Promise.all(boards.map((board) => canAccessResourceWithoutLink('board', board.uuid, ctx.userId)))
+            await Promise.all(
+              boards.map(
+                async (board) =>
+                  Number(board.id) === boardId || canAccessResourceWithoutLink('board', board.uuid, ctx.userId),
+              ),
+            )
           ).some((allowed) => !allowed)
         ) {
           throw new Error('One or more board IDs do not exist');
@@ -716,7 +726,10 @@ export const sessionMutations = {
     return {
       id: sessionId,
       name: sessionData.name || null,
-      boardPath: sessionData.boardPath,
+      // A concurrent changer may have installed another path after our write.
+      boardPath: await projectSessionBoardPath(sessionData.boardPath, ctx.userId, {
+        presentedByViewer: sessionData.boardPath === boardPath,
+      }),
       users,
       queueState: {
         sequence: queueState.sequence,

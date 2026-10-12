@@ -90,14 +90,12 @@ export const sessionSubscriptions = {
               ctx.userId,
               sessionId,
             );
+            const current = await roomManager.getSessionById(sessionId);
             yield {
               sessionUpdates: {
                 __typename: 'SessionRosterSnapshot' as const,
                 users: roster,
-                boardPath: await projectSessionBoardPath(
-                  (await roomManager.getSessionById(sessionId))?.boardPath ?? '',
-                  ctx.userId,
-                ),
+                boardPath: await projectSessionBoardPath(current?.boardPath ?? '', ctx.userId),
               },
             };
             continue;
@@ -126,7 +124,12 @@ export const sessionSubscriptions = {
             yield { sessionUpdates: { ...event, leaderId: protocolId(event.leaderId) } };
           } else if (event.__typename === 'SessionBoardPathChanged') {
             yield {
-              sessionUpdates: { ...event, boardPath: await projectSessionBoardPath(event.boardPath, ctx.userId) },
+              sessionUpdates: {
+                ...event,
+                boardPath: await projectSessionBoardPath(event.boardPath, ctx.userId, {
+                  presentedByViewer: !!ctx.participantId && event.changedByParticipantId === ctx.participantId,
+                }),
+              },
             };
           } else if (event.__typename === 'SessionStatsUpdated') {
             const visibleStats = await buildSessionStatsUpdatedEvent(sessionId, ctx);
