@@ -47,9 +47,19 @@ const privacyAccess = vi.hoisted(() => ({ allowed: true }));
 vi.mock('../services/privacy', () => ({
   canAccessResource: async () => privacyAccess.allowed,
   canViewActivityIdentity: async () => true,
+  visibleActivityUserIds: async (userIds: readonly (string | null | undefined)[]) =>
+    new Set(userIds.filter((userId): userId is string => !!userId)),
   requireResourceAccess: async () => {
     if (!privacyAccess.allowed) throw new Error('Not found');
   },
+}));
+
+// The setup file loads board-session-privacy before these mocks exist, so it
+// keeps the real privacy reads. Identity is not under test here: name everyone.
+vi.mock('../services/board-session-privacy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/board-session-privacy')>()),
+  sessionVisibleUserIds: async (userIds: readonly (string | null | undefined)[]) =>
+    new Set(userIds.filter((userId): userId is string => !!userId)),
 }));
 
 // Local, same-instance WS connection tracking (module-level `connections` map

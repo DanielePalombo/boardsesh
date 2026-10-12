@@ -364,13 +364,24 @@ describe('board-queue-preview binding', () => {
       });
 
     // First bind creates the binding…
-    expect((await commit(firstSessionId)).sessionBindingChanged).toBe(true);
+    expect(await commit(firstSessionId)).toMatchObject({ sessionBindingChanged: true, sessionBoardChanged: true });
     // …a re-stamp of the same session is not a change…
-    expect((await commit(firstSessionId)).sessionBindingChanged).toBe(false);
+    expect(await commit(firstSessionId)).toMatchObject({ sessionBindingChanged: false, sessionBoardChanged: false });
     // …a hand-off to another session is…
-    expect((await commit(secondSessionId)).sessionBindingChanged).toBe(true);
+    expect(await commit(secondSessionId)).toMatchObject({ sessionBindingChanged: true, sessionBoardChanged: true });
     // …and a session-less (solo) report never is.
-    expect((await commit(null)).sessionBindingChanged).toBe(false);
+    expect(await commit(null)).toMatchObject({ sessionBindingChanged: false, sessionBoardChanged: false });
+    // The first session moving to another wall changes its forward binding.
+    const otherBoardId = await makeBoard({ isPublic: true });
+    const moved = await pubsub.commitBoardClimb({
+      boardId: String(otherBoardId),
+      emitterId: TEST_USER_ID,
+      climb: makePresenceClimb(),
+      climbUuid: 'presence-climb',
+      effectiveAngle: 40,
+      sessionId: firstSessionId,
+    });
+    expect(moved.sessionBoardChanged).toBe(true);
   });
 
   it('a stale binding to an ENDED session falls back to the newest active public session (wall hand-off)', async () => {
@@ -1397,6 +1408,50 @@ describe('board-queue-preview first-bind seed', () => {
       unsubscribe();
     }
   });
+
+  it('a report that moves the session to another wall tells connected peers to re-project names', async () => {
+    const firstBoardId = await makeBoard({ isPublic: true });
+    const secondBoardId = await makeBoard({ isPublic: true });
+    const sessionId = uuidv4();
+    const connectionId = `conn-wall-move-${Date.now()}`;
+    await roomManager.registerClient(connectionId, undefined, TEST_USER_ID);
+    await roomManager.joinSession(connectionId, sessionId, TEST_BOARD_PATH);
+    await pubsub.stampBoardMembership(String(firstBoardId), TEST_USER_ID);
+    await pubsub.stampBoardMembership(String(secondBoardId), TEST_USER_ID);
+    const published = vi.spyOn(pubsub, 'publishSessionEvent');
+    const wallMoves = () =>
+      published.mock.calls.filter(
+        ([publishedSessionId, event]) =>
+          publishedSessionId === sessionId && event.__typename === 'SessionBoardPathChanged',
+      );
+    const report = (boardId: number, climbUuid: string) =>
+      boardPresenceMutations.reportBoardClimb(
+        undefined,
+        { boardId, climb: makeReportInput(climbUuid), angle: 40 },
+        authCtx({ connectionId }),
+      );
+    try {
+      // The first lit climb puts the config-path session on a wall.
+      await report(firstBoardId, BIND_CLIMB_UUID);
+      await waitFor(() => wallMoves().length === 1);
+      expect(wallMoves()[0][1]).toEqual({
+        __typename: 'SessionBoardPathChanged',
+        boardPath: TEST_BOARD_PATH,
+        changedByParticipantId: null,
+        wallChanged: true,
+        pathUnchanged: true,
+      });
+      // Another climb on the same wall moves nothing.
+      await report(firstBoardId, OTHER_BIND_CLIMB_UUID);
+      await sleep(100);
+      expect(wallMoves()).toHaveLength(1);
+      // A climb lit on another wall does.
+      await report(secondBoardId, BIND_CLIMB_UUID);
+      await waitFor(() => wallMoves().length === 2);
+    } finally {
+      published.mockRestore();
+    }
+  });
 });
 
 // ============================================================
@@ -1448,8 +1503,10 @@ describe('board-queue-preview Redis binding', () => {
     // reports the binding as changed; a re-stamp of the same session doesn't.
     const firstCommit = await commit(sessionId);
     expect(firstCommit.sessionBindingChanged).toBe(true);
+    expect(firstCommit.sessionBoardChanged).toBe(true);
     const restamp = await commit(sessionId);
     expect(restamp.sessionBindingChanged).toBe(false);
+    expect(restamp.sessionBoardChanged).toBe(false);
 
     try {
       expect(await pubsub.getSessionBoard(sessionId)).toBe(boardId);

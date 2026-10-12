@@ -30,6 +30,7 @@ import { roomManager } from '../../../services/room-manager';
 import { isApnsConfigured, sendLiveActivityUpdate } from '../../../services/apns';
 import { buildContentStateFromQueueState } from '../../../services/apns/content-state';
 import { publishBoardQueuePreviewForSession } from '../../../services/board-queue-preview';
+import { publishSessionWallChanged } from '../../../services/session-wall-refresh';
 import {
   assertValidBoardId,
   candidateToActiveBoard,
@@ -1007,7 +1008,7 @@ export const boardPresenceMutations = {
     // One Redis pipeline: durable FIFO history append, connection-holder
     // handoff (atomic SET..GET), the A2 dedup marker, and the session→board
     // mapping. Non-fatal on failure (see commitBoardClimb's contract).
-    const { previousWriter, writerSlotOk, sessionBindingChanged } = await pubsub.commitBoardClimb({
+    const { previousWriter, writerSlotOk, sessionBindingChanged, sessionBoardChanged } = await pubsub.commitBoardClimb({
       boardId: String(boardId),
       emitterId,
       climb: presenceClimb,
@@ -1025,6 +1026,12 @@ export const boardPresenceMutations = {
     // gates and the superseded-binding re-check, and is publisher-instance-
     // only like every producer publish. Fire-and-forget — a failed preview
     // seed must never fail the accepted report.
+    // This send moved the session onto another wall. A session with no primary
+    // board is judged on the wall its live binding names, so connected peers
+    // re-project who they may name (roster and queue). Fire-and-forget, after
+    // the binding committed; it never fails the accepted report.
+    if (sessionBoardChanged && reportingSessionId) void publishSessionWallChanged(reportingSessionId);
+
     if (sessionBindingChanged && reportingSessionId) {
       publishBoardQueuePreviewForSession(reportingSessionId).catch((error: unknown) => {
         logger.warn(

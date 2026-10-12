@@ -427,6 +427,26 @@ export const privacyMutations = {
     if (accountSwitched) pubsub.publishPrivacyChanged('updatePrivacySettings');
     return getPrivacySettings(userId);
   },
+  /**
+   * A plain preference, so it is open whatever `BOARDSESH_PRIVACY_ENABLED`
+   * says. Board-facing reads apply it at query time, and live streams recheck
+   * it on their next event, so saving it publishes nothing: no app listens to
+   * `privacyChanged` any more. Saving the stored value again writes nothing.
+   */
+  setAnonymousOnForeignBoards: async (_: unknown, { enabled }: { enabled: unknown }, ctx: ConnectionContext) => {
+    const userId = actor(ctx);
+    await applyRateLimit(ctx, 5, 'anonymousBoardPreference');
+    const anonymousOnForeignBoards = validateInput(z.boolean(), enabled, 'enabled');
+    await db
+      .insert(schema.userProfiles)
+      .values({ userId, anonymousOnForeignBoards })
+      .onConflictDoUpdate({
+        target: schema.userProfiles.userId,
+        set: { anonymousOnForeignBoards, updatedAt: new Date() },
+        setWhere: sql`${schema.userProfiles.anonymousOnForeignBoards} IS DISTINCT FROM ${anonymousOnForeignBoards}`,
+      });
+    return getPrivacySettings(userId);
+  },
   requestFollow: async (_: unknown, { userId }: { userId: string }, ctx: ConnectionContext) => {
     const requesterId = await privacyActor(ctx);
     await requestPrivacyFollow(requesterId, userId);

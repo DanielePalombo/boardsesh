@@ -1,8 +1,12 @@
 import { GraphQLError } from 'graphql';
 import { resolveSessionBoardId } from '../session-board-binding';
-import { notifyResourcePrivacyChanged, projectSessionBoardPath } from '../board-session-privacy';
+import { publishSessionBoardPathChanged } from '../session-wall-refresh';
 import {
-  canViewActivityIdentity,
+  notifyResourcePrivacyChanged,
+  projectSessionBoardPath,
+  sessionsVisibleUserIds,
+} from '../board-session-privacy';
+import {
   getResourcePrivacy,
   requireResourceAccess,
   resourceAccessCondition,
@@ -58,6 +62,7 @@ export async function updateSessionBoardPathIfChanged(
   sessionId: string,
   boardPath: string,
   viewerId?: string | null,
+  changedByParticipantId: string | null = null,
 ): Promise<string | null> {
   const boardId = await resolveSessionBoardId(boardPath, viewerId);
   const transition = await db.transaction(async (tx) => {
@@ -111,6 +116,11 @@ export async function updateSessionBoardPathIfChanged(
   // its own reads and can fail; a failure there must not leave other viewers
   // holding copies of a session they can no longer read.
   if (transition.narrowsReaders) pubsub.publishPrivacyChanged('switchSessionWall');
+  // A move to another wall changes identity projections for opted-in climbers,
+  // even when both walls are public, so connected peers re-project their roster
+  // and queue. An angle change keeps the wall: peers only apply the path.
+  // Published before the preview's fallible reads.
+  publishSessionBoardPathChanged(sessionId, boardPath, changedByParticipantId, transition.parentChanged);
   if (transition.parentChanged) await notifyResourcePrivacyChanged('session', sessionId);
   return transition.previous;
 }
@@ -258,15 +268,22 @@ export async function findNearbySessions(
     sessionsWithDistance.map(({ session }) => session.id),
   );
 
-  const result: DiscoverableSession[] = [];
-  for (const { session, distance } of sessionsWithDistance) {
+  const liveSessions = sessionsWithDistance.flatMap(({ session, distance }) => {
     const liveness = livenessBySession.get(session.id);
-    if (!liveness || !hasLiveConnectionsOrSessionKey(liveness)) {
-      continue;
-    }
-    const { participantCount } = liveness;
+    return liveness && hasLiveConnectionsOrSessionKey(liveness)
+      ? [{ session, distance, participantCount: liveness.participantCount }]
+      : [];
+  });
+  // The host is named by their account, and stays anonymous when they chose to
+  // and the session's board is not theirs (or nothing places it on one yet).
+  // One query for every host on the page.
+  const visibleHosts = await sessionsVisibleUserIds(
+    liveSessions.map(({ session }) => ({ session, userIds: [session.createdByUserId] })),
+    viewerId,
+  );
 
-    result.push({
+  return Promise.all(
+    liveSessions.map(async ({ session, distance, participantCount }, index): Promise<DiscoverableSession> => ({
       id: session.id,
       name: session.name,
       // A deleted or renamed named board's slug is not this viewer's to read.
@@ -275,9 +292,7 @@ export async function findNearbySessions(
       longitude: 0,
       createdAt: session.createdAt,
       createdByUserId:
-        session.createdByUserId && (await canViewActivityIdentity(session.createdByUserId, viewerId))
-          ? session.createdByUserId
-          : null,
+        session.createdByUserId && visibleHosts[index].has(session.createdByUserId) ? session.createdByUserId : null,
       participantCount,
       distance: Math.ceil(distance / 1000) * 1000,
       isActive: true,
@@ -285,10 +300,8 @@ export async function findNearbySessions(
       isPublic: session.isPublic,
       isPermanent: session.isPermanent,
       color: session.color || null,
-    });
-  }
-
-  return result;
+    })),
+  );
 }
 
 /**

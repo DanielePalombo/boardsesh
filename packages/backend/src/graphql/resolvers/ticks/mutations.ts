@@ -44,6 +44,7 @@ import { canAttributeTickToBoard } from '@boardsesh/board-config';
 import { findTickClimb, tickBoardFitsClimb } from './board-options';
 import { reconcileInferredSessions } from '../../../services/inferred-sessions/reconcile';
 import { parseClimbedAt } from '../../../services/inferred-sessions/timestamps';
+import { publishSessionWallChangedByTick } from '../../../services/session-wall-refresh';
 import {
   acquireUserTickMutationLock,
   isDirectAuroraTwin,
@@ -1584,6 +1585,13 @@ export const tickMutations = {
     }
 
     const result = tickResult(tick);
+
+    // A session nothing else places is on the board of its newest tick there,
+    // so this tick can move it to another wall. Connected peers then re-project
+    // who they may name. Off the response path; it never fails the save.
+    if (tick.sessionId && tick.boardId != null && sessionBoardId == null) {
+      void publishSessionWallChangedByTick(tick.sessionId, tick.uuid);
+    }
 
     // Publish ascent.logged event for feed fan-out (only for successful ascents)
     if (tick.status === 'flash' || tick.status === 'send') {

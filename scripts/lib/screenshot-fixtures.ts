@@ -1182,6 +1182,7 @@ export const REPLAY_DEFAULT_RESPONSES: Readonly<Record<string, ReplayDefaultResp
           isPrivate: false,
           privacyRevision: 0,
           defaultSessionAudience: 'public',
+          anonymousOnForeignBoards: false,
           enabled: false,
         },
       },

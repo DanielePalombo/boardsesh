@@ -612,15 +612,16 @@ class RoomManager {
   /**
    * Update the session's stored boardPath, returning the previous value when
    * a change actually occurred, or `null` for no-op writes (idempotent).
-   * Used by the `setSessionBoardPath` mutation to gate the
-   * `SessionBoardPathChanged` event.
+   * Publishes `SessionBoardPathChanged` after the move commits, before
+   * fallible preview refreshes, so live identity projections are withdrawn.
    */
   async updateSessionBoardPathIfChanged(
     sessionId: string,
     boardPath: string,
     viewerId?: string | null,
+    changedByParticipantId: string | null = null,
   ): Promise<string | null> {
-    return updateSessionBoardPathIfChangedFn(sessionId, boardPath, viewerId);
+    return updateSessionBoardPathIfChangedFn(sessionId, boardPath, viewerId, changedByParticipantId);
   }
 
   async createDiscoverableSession(

@@ -8,6 +8,11 @@ import {
 } from '../../../services/board-session-privacy';
 import type { ConnectionContext, SessionEvent } from '@boardsesh/shared-schema';
 import { pubsub } from '../../../pubsub/index';
+import {
+  clientPathEvent,
+  movesSessionWall,
+  type SessionBoardPathChangedMessage,
+} from '../../../services/session-wall-refresh';
 import { roomManager } from '../../../services/room-manager';
 import { requireSessionMember } from '../shared/helpers';
 import { createPrivacyAwareIterator } from '../shared/privacy-iterator';
@@ -123,14 +128,38 @@ export const sessionSubscriptions = {
           } else if (event.__typename === 'LeaderChanged') {
             yield { sessionUpdates: { ...event, leaderId: protocolId(event.leaderId) } };
           } else if (event.__typename === 'SessionBoardPathChanged') {
-            yield {
-              sessionUpdates: {
-                ...event,
-                boardPath: await projectSessionBoardPath(event.boardPath, ctx.userId, {
-                  presentedByViewer: !!ctx.participantId && event.changedByParticipantId === ctx.participantId,
-                }),
-              },
-            };
+            const pathEvent = clientPathEvent(event);
+            const { pathUnchanged } = event as SessionBoardPathChangedMessage;
+            // The member who chose the path presented its link in that request.
+            const projectPathEvent = () =>
+              projectSessionBoardPath(event.boardPath, ctx.userId, {
+                presentedByViewer: !!ctx.participantId && event.changedByParticipantId === ctx.participantId,
+              });
+            if (!movesSessionWall(event)) {
+              // An angle change keeps the wall, so every name stays as projected.
+              yield { sessionUpdates: { ...pathEvent, boardPath: await projectPathEvent() } };
+              continue;
+            }
+            const users = await roomManager.getSessionUsers(sessionId);
+            const roster = await redactSessionUsers(users, ctx.userId, sessionId);
+            // The snapshot follows this path event, so it projects the path the
+            // same way; a wall that moved under an unchanged path uses ordinary
+            // current board standing, like any other snapshot.
+            const boardPath = pathUnchanged
+              ? await projectSessionBoardPath((await roomManager.getSessionById(sessionId))?.boardPath ?? '', ctx.userId)
+              : await projectPathEvent();
+            for (const user of users) {
+              protocolIds.set(user.id, user.userId ? sessionParticipantId(sessionId, user.userId) : user.id);
+            }
+            // Installed clients already handle presence deltas. Withdraw old
+            // names before publishing the destination, then replace the roster
+            // for clients that understand the authoritative snapshot. A wall
+            // that moved under an unchanged path sends no path event.
+            for (const user of roster) {
+              yield { sessionUpdates: { __typename: 'UserPresenceChanged' as const, user } };
+            }
+            if (!pathUnchanged) yield { sessionUpdates: { ...pathEvent, boardPath } };
+            yield { sessionUpdates: { __typename: 'SessionRosterSnapshot' as const, users: roster, boardPath } };
           } else if (event.__typename === 'SessionStatsUpdated') {
             const visibleStats = await buildSessionStatsUpdatedEvent(sessionId, ctx);
             if (visibleStats) yield { sessionUpdates: visibleStats };

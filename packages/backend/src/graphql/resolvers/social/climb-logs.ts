@@ -17,6 +17,8 @@ import {
 import { ClimbLogsInputSchema } from '../../../validation/schemas';
 import { decodeClimbLogsCursor, encodeClimbLogsCursor, type ClimbLogsCursor } from '../../../utils/climb-logs-cursor';
 import { logger } from '../../../utils/logger';
+import { anonymousOnBoardUserIds } from '../../../services/privacy';
+import { anonymousLogAuthorId } from '../../../services/board-session-privacy';
 
 type TicksTable = typeof dbSchema.boardseshTicks;
 
@@ -163,6 +165,30 @@ export function buildClimbLogsQuery({
     .orderBy(desc(ticks.climbedAt), desc(ticks.id));
 }
 
+/**
+ * A spray-wall climb's logs are board-facing: the wall is a board, and a
+ * climber who stays anonymous on boards they don't own is unnamed on its logs
+ * when it is not theirs. A catalogue climb (Kilter and the rest) belongs to no
+ * one board, so its logs follow the account alone. A wall that is gone counts
+ * as not theirs.
+ */
+async function anonymousSprayWallClimbers(
+  boardType: string,
+  climbUuid: string,
+  userIds: readonly string[],
+  viewerUserId: string | null,
+): Promise<ReadonlySet<string>> {
+  if (boardType !== 'spray' || userIds.length === 0) return new Set();
+  const [wall] = await db
+    .select({ boardId: dbSchema.userBoards.id })
+    .from(dbSchema.boardClimbs)
+    .innerJoin(dbSchema.sprayWalls, eq(dbSchema.sprayWalls.layoutId, dbSchema.boardClimbs.layoutId))
+    .innerJoin(dbSchema.userBoards, eq(dbSchema.userBoards.uuid, dbSchema.sprayWalls.boardUuid))
+    .where(and(eq(dbSchema.boardClimbs.boardType, 'spray'), eq(dbSchema.boardClimbs.uuid, climbUuid)))
+    .limit(1);
+  return anonymousOnBoardUserIds(userIds, { boardId: wall ? Number(wall.boardId) : null }, viewerUserId);
+}
+
 export const climbLogsQueries = {
   /**
    * Everyone's logs on one climb, newest first, one page at a time. Public:
@@ -219,6 +245,12 @@ export const climbLogsQueries = {
       const hasMore = rows.length > limit;
       const pageRows = hasMore ? rows.slice(0, limit) : rows;
       const lastTick = pageRows.at(-1)?.tick;
+      const anonymous = await anonymousSprayWallClimbers(
+        boardType,
+        canonicalClimbUuid,
+        pageRows.map((row) => row.tick.userId),
+        viewerUserId,
+      );
 
       return {
         items: pageRows.map((row) => {
@@ -226,7 +258,16 @@ export const climbLogsQueries = {
           const { isBenchmark: _isBenchmark, ...item } = toClimbLogBase(row);
           // Retired with revision history: null hides an older app's "Earlier
           // version" tag (docs/spray-walls.md, "What an older app gets back").
-          return { ...item, climbCurrentRevision: null };
+          const log = { ...item, climbCurrentRevision: null };
+          return anonymous.has(row.tick.userId)
+            ? {
+                ...log,
+                userId: anonymousLogAuthorId(row.tick.uuid),
+                userDisplayName: undefined,
+                userAvatarUrl: undefined,
+                comment: '',
+              }
+            : log;
         }),
         cursor: hasMore && lastTick ? encodeClimbLogsCursor({ climbedAt: lastTick.climbedAt, id: lastTick.id }) : null,
         hasMore,

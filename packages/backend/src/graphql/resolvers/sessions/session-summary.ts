@@ -13,6 +13,7 @@ import { getSessionHealthExport } from '@boardsesh/db/queries';
 import { resolveRenderBoard } from '@boardsesh/board-config';
 import { fetchOwnerBoards, toTickBoardCandidate } from '../shared/render-board';
 import { logger } from '../../../utils/logger';
+import { sessionAnonymousUserIds } from '../../../services/board-session-privacy';
 
 /**
  * Generate a summary for a session including grade distribution,
@@ -221,9 +222,20 @@ export async function generateSessionSummary(
 
   // Individual rows contain only activity visible to this viewer. The totals
   // deliberately include every tick, independently of account/item privacy.
+  // A climber who stays anonymous on boards they don't own keeps their row
+  // here, unnamed, when the session's board is not theirs.
+  const anonymous = await sessionAnonymousUserIds(
+    participantCastRows.map((participant) => participant.userId),
+    viewerUserId,
+    sessionId,
+  );
   const participants = participantCastRows
     .filter((participant) => participant.attempts > 0)
-    .map(({ rawSends: _sends, rawFlashes: _flashes, rawAttempts: _attempts, ...participant }) => participant);
+    .map(({ rawSends: _sends, rawFlashes: _flashes, rawAttempts: _attempts, ...participant }) =>
+      anonymous.has(participant.userId)
+        ? { ...participant, userId: null, displayName: null, avatarUrl: null }
+        : participant,
+    );
   const totalSends = participantCastRows.reduce((sum, participant) => sum + participant.rawSends, 0);
   const totalFlashes = participantCastRows.reduce((sum, participant) => sum + participant.rawFlashes, 0);
   const totalAttempts = participantCastRows.reduce((sum, participant) => sum + participant.rawAttempts, 0);

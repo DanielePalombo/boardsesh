@@ -17,7 +17,6 @@ import { useLocalePreference } from '../../src/providers/i18n-provider';
 import { resolveLanguage, type LocaleOverride } from '../../src/lib/i18n/locale-preference';
 import { openExternalUrl } from '../../src/lib/open-url';
 import { useConfirmSignOut } from '../../src/hooks/use-confirm-sign-out';
-import { usePrivacySettings } from '../../src/lib/graphql/hooks/use-privacy';
 import { useProfile, useMyBoards, useIsAdmin } from '../../src/lib/graphql/hooks';
 import { useQaMenu } from '../../src/lib/qa/use-qa-menu';
 import { useEarlyUpdatesRow } from '../../src/lib/qa/use-early-updates';
@@ -54,6 +53,7 @@ import { buildOfflineModeRow } from '../../src/components/offline-mode-row';
 import { buildEarlyUpdatesSection } from '../../src/components/early-updates-section';
 import { useBottomChromeDiagnosticsEligible } from '../../src/components/BottomChromeDebugOverlay';
 import { MoreForm } from '../../src/components/MoreForm';
+import { buildAccountRows } from '../../src/components/settings/account-rows';
 import type { MoreButtonRow, MoreFormModel, MoreRow, MoreSection } from '../../src/components/MoreForm.types';
 import { isPreviewBuild } from '../../src/lib/preview-build';
 import { isDevLauncherAvailable } from '../../src/lib/dev-launcher';
@@ -102,7 +102,6 @@ export default function MoreScreen() {
   const { t: tClimbs } = useTranslation('climbs');
   const confirmSignOut = useConfirmSignOut();
   const { data: profile } = useProfile();
-  const { data: privacySettings } = usePrivacySettings();
   // Its own query, deliberately not a field on the profile document — see
   // useIsAdmin. Fails closed, so an older backend just hides the admin rows.
   const { isAdmin } = useIsAdmin();
@@ -1122,31 +1121,16 @@ export default function MoreScreen() {
       key: 'account',
       title: tProfile('mobile.account'),
       footer: profile.email ?? undefined,
-      rows: [
-        {
-          kind: 'nav',
-          key: 'editProfile',
-          label: tSettings('profile.editAction'),
-          icon: 'editProfile',
-          onPress: navAction(() => router.push('/settings/edit')),
+      rows: buildAccountRows({
+        labels: {
+          editProfile: tSettings('profile.editAction'),
+          privacy: tSettings('privacy.title'),
+          exportData: tSettings('export.title'),
         },
-        ...(privacySettings?.enabled
-          ? [
-              {
-                kind: 'nav' as const,
-                key: 'privacy',
-                label: tSettings('privacy.title'),
-                onPress: navAction(() => router.push('/settings/privacy')),
-              },
-            ]
-          : []),
-        {
-          kind: 'nav',
-          key: 'exportData',
-          label: tSettings('export.title'),
-          onPress: navAction(() => router.push('/settings/export')),
-        },
-      ],
+        onEditProfile: navAction(() => router.push('/settings/edit')),
+        onPrivacy: navAction(() => router.push('/settings/privacy')),
+        onExportData: navAction(() => router.push('/settings/export')),
+      }),
     });
     sections.push({ key: 'accountActions', rows: accountActionRows });
   } else {

@@ -8,6 +8,7 @@ import {
   canViewResourceLocation,
   resourceAccessCondition,
   resourceLocationCondition,
+  visibleActivityUserIds,
 } from '../../../services/privacy';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, ne, and, count, isNull, isNotNull, sql, ilike, or, asc, desc, inArray, like } from 'drizzle-orm';
@@ -1643,23 +1644,25 @@ export const socialBoardQueries = {
       }
     }
 
-    const enrichedEntries = await Promise.all(
-      entries.map(async (entry, idx) => {
-        const showIdentity = await canViewActivityIdentity(entry.userId, ctx.userId);
-        const userInfo = userMap.get(entry.userId);
-        return {
-          userId: showIdentity ? entry.userId : null,
-          userDisplayName: showIdentity ? userInfo?.displayName : undefined,
-          userAvatarUrl: showIdentity ? userInfo?.avatarUrl : undefined,
-          rank: offset + idx + 1,
-          totalSends: Number(entry.totalSends),
-          totalFlashes: Number(entry.totalFlashes),
-          hardestGrade: entry.hardestGrade ? Number(entry.hardestGrade) : null,
-          hardestGradeName: null, // TODO: resolve grade name from board-specific grade tables
-          totalSessions: Number(entry.totalSessions),
-        };
-      }),
-    );
+    // Each entry is named by its climber's account. Climbers who stay anonymous
+    // on boards they don't own keep their rank and totals here, without a name,
+    // like a private account. One query for the page.
+    const visibleUserIds = await visibleActivityUserIds(userIds, ctx.userId, { boardId: board.id });
+    const enrichedEntries = entries.map((entry, idx) => {
+      const showIdentity = visibleUserIds.has(entry.userId);
+      const userInfo = userMap.get(entry.userId);
+      return {
+        userId: showIdentity ? entry.userId : null,
+        userDisplayName: showIdentity ? userInfo?.displayName : undefined,
+        userAvatarUrl: showIdentity ? userInfo?.avatarUrl : undefined,
+        rank: offset + idx + 1,
+        totalSends: Number(entry.totalSends),
+        totalFlashes: Number(entry.totalFlashes),
+        hardestGrade: entry.hardestGrade ? Number(entry.hardestGrade) : null,
+        hardestGradeName: null, // TODO: resolve grade name from board-specific grade tables
+        totalSessions: Number(entry.totalSessions),
+      };
+    });
 
     return {
       boardUuid,

@@ -56,6 +56,15 @@ export type CommitBoardClimbResult = {
    * next queue mutation.
    */
   sessionBindingChanged: boolean;
+  /**
+   * True when this commit VERIFIABLY moved the session's forward binding
+   * (`session:{id}:board`) to this board: it was unbound or bound to another
+   * board. A session nothing else places is on that bound board
+   * (`resolveSessionBoards`), so `reportBoardClimb` uses it to have connected
+   * peers re-project names for the new wall. False for a re-stamp of the same
+   * board, a session-less report, or an unverifiable slot.
+   */
+  sessionBoardChanged: boolean;
 };
 
 // Board-presence durable history (Redis FIFO) configuration. The live
@@ -687,8 +696,12 @@ export class BoardPresenceStore {
       // binding in-memory so getSessionBoard/getBoardSession keep answering
       // (the board-queue-preview producer depends on them). The writer slot
       // and history remain Redis-only, unchanged.
+      const previousSessionBoard = input.sessionId
+        ? this.readLocalBinding(this.localSessionBoard, input.sessionId)
+        : null;
       const sessionBindingChanged = this.rememberLocalSessionBoardBinding(input.sessionId, input.boardId);
-      return { previousWriter: null, writerSlotOk: false, sessionBindingChanged };
+      const sessionBoardChanged = !!input.sessionId && previousSessionBoard !== input.boardId;
+      return { previousWriter: null, writerSlotOk: false, sessionBindingChanged, sessionBoardChanged };
     }
 
     try {
@@ -712,8 +725,12 @@ export class BoardPresenceStore {
       pipeline.set(lastReportKey, lastReportValue, 'PX', REPORT_DEDUP_WINDOW_MS);
       commandLabels.push('last-report-set');
       let boardSessionCommandIndex = -1;
+      let sessionBoardCommandIndex = -1;
       if (input.sessionId) {
-        pipeline.set(`session:${input.sessionId}:board`, input.boardId, 'EX', BOARD_MEMBERSHIP_TTL);
+        // SET..GET so the caller learns whether this send moved the session to
+        // another wall (sessionBoardChanged).
+        sessionBoardCommandIndex = commandLabels.length;
+        pipeline.set(`session:${input.sessionId}:board`, input.boardId, 'EX', BOARD_MEMBERSHIP_TTL, 'GET');
         commandLabels.push('session-board-set');
         // Reverse binding for the board-keyed queue preview (gym kiosks):
         // `getBoardSession(boardId)` answers "which session's queue is on this
@@ -746,13 +763,24 @@ export class BoardPresenceStore {
         const [bindingError, previousBoundSession] = results[boardSessionCommandIndex];
         sessionBindingChanged = !bindingError && ((previousBoundSession as string | null) ?? null) !== input.sessionId;
       }
+      let sessionBoardChanged = false;
+      if (sessionBoardCommandIndex !== -1) {
+        const [sessionBoardError, previousSessionBoard] = results[sessionBoardCommandIndex];
+        sessionBoardChanged =
+          !sessionBoardError && ((previousSessionBoard as string | null) ?? null) !== String(input.boardId);
+      }
 
       const [writerError, writerValue] = results[writerCommandIndex];
-      if (writerError) return { previousWriter: null, writerSlotOk: false, sessionBindingChanged };
-      return { previousWriter: (writerValue as string | null) ?? null, writerSlotOk: true, sessionBindingChanged };
+      if (writerError) return { previousWriter: null, writerSlotOk: false, sessionBindingChanged, sessionBoardChanged };
+      return {
+        previousWriter: (writerValue as string | null) ?? null,
+        writerSlotOk: true,
+        sessionBindingChanged,
+        sessionBoardChanged,
+      };
     } catch (error) {
       this.deps.logger.error('[PubSub] commitBoardClimb pipeline failed:', error);
-      return { previousWriter: null, writerSlotOk: false, sessionBindingChanged: false };
+      return { previousWriter: null, writerSlotOk: false, sessionBindingChanged: false, sessionBoardChanged: false };
     }
   }
 

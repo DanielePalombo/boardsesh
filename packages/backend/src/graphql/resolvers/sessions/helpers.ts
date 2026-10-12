@@ -1,5 +1,10 @@
-import { projectSessionBoardPath, redactSessionUsers, redactQueueItem } from '../../../services/board-session-privacy';
-import { canViewActivityIdentity } from '../../../services/privacy';
+import {
+  projectSessionBoardPath,
+  queueItemUserIds,
+  redactSessionUsers,
+  redactQueueItem,
+  sessionVisibleUserIds,
+} from '../../../services/board-session-privacy';
 import type { ConnectionContext, ClimbQueueItem, SessionUser } from '@boardsesh/shared-schema';
 import { roomManager } from '../../../services/room-manager';
 import type { Session as SessionDbRow } from '../../../db/schema';
@@ -90,6 +95,27 @@ export async function buildSessionPayload(
     leaderFetch,
   ]);
 
+  const createdByUserId = inputs.createdByUserId ?? sessionData?.createdByUserId;
+  // One lookup (one session-board read, one query) names, or not, everyone the
+  // payload carries: the roster, who added and ticked each queue item, and the
+  // host. A climber who stays anonymous on boards they don't own is unnamed
+  // when the session's board is not theirs.
+  const visible = await sessionVisibleUserIds(
+    [
+      ...users.map((user) => user.userId),
+      ...(queueState
+        ? queueItemUserIds(
+            queueState.currentClimbQueueItem
+              ? [...queueState.queue, queueState.currentClimbQueueItem]
+              : queueState.queue,
+          )
+        : []),
+      createdByUserId,
+    ],
+    ctx.userId,
+    sessionId,
+  );
+
   return {
     id: sessionId,
     // `|| null` (not `??`) on the nullable-string fallback keeps parity with
@@ -103,15 +129,17 @@ export async function buildSessionPayload(
       ctx.userId,
       { presentedByViewer: inputs.boardPath !== undefined },
     ),
-    users: await redactSessionUsers(users, ctx.userId, sessionId),
+    users: await redactSessionUsers(users, ctx.userId, sessionId, visible),
     queueState: queueState
       ? {
           sequence: queueState.sequence,
           stateHash: queueState.stateHash,
           stateHashOrdered: queueState.stateHashOrdered ?? null,
-          queue: await Promise.all(queueState.queue.map((item) => redactQueueItem(item, ctx.userId))),
+          queue: await Promise.all(
+            queueState.queue.map((item) => redactQueueItem(item, ctx.userId, sessionId, visible)),
+          ),
           currentClimbQueueItem: queueState.currentClimbQueueItem
-            ? await redactQueueItem(queueState.currentClimbQueueItem, ctx.userId)
+            ? await redactQueueItem(queueState.currentClimbQueueItem, ctx.userId, sessionId, visible)
             : null,
         }
       : null,
@@ -136,8 +164,7 @@ export async function buildSessionPayload(
     // empty-string-means-absent convention to honour here the way `name` /
     // `goal` have one.
     createdByUserId:
-      (inputs.createdByUserId ?? sessionData?.createdByUserId) &&
-      (await canViewActivityIdentity((inputs.createdByUserId ?? sessionData?.createdByUserId)!, ctx.userId))
+      createdByUserId && visible.has(createdByUserId)
         ? inputs.createdByUserId !== undefined
           ? inputs.createdByUserId
           : (sessionData?.createdByUserId ?? null)

@@ -3,34 +3,59 @@ import type { BoardPresenceClimb, BoardPresenceStats, SessionUser } from '@board
 
 vi.hoisted(() => vi.resetModules());
 
+type BoardRow = { userIds: readonly string[]; onBoard: { boardId: number | null } };
 const privacy = vi.hoisted(() => ({
+  anonymousOnBoardUserIds: vi.fn(),
+  anonymousOnBoardUserIdsByBoard: vi.fn(),
   canViewActivityIdentity: vi.fn(),
   canViewContent: vi.fn(),
   visibleActivityUserIds: vi.fn(),
+  visibleActivityUserIdsByBoard: vi.fn(),
 }));
+/** The board every session resolves to; null leaves it unplaced. */
+const sessionBoard = vi.hoisted(() => ({ boardId: 12 as number | null, resolve: vi.fn() }));
 const readable = vi.hoisted(() => ({
   climbs: [] as { uuid: string; userId: string | null; isListed: boolean; isDraft: boolean }[],
 }));
 vi.mock('../services/privacy', () => privacy);
-vi.mock('../db/client', () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => Object.assign(Promise.resolve(readable.climbs), { limit: async () => readable.climbs }),
-      }),
-    }),
-  },
+vi.mock('../services/session-board', () => ({
+  resolveSessionBoards: sessionBoard.resolve,
+  parseSessionBoardPath: () => ({ slug: null, config: null, boardType: null, angle: null }),
 }));
+vi.mock('../db/client', async () => {
+  const { boardSessions } = await import('@boardsesh/db/schema');
+  return {
+    db: {
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => {
+            // A live session's own row, for the board resolution; climb rows otherwise.
+            const rows =
+              table === boardSessions
+                ? [{ id: 'session-1', boardId: null, boardPath: 'kilter/1/10/1/40', createdByUserId: null }]
+                : readable.climbs;
+            return Object.assign(Promise.resolve(rows), { limit: async () => rows });
+          },
+        }),
+      }),
+    },
+  };
+});
 
+const { boardSessionPrivacyResolvers } = await import('../graphql/resolvers/shared/board-session-privacy');
 const {
   redactBoardClimbs,
   redactBoardHolder,
   redactBoardIdentity,
   redactBoardStats,
+  redactQueueItem,
   redactSessionUsers,
   sessionParticipantId,
   sessionEventParticipantId,
+  sessionVisibleUserIds,
 } = await import('../services/board-session-privacy');
+
+const BOARD_ID = 9;
 
 const display: BoardPresenceClimb = {
   climbUuid: 'climb-1',
@@ -49,6 +74,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   privacy.canViewActivityIdentity.mockResolvedValue(false);
   privacy.visibleActivityUserIds.mockResolvedValue(new Set());
+  privacy.anonymousOnBoardUserIds.mockResolvedValue(new Set());
+  // Nobody on a session board is named unless a test says so.
+  privacy.visibleActivityUserIdsByBoard.mockImplementation(async (rows: readonly BoardRow[]) =>
+    rows.map(() => new Set<string>()),
+  );
+  sessionBoard.boardId = 12;
+  sessionBoard.resolve.mockImplementation(
+    async (sessions: readonly { id: string }[]) =>
+      new Map(sessionBoard.boardId === null ? [] : sessions.map((session) => [session.id, sessionBoard.boardId])),
+  );
   readable.climbs = [{ uuid: display.climbUuid, userId: null, isListed: true, isDraft: false }];
   privacy.canViewContent.mockResolvedValue(true);
 });
@@ -56,7 +91,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe('board history identity', () => {
   it('keeps the climb, time and order while concealing attribution from a stranger', async () => {
-    const [hidden] = await redactBoardClimbs([display], 'stranger');
+    const [hidden] = await redactBoardClimbs([display], 'stranger', BOARD_ID);
     expect(hidden).toMatchObject({
       climbUuid: display.climbUuid,
       name: display.name,
@@ -66,30 +101,30 @@ describe('board history identity', () => {
       sentByDisplayName: null,
       sentByAvatarUrl: null,
     });
-    // The sender's account decides; the session the send was in is not consulted.
-    expect(privacy.visibleActivityUserIds).toHaveBeenCalledWith(['climber-1'], 'stranger');
+    // The sender's account decides, on this board; the session the send was in is not consulted.
+    expect(privacy.visibleActivityUserIds).toHaveBeenCalledWith(['climber-1'], 'stranger', { boardId: BOARD_ID });
   });
   it('checks every sender on a page in one lookup', async () => {
     privacy.visibleActivityUserIds.mockResolvedValue(new Set(['climber-1']));
     const page = [display, { ...display, seq: 8, sentByUserId: 'climber-2' }, { ...display, seq: 9 }];
-    const redacted = await redactBoardClimbs(page, 'viewer');
+    const redacted = await redactBoardClimbs(page, 'viewer', BOARD_ID);
     expect(redacted.map((climb) => climb.sentByUserId)).toEqual(['climber-1', null, 'climber-1']);
     expect(privacy.visibleActivityUserIds).toHaveBeenCalledTimes(1);
     expect(privacy.canViewActivityIdentity).not.toHaveBeenCalled();
   });
   it('rechecks an existing cached display after a follower is revoked', async () => {
     privacy.visibleActivityUserIds.mockResolvedValueOnce(new Set(['climber-1'])).mockResolvedValueOnce(new Set());
-    expect((await redactBoardClimbs([display], 'follower'))[0].sentByUserId).toBe('climber-1');
-    expect((await redactBoardClimbs([display], 'follower'))[0].sentByUserId).toBeNull();
+    expect((await redactBoardClimbs([display], 'follower', BOARD_ID))[0].sentByUserId).toBe('climber-1');
+    expect((await redactBoardClimbs([display], 'follower', BOARD_ID))[0].sentByUserId).toBeNull();
     expect(display.sentByUserId).toBe('climber-1');
   });
   it('names a historical row with no session or policy version by its climber account alone', async () => {
     const historical = { ...display, sessionId: null, identityPolicyVersion: undefined };
     privacy.visibleActivityUserIds.mockResolvedValue(new Set(['climber-1']));
-    expect((await redactBoardClimbs([historical], 'stranger'))[0].sentByUserId).toBe('climber-1');
+    expect((await redactBoardClimbs([historical], 'stranger', BOARD_ID))[0].sentByUserId).toBe('climber-1');
     privacy.visibleActivityUserIds.mockResolvedValue(new Set());
-    expect((await redactBoardClimbs([historical], 'stranger'))[0].sentByUserId).toBeNull();
-    expect(privacy.visibleActivityUserIds).toHaveBeenLastCalledWith(['climber-1'], 'stranger');
+    expect((await redactBoardClimbs([historical], 'stranger', BOARD_ID))[0].sentByUserId).toBeNull();
+    expect(privacy.visibleActivityUserIds).toHaveBeenLastCalledWith(['climber-1'], 'stranger', { boardId: BOARD_ID });
   });
   it('retains chronology but removes private climb content', async () => {
     // The primary SQL policy excludes the inaccessible authored source row.
@@ -97,6 +132,7 @@ describe('board history identity', () => {
     const [hidden] = await redactBoardClimbs(
       [{ ...display, frames: 'private-holds', setter: 'Secret setter' }],
       'viewer',
+      BOARD_ID,
     );
     expect(hidden).toMatchObject({ seq: 7, sentAt: display.sentAt, name: null, frames: null, setter: null });
     expect(hidden.climbUuid).toBe(display.climbUuid);
@@ -115,7 +151,7 @@ describe('board history identity', () => {
         sentAt: display.sentAt,
       },
     };
-    await redactBoardStats(stats, 'viewer');
+    await redactBoardStats(stats, 'viewer', BOARD_ID);
     expect(privacy.canViewActivityIdentity).toHaveBeenCalledWith('climber-1', 'viewer', {
       entityType: 'tick',
       entityId: 'private-tick',
@@ -134,7 +170,7 @@ describe('board history identity', () => {
         sentAt: display.sentAt,
       },
     };
-    const hidden = await redactBoardStats(stats, 'viewer');
+    const hidden = await redactBoardStats(stats, 'viewer', BOARD_ID);
     expect(hidden).toMatchObject({
       climbsSentCount: 20,
       distinctClimbersCount: 4,
@@ -156,7 +192,7 @@ describe('board history identity', () => {
         sentAt: display.sentAt,
       },
     };
-    expect(await redactBoardStats(stats, 'viewer')).toEqual({ ...stats, hardestSend: null });
+    expect(await redactBoardStats(stats, 'viewer', BOARD_ID)).toEqual({ ...stats, hardestSend: null });
     expect(privacy.canViewContent).toHaveBeenCalledWith('viewer', 'climb', 'climb-1', null);
   });
 });
@@ -164,12 +200,16 @@ describe('board history identity', () => {
 describe('Bluetooth holder identity', () => {
   const holder = { userId: 'climber-1', displayName: 'Public climber', avatarUrl: 'https://example.test/a' };
   it('names the holder by their account privacy with no live session on the board', async () => {
-    privacy.canViewActivityIdentity.mockResolvedValue(true);
-    expect(await redactBoardHolder(holder, 'stranger')).toEqual(holder);
-    expect(privacy.canViewActivityIdentity).toHaveBeenCalledWith('climber-1', 'stranger');
+    privacy.visibleActivityUserIds.mockResolvedValue(new Set(['climber-1']));
+    expect(await redactBoardHolder(holder, 'stranger', BOARD_ID)).toEqual(holder);
+    expect(privacy.visibleActivityUserIds).toHaveBeenCalledWith(['climber-1'], 'stranger', { boardId: BOARD_ID });
+  });
+  it('names the holder to themselves without a lookup', async () => {
+    expect(await redactBoardHolder(holder, 'climber-1', BOARD_ID)).toEqual(holder);
+    expect(privacy.visibleActivityUserIds).not.toHaveBeenCalled();
   });
   it('withholds a private holder from a viewer their account does not allow', async () => {
-    expect(await redactBoardHolder(holder, 'stranger')).toEqual({
+    expect(await redactBoardHolder(holder, 'stranger', BOARD_ID)).toEqual({
       userId: null,
       displayName: null,
       avatarUrl: null,
@@ -222,11 +262,180 @@ describe('session roster identity', () => {
     expect(sessionParticipantId('session-1', 'climber-1')).not.toBe(sessionParticipantId('session-2', 'climber-1'));
   });
   it('lets explicitly approved viewers see names without exposing the account ID as a protocol ID', async () => {
-    privacy.canViewActivityIdentity.mockResolvedValue(true);
+    privacy.visibleActivityUserIdsByBoard.mockImplementation(async (rows: readonly BoardRow[]) =>
+      rows.map((row) => new Set(row.userIds)),
+    );
     const [visible] = await redactSessionUsers([user], 'approved-follower', 'session-1');
     expect(visible.userId).toBe(user.userId);
     expect(visible.username).toBe(user.username);
     expect(visible.id).not.toBe(user.userId);
+  });
+});
+
+describe('anonymous on boards they do not own', () => {
+  const rosterUser: SessionUser = {
+    id: 'climber-1',
+    userId: 'climber-1',
+    username: 'Public climber',
+    avatarUrl: 'https://example.test/avatar',
+    isLeader: false,
+    connectionState: 'CONNECTED',
+  };
+  beforeEach(() => {
+    // Public accounts the viewer could otherwise name; climber-1 stays anonymous
+    // on the board, so a lookup scoped to it leaves them out.
+    privacy.canViewActivityIdentity.mockResolvedValue(true);
+    privacy.visibleActivityUserIds.mockImplementation(
+      async (userIds: readonly (string | null | undefined)[], _viewerId: unknown, onBoard?: unknown) =>
+        new Set(userIds.filter((userId): userId is string => !!userId && !(onBoard && userId === 'climber-1'))),
+    );
+    privacy.anonymousOnBoardUserIds.mockResolvedValue(new Set(['climber-1']));
+    privacy.visibleActivityUserIdsByBoard.mockImplementation(async (rows: readonly BoardRow[]) =>
+      rows.map((row) => new Set(row.userIds.filter((userId) => userId !== 'climber-1'))),
+    );
+  });
+
+  it('keeps the wall feed row and its order but drops the name, asking about this board', async () => {
+    const [row] = await redactBoardClimbs([display], 'stranger', BOARD_ID);
+    expect(row).toMatchObject({
+      climbUuid: display.climbUuid,
+      name: display.name,
+      seq: 7,
+      sentAt: display.sentAt,
+      sentByUserId: null,
+      sentByDisplayName: null,
+      sentByAvatarUrl: null,
+    });
+    expect(privacy.visibleActivityUserIds).toHaveBeenCalledWith(['climber-1'], 'stranger', { boardId: BOARD_ID });
+  });
+  it('names the sender again once the predicate no longer holds', async () => {
+    privacy.visibleActivityUserIds.mockResolvedValue(new Set(['climber-1']));
+    expect((await redactBoardClimbs([display], 'stranger', BOARD_ID))[0].sentByUserId).toBe('climber-1');
+  });
+  it('unnames the hardest send but keeps every total', async () => {
+    const stats: BoardPresenceStats = {
+      climbsSentCount: 20,
+      distinctClimbersCount: 4,
+      hardestGrade: 'V8',
+      hardestSend: {
+        climbUuid: 'climb-1',
+        grade: 'V8',
+        sentByUserId: 'climber-1',
+        sentByDisplayName: 'Public climber',
+        tickUuid: 'tick-1',
+        sentAt: display.sentAt,
+      },
+    };
+    expect(await redactBoardStats(stats, 'stranger', BOARD_ID)).toMatchObject({
+      climbsSentCount: 20,
+      distinctClimbersCount: 4,
+      hardestGrade: 'V8',
+      hardestSend: { climbUuid: 'climb-1', grade: 'V8', sentByUserId: null, sentByDisplayName: null },
+    });
+  });
+  it('unnames the Bluetooth holder on that board', async () => {
+    const holder = { userId: 'climber-1', displayName: 'Public climber', avatarUrl: 'https://example.test/a' };
+    expect(await redactBoardHolder(holder, 'stranger', BOARD_ID)).toEqual({
+      userId: null,
+      displayName: null,
+      avatarUrl: null,
+    });
+  });
+  it('keeps the opaque session id in the roster of a session on that board, judged on the board it is on', async () => {
+    const [hidden] = await redactSessionUsers([rosterUser], 'stranger', 'session-1');
+    expect(hidden).toMatchObject({ userId: null, username: '', avatarUrl: undefined });
+    expect(hidden.id).toBe(sessionParticipantId('session-1', 'climber-1'));
+    expect(sessionBoard.resolve).toHaveBeenCalledWith([expect.objectContaining({ id: 'session-1' })]);
+    expect(privacy.visibleActivityUserIdsByBoard).toHaveBeenCalledWith(
+      [{ rowIndex: 0, userIds: ['climber-1'], onBoard: { boardId: 12, sessionId: 'session-1' } }],
+      'stranger',
+    );
+  });
+  it('fails closed when nothing places the session on a board', async () => {
+    sessionBoard.boardId = null;
+    await redactSessionUsers([rosterUser], 'stranger', 'session-1');
+    // No board of the climber's has the session's config, so no known board.
+    expect(privacy.visibleActivityUserIdsByBoard).toHaveBeenCalledWith(
+      [{ rowIndex: 0, userIds: ['climber-1'], onBoard: { boardId: null, sessionId: 'session-1' } }],
+      'stranger',
+    );
+  });
+  it('drops added-by and ticked-by on a queue item in a session on that board', async () => {
+    const item = {
+      uuid: 'queue-1',
+      climb: { uuid: display.climbUuid, name: 'A climb' },
+      addedBy: 'climber-1',
+      addedByUser: { id: 'climber-1', username: 'Public climber' },
+      tickedBy: ['climber-1', 'climber-2'],
+      suggested: false,
+    } as unknown as Parameters<typeof redactQueueItem>[0];
+    const redacted = await redactQueueItem(item, 'stranger', 'session-1');
+    expect(redacted.addedBy).toBeUndefined();
+    expect(redacted.addedByUser).toBeUndefined();
+    expect(redacted.tickedBy).toEqual(['climber-2']);
+  });
+});
+
+describe('one lookup per session projection', () => {
+  const queueItem = (uuid: string, addedBy: string, tickedBy: string[]) =>
+    ({
+      uuid,
+      climb: { uuid: display.climbUuid, name: 'A climb' },
+      addedBy,
+      addedByUser: { id: addedBy, username: addedBy },
+      tickedBy,
+      suggested: false,
+    }) as unknown as Parameters<typeof redactQueueItem>[0];
+  const ctx = { connectionId: 'conn-1', userId: 'viewer', sessionId: 'session-1', isAuthenticated: true } as Parameters<
+    typeof boardSessionPrivacyResolvers.ClimbQueueItem.addedBy
+  >[2];
+
+  it('names the viewer to themselves without placing the session', async () => {
+    expect(await sessionVisibleUserIds(['viewer', null, 'viewer'], 'viewer', 'session-1')).toEqual(new Set(['viewer']));
+    expect(sessionBoard.resolve).not.toHaveBeenCalled();
+    expect(privacy.visibleActivityUserIdsByBoard).not.toHaveBeenCalled();
+  });
+
+  it('answers every field of every queue item and roster entry resolved together with one board resolution and one query', async () => {
+    privacy.visibleActivityUserIdsByBoard.mockImplementation(async (rows: readonly BoardRow[]) =>
+      rows.map((row) => new Set(row.userIds.filter((userId) => userId === 'climber-2'))),
+    );
+    const items = [
+      queueItem('queue-1', 'climber-1', ['climber-2']),
+      queueItem('queue-2', 'climber-2', []),
+      queueItem('queue-3', 'climber-3', ['climber-1', 'climber-2']),
+    ];
+    const { ClimbQueueItem, SessionUser } = boardSessionPrivacyResolvers;
+    const rosterUser = (userId: string) =>
+      ({ id: userId, userId, username: userId, isLeader: false, connectionState: 'CONNECTED' }) as SessionUser;
+    // graphql-js starts every field of every list item in one synchronous pass.
+    const [addedBy, addedByUser, tickedBy, usernames] = await Promise.all([
+      Promise.all(items.map((item) => ClimbQueueItem.addedBy(item, undefined, ctx))),
+      Promise.all(items.map((item) => ClimbQueueItem.addedByUser(item, undefined, ctx))),
+      Promise.all(items.map((item) => ClimbQueueItem.tickedBy(item, undefined, ctx))),
+      Promise.all(['climber-1', 'climber-2'].map((userId) => SessionUser.username(rosterUser(userId), undefined, ctx))),
+    ]);
+    expect(addedBy).toEqual([undefined, 'climber-2', undefined]);
+    expect(addedByUser.map((user) => user?.id)).toEqual([undefined, 'climber-2', undefined]);
+    expect(tickedBy).toEqual([['climber-2'], [], ['climber-2']]);
+    expect(usernames).toEqual(['', 'climber-2']);
+    expect(sessionBoard.resolve).toHaveBeenCalledTimes(1);
+    expect(privacy.visibleActivityUserIdsByBoard).toHaveBeenCalledTimes(1);
+    expect(privacy.visibleActivityUserIdsByBoard).toHaveBeenCalledWith(
+      [
+        {
+          rowIndex: 0,
+          userIds: ['climber-1', 'climber-2', 'climber-3'],
+          onBoard: { boardId: 12, sessionId: 'session-1' },
+        },
+      ],
+      'viewer',
+    );
+    expect(privacy.canViewActivityIdentity).not.toHaveBeenCalled();
+
+    // Nothing is cached past the projection: the next one asks again.
+    await ClimbQueueItem.addedBy(items[0], undefined, ctx);
+    expect(privacy.visibleActivityUserIdsByBoard).toHaveBeenCalledTimes(2);
   });
 });
 

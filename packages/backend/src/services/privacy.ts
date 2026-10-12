@@ -1,5 +1,11 @@
-import { boardIdentityVisibleCondition, userActivityVisibilityCondition } from '@boardsesh/db/queries';
+import {
+  anonymousOnBoardCondition,
+  boardIdentityVisibleCondition,
+  restrictedBoardMemberIdentityCondition,
+  userActivityVisibilityCondition,
+} from '@boardsesh/db/queries';
 export {
+  anonymousOnBoardCondition,
   approvedFollowerCondition,
   boardIdentityVisibleCondition,
   userActivityVisibilityCondition,
@@ -9,7 +15,7 @@ export {
   resourceLocationCondition,
   sessionBoardLocationCondition,
 } from '@boardsesh/db/queries';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, not, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { GraphQLError } from 'graphql';
 import * as schema from '@boardsesh/db/schema';
 import {
@@ -53,6 +59,7 @@ export async function getPrivacySettings(userId: string): Promise<PrivacySetting
     isPrivate: profile?.isPrivate ?? false,
     privacyRevision: profile?.privacyRevision ?? 0,
     defaultSessionAudience: profile?.defaultSessionAudience ?? (profile?.isPrivate ? 'followers' : 'public'),
+    anonymousOnForeignBoards: profile?.anonymousOnForeignBoards ?? false,
     enabled: privacyControlsEnabled(),
   };
 }
@@ -74,19 +81,111 @@ export async function canViewUserActivity(viewerId: ViewerId, subjectId: string)
     .limit(1);
   return !!subject;
 }
-/** `canViewUserActivity` for a page of climbers: one query for all of them. */
+/**
+ * The board a board-facing row is projected for, as a `user_boards.id`. For a
+ * live session that is the board `resolveSessionBoards` places it on; null
+ * when nothing places it yet, which `anonymousOnBoardCondition` reads as not
+ * the climber's own (it fails closed).
+ */
+export type BoardFacingScope = { boardId: number | null; sessionId?: string };
+const boardFacingSessionId = (scope: BoardFacingScope): SQL | undefined =>
+  scope.sessionId ? sql`${scope.sessionId}::text` : undefined;
+const boardFacingBoardId = (scope: BoardFacingScope): SQL => sql`${scope.boardId ?? null}::bigint`;
+const distinctUserIds = (userIds: readonly (string | null | undefined)[]): string[] => [
+  ...new Set(userIds.filter((userId): userId is string => !!userId)),
+];
+
+/**
+ * `canViewUserActivity` for a page of climbers: one query for all of them.
+ * Given the board a board-facing page is about (`onBoard`), the same query also
+ * leaves out climbers who stay anonymous there (`anonymousOnBoardCondition`).
+ */
 export async function visibleActivityUserIds(
   subjectUserIds: readonly (string | null | undefined)[],
   viewerId: ViewerId,
+  onBoard?: BoardFacingScope,
 ): Promise<Set<string>> {
-  const candidates = [...new Set(subjectUserIds.filter((userId): userId is string => !!userId))];
+  const candidates = distinctUserIds(subjectUserIds);
   if (candidates.length === 0) return new Set();
   const rows = await db
     .select({ id: schema.users.id })
     .from(schema.users)
-    .where(and(inArray(schema.users.id, candidates), userActivityVisibilityCondition(schema.users.id, viewerId)));
+    .where(
+      and(
+        inArray(schema.users.id, candidates),
+        onBoard
+          ? or(
+              userActivityVisibilityCondition(schema.users.id, viewerId),
+              restrictedBoardMemberIdentityCondition(
+                schema.users.id,
+                boardFacingBoardId(onBoard),
+                viewerId,
+                boardFacingSessionId(onBoard),
+              ),
+            )
+          : userActivityVisibilityCondition(schema.users.id, viewerId),
+        onBoard
+          ? not(
+              anonymousOnBoardCondition(
+                schema.users.id,
+                boardFacingBoardId(onBoard),
+                viewerId,
+                boardFacingSessionId(onBoard),
+              ),
+            )
+          : undefined,
+      ),
+    );
   return new Set(rows.map((row) => row.id));
 }
+
+type BoardRows = readonly { userIds: readonly (string | null | undefined)[]; onBoard: BoardFacingScope }[];
+/** One query over (row, climber, board) triples: the climbers of each row that `keep` passes. */
+async function userIdsByBoard(
+  rows: BoardRows,
+  keep: (boardId: SQLWrapper, sessionId: SQLWrapper) => SQL | undefined,
+): Promise<Set<string>[]> {
+  const found = rows.map(() => new Set<string>());
+  const triples = rows.flatMap((row, rowIndex) =>
+    distinctUserIds(row.userIds).map(
+      (userId) =>
+        sql`(${rowIndex}::int, ${userId}::text, ${boardFacingBoardId(row.onBoard)}, ${row.onBoard.sessionId ?? null}::text)`,
+    ),
+  );
+  if (triples.length === 0) return found;
+  const matches = await db
+    .select({ rowIndex: sql<number>`anon_row.row_index`, userId: schema.users.id })
+    .from(sql`(VALUES ${sql.join(triples, sql`, `)}) AS anon_row(row_index, user_id, board_id, session_id)`)
+    .innerJoin(schema.users, eq(schema.users.id, sql`anon_row.user_id`))
+    .where(keep(sql`anon_row.board_id`, sql`anon_row.session_id`));
+  for (const { rowIndex, userId } of matches) found[Number(rowIndex)]?.add(userId);
+  return found;
+}
+
+/**
+ * `visibleActivityUserIds` for a page whose rows sit on different boards (the
+ * Climbing now rail, nearby discovery): the climbers each row may name on its
+ * own board, in the order given. One query for the whole page.
+ */
+export async function visibleActivityUserIdsByBoard(rows: BoardRows, viewerId: ViewerId): Promise<Set<string>[]> {
+  return userIdsByBoard(rows, (boardId, sessionId) =>
+    and(
+      or(
+        userActivityVisibilityCondition(schema.users.id, viewerId),
+        restrictedBoardMemberIdentityCondition(schema.users.id, boardId, viewerId, sessionId),
+      ),
+      not(anonymousOnBoardCondition(schema.users.id, boardId, viewerId, sessionId)),
+    ),
+  );
+}
+
+/** `anonymousOnBoardUserIds` for rows on different boards, in the order given. One query. */
+export async function anonymousOnBoardUserIdsByBoard(rows: BoardRows, viewerId: ViewerId): Promise<Set<string>[]> {
+  return userIdsByBoard(rows, (boardId, sessionId) =>
+    anonymousOnBoardCondition(schema.users.id, boardId, viewerId, sessionId),
+  );
+}
+
 /** Account/item policy only: the session or wall an item sits in never hides it. */
 export async function canViewContent(
   viewerId: ViewerId,
@@ -344,6 +443,45 @@ export async function visibleBoardIdentityIds(
       and(inArray(schema.userBoards.id, candidates), boardIdentityVisibleCondition(schema.userBoards.id, viewerId)),
     );
   return new Set(rows.map((row) => Number(row.id)));
+}
+
+/**
+ * Climbers among `subjectUserIds` who show as anonymous to `viewerId` on this
+ * board: they chose to stay anonymous on boards they don't own, and this one is
+ * not theirs (`anonymousOnBoardCondition`). For a row whose identity follows an
+ * item's own audience rather than the account (the hardest send); everywhere
+ * else `visibleActivityUserIds(..., onBoard)` folds it into the page's query.
+ */
+export async function anonymousOnBoardUserIds(
+  subjectUserIds: readonly (string | null | undefined)[],
+  onBoard: BoardFacingScope,
+  viewerId: ViewerId,
+): Promise<Set<string>> {
+  const candidates = distinctUserIds(subjectUserIds).filter((userId) => userId !== viewerId);
+  if (candidates.length === 0) return new Set();
+  const rows = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(
+      and(
+        inArray(schema.users.id, candidates),
+        anonymousOnBoardCondition(
+          schema.users.id,
+          boardFacingBoardId(onBoard),
+          viewerId,
+          boardFacingSessionId(onBoard),
+        ),
+      ),
+    );
+  return new Set(rows.map((row) => row.id));
+}
+/** `anonymousOnBoardUserIds` for one climber. */
+export async function isAnonymousOnBoard(
+  authorId: string,
+  onBoard: BoardFacingScope,
+  viewerId: ViewerId,
+): Promise<boolean> {
+  return (await anonymousOnBoardUserIds([authorId], onBoard, viewerId)).has(authorId);
 }
 
 export type PrivacyExecutor = Pick<typeof db, 'select' | 'insert'>;

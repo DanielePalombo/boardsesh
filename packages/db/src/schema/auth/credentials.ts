@@ -23,6 +23,10 @@ export const userProfiles = pgTable('user_profiles', {
   privacyRevision: integer('privacy_revision').default(0).notNull(),
   privacyOnboardingVersion: integer('privacy_onboarding_version').default(0).notNull(),
   defaultSessionAudience: text('default_session_audience').$type<'public' | 'followers' | 'invite_only' | 'only_me'>(),
+  // Board-facing surfaces (wall feed, leaderboard, live roster) show this climber
+  // as anonymous on every board they don't own. Read-time only: ticks and
+  // board history are stored and counted exactly as before.
+  anonymousOnForeignBoards: boolean('anonymous_on_foreign_boards').default(false).notNull(),
   displayName: text('display_name'), // Custom display name (optional, falls back to users.name)
   avatarUrl: text('avatar_url'), // URL to avatar image (S3 or external)
   instagramUrl: text('instagram_url'), // Instagram profile URL (optional)

@@ -11,7 +11,12 @@ import { withSerialPlan } from '@boardsesh/db/queries';
 import { requireAuthenticated, validateInput, resolveClimbNoMatch } from '../shared/helpers';
 import { ActivityFeedInputSchema } from '../../../validation/schemas';
 import { encodeCursor, decodeCursor } from '../../../utils/feed-cursor';
-import { canAccessResource, contentVisibilityCondition, visibleBoardIdentityUuids } from '../../../services/privacy';
+import {
+  anonymousOnBoardUserIds,
+  canAccessResource,
+  contentVisibilityCondition,
+  visibleBoardIdentityUuids,
+} from '../../../services/privacy';
 import { redactBoardIdentity } from '../../../services/board-session-privacy';
 import {
   socialEntityPrivacyCondition,
@@ -295,6 +300,7 @@ export const activityFeedQueries = {
 
     // Board filter: require an active board and scope to ticks recorded for it.
     let layoutIdFilter: number | null = null;
+    let boardIdFilter: number | null = null;
     if (validatedInput.boardUuid) {
       const board = await db
         .select({
@@ -318,6 +324,7 @@ export const activityFeedQueries = {
       conditions.push(eq(dbSchema.boardseshTicks.boardId, board.id));
       conditions.push(eq(dbSchema.boardseshTicks.boardType, board.boardType));
       layoutIdFilter = board.layoutId;
+      boardIdFilter = board.id;
     }
 
     if (layoutIdFilter !== null) {
@@ -410,7 +417,23 @@ export const activityFeedQueries = {
 
     const hasMore = results.length > limit;
     const resultRows = hasMore ? results.slice(0, limit) : results;
-    const items = resultRows.map(mapTickRowToFeedItem);
+    // A wall's trending list is board-facing: a climber who stays anonymous on
+    // boards they don't own keeps the send here without name, avatar or note
+    // when this wall is not theirs. One query for the page.
+    const anonymousActors =
+      boardIdFilter === null
+        ? new Set<string>()
+        : await anonymousOnBoardUserIds(
+            resultRows.map((row) => row.tick.userId),
+            { boardId: boardIdFilter },
+            ctx.isAuthenticated ? ctx.userId : null,
+          );
+    const items = resultRows.map((row) => {
+      const item = mapTickRowToFeedItem(row);
+      return anonymousActors.has(row.tick.userId)
+        ? { ...item, actorId: null, actorDisplayName: null, actorAvatarUrl: null, comment: null }
+        : item;
+    });
 
     let nextCursor: string | null = null;
     if (hasMore && resultRows.length > 0) {

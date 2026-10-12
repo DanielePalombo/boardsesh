@@ -3,7 +3,7 @@ import { createEagerAsyncIterator } from './async-iterators';
 
 /** A privacy invalidation wakes quiet subscriptions so access is rechecked. */
 export function createPrivacyAwareIterator<Event>(
-  subscribe: (push: (event: Event) => void) => Promise<() => void>,
+  subscribe: (push: (event: Event | null) => void) => Promise<() => void>,
   name: string,
 ) {
   return createEagerAsyncIterator<Event | null>(async (push) => {

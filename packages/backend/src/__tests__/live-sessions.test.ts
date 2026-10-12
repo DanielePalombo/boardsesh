@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import { v4 as uuidv4 } from 'uuid';
-import { and, eq, inArray, like } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import type { ClimbQueueItem, ConnectionContext, LiveSession } from '@boardsesh/shared-schema';
 import { getGradeLabel } from '@boardsesh/db/queries';
 import * as dbSchema from '@boardsesh/db/schema';
@@ -464,130 +464,222 @@ describe('followedLiveSessions — board arm', () => {
     expect(sessions[0].reasons).toEqual(['SELECTED_BOARD']);
   });
 
-  it('resolves the newest ticked board before the board_id column before a /b/ slug', async () => {
-    const [olderTickBoard, newerTickBoard, columnBoard, slugBoard] = [
+  it('resolves the board_id column before a /b/ slug before the binding before the newest tick', async () => {
+    const [olderTickBoard, newerTickBoard, columnBoard, slugBoard, boundBoard] = [
+      await makeBoard(),
       await makeBoard(),
       await makeBoard(),
       await makeBoard(),
       await makeBoard(),
     ];
     const slugPath = `/b/${slugBoard.slug}/40`;
-    const ticked = await makeSession({ boardId: columnBoard.id, boardPath: slugPath });
-    await addTick({ sessionId: ticked, boardId: olderTickBoard.id, climbedAt: new Date(Date.now() - 60_000) });
-    await addTick({ sessionId: ticked, boardId: newerTickBoard.id });
-    const columnOnly = await makeSession({ boardId: columnBoard.id, boardPath: slugPath });
+    // The session's own board decides even when its newest tick is elsewhere:
+    // the card and the session it opens must agree on one board.
+    const columnTicked = await makeSession({ boardId: columnBoard.id, boardPath: slugPath });
+    await addTick({ sessionId: columnTicked, boardId: newerTickBoard.id });
     const slugOnly = await makeSession({ boardPath: slugPath });
+    await addTick({ sessionId: slugOnly, boardId: newerTickBoard.id });
+    const bound = await makeSession();
+    await addTick({ sessionId: bound, boardId: newerTickBoard.id });
+    const tickedOnly = await makeSession();
+    await addTick({ sessionId: tickedOnly, boardId: olderTickBoard.id, climbedAt: new Date(Date.now() - 60_000) });
+    await addTick({ sessionId: tickedOnly, boardId: newerTickBoard.id });
+    vi.spyOn(pubsub, 'getSessionBoard').mockImplementation(async (sessionId) =>
+      sessionId === bound ? String(boundBoard.id) : null,
+    );
 
     const resolved = await resolveLiveSessionBoards([
-      { id: ticked, boardId: columnBoard.id, boardPath: slugPath, createdByUserId: STRANGER },
-      { id: columnOnly, boardId: columnBoard.id, boardPath: slugPath, createdByUserId: STRANGER },
+      { id: columnTicked, boardId: columnBoard.id, boardPath: slugPath, createdByUserId: STRANGER },
       { id: slugOnly, boardId: null, boardPath: slugPath, createdByUserId: STRANGER },
+      { id: bound, boardId: null, boardPath: KILTER_PATH, createdByUserId: STRANGER },
+      { id: tickedOnly, boardId: null, boardPath: KILTER_PATH, createdByUserId: STRANGER },
     ]);
-    expect(resolved.get(ticked)).toBe(newerTickBoard.id);
-    expect(resolved.get(columnOnly)).toBe(columnBoard.id);
+    expect(resolved.get(columnTicked)).toBe(columnBoard.id);
     expect(resolved.get(slugOnly)).toBe(slugBoard.id);
+    expect(resolved.get(bound)).toBe(boundBoard.id);
+    expect(resolved.get(tickedOnly)).toBe(newerTickBoard.id);
+  });
+
+  it('leaves a session unplaced when its binding cannot be read, instead of guessing from ticks', async () => {
+    const tickBoard = await makeBoard();
+    const sessionId = await makeSession();
+    await addTick({ sessionId, boardId: tickBoard.id });
+    vi.spyOn(pubsub, 'getSessionBoard').mockRejectedValue(new Error('redis down'));
+
+    const resolved = await resolveLiveSessionBoards([
+      { id: sessionId, boardId: null, boardPath: KILTER_PATH, createdByUserId: STRANGER },
+    ]);
+    expect(resolved.has(sessionId)).toBe(false);
+  });
+
+  it('shows the card on the same board the session is judged on', async () => {
+    const own = await makeBoard({ name: 'Session Wall' });
+    const elsewhere = await makeBoard({ name: 'Latest Tick Wall' });
+    await followBoard(VIEWER, own.uuid);
+    await followBoard(VIEWER, elsewhere.uuid);
+    const sessionId = await makeSession({ boardId: own.id });
+    await goLive(sessionId, STRANGER);
+    await addTick({ sessionId, boardId: elsewhere.id });
+
+    const [session] = await followedLiveSessions(VIEWER);
+    expect(session.sessionId).toBe(sessionId);
+    expect(session.board?.name).toBe('Session Wall');
   });
 });
 
 describe('config-path sessions (personal LED boards)', () => {
-  // Mobile's buildSessionBoardPath uses /b/<slug> only for gym and LED-less
-  // boards; a personal LED board gets a config path, so until the first tick or
-  // wall send the session names no board at all.
   const PROJ_PATH = '/kilter/8/21/3,1,2/40';
   const projBoard = (options: BoardOptions = {}) =>
     makeBoard({ ownerId: FRIEND, layoutId: 8, sizeId: 21, setIds: '1,2,3', ...options });
 
-  it("resolves to the creator's own board with that config, and lists it for the board's followers", async () => {
-    const proj = await projBoard({ name: 'The Proj Wall' });
-    await followBoard(VIEWER, proj.uuid);
-    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
-    await goLive(sessionId, FRIEND, PROJ_PATH);
-
-    const [session] = await followedLiveSessions(VIEWER);
-    expect(session.sessionId).toBe(sessionId);
-    expect(session.reasons).toEqual(['FOLLOWED_BOARD']);
-    expect(session.board?.name).toBe('The Proj Wall');
-    expect(session.angle).toBe(40);
-  });
-
-  it('resolves to a board the creator follows but does not own', async () => {
-    const proj = await projBoard({ ownerId: BOARD_OWNER, name: 'The Proj Wall' });
-    await followBoard(FRIEND, proj.uuid);
-    await followBoard(VIEWER, proj.uuid);
-    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
-    await goLive(sessionId, FRIEND, PROJ_PATH);
-
-    // Through the candidate query too, not just the resolver.
-    const [session] = await followedLiveSessions(VIEWER);
-    expect(session.sessionId).toBe(sessionId);
-    expect(session.reasons).toEqual(['FOLLOWED_BOARD']);
-    expect(session.board?.name).toBe('The Proj Wall');
-  });
-
-  it('prefers a board the creator owns over an identical one they follow', async () => {
+  it('does not infer the actual wall from an owned or followed matching config', async () => {
     const owned = await projBoard({ name: 'My Wall' });
     const followed = await projBoard({ ownerId: BOARD_OWNER, name: 'Their Wall' });
     await followBoard(FRIEND, followed.uuid);
+    await followBoard(VIEWER, owned.uuid);
     const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
-    // A newer tick on the followed wall does not outrank ownership.
+    await goLive(sessionId, FRIEND, PROJ_PATH);
     const earlier = await makeSession({ createdBy: FRIEND, status: 'ended' });
-    await addTick({ sessionId: earlier, userId: FRIEND, boardId: followed.id });
-
-    const resolved = await resolveLiveSessionBoards([
-      { id: sessionId, boardId: null, boardPath: PROJ_PATH, createdByUserId: FRIEND },
-    ]);
-    expect(resolved.get(sessionId)).toBe(owned.id);
-  });
-
-  it('gives up on two identical followed boards the creator never ticked on', async () => {
-    const first = await projBoard({ ownerId: BOARD_OWNER, name: 'First Followed Wall' });
-    const second = await projBoard({ ownerId: STRANGER, name: 'Second Followed Wall' });
-    await followBoard(FRIEND, first.uuid);
-    await followBoard(FRIEND, second.uuid);
-    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
-
-    const resolved = await resolveLiveSessionBoards([
-      { id: sessionId, boardId: null, boardPath: PROJ_PATH, createdByUserId: FRIEND },
-    ]);
-    expect(resolved.has(sessionId)).toBe(false);
-  });
-
-  it('never picks another climber’s identical board', async () => {
-    await projBoard({ ownerId: BOARD_OWNER, name: 'Somebody Else’s Wall' });
-    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
-
-    const resolved = await resolveLiveSessionBoards([
-      { id: sessionId, boardId: null, boardPath: PROJ_PATH, createdByUserId: FRIEND },
-    ]);
-    expect(resolved.has(sessionId)).toBe(false);
-  });
-
-  it('breaks a tie between identical boards by the creator’s newest tick, and gives up without one', async () => {
-    const home = await projBoard({ name: 'Home Wall' });
-    const garage = await projBoard({ name: 'Garage Wall' });
-    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
+    await addTick({ sessionId: earlier, userId: FRIEND, boardId: owned.id });
     const session = { id: sessionId, boardId: null, boardPath: PROJ_PATH, createdByUserId: FRIEND };
 
     expect((await resolveLiveSessionBoards([session])).has(sessionId)).toBe(false);
+    expect(await followedLiveSessions(VIEWER)).toEqual([]);
+    // The creator's send filed under their own board of this config names the
+    // config they hold, not the wall: saveTick files config-path sends there.
+    await addTick({ sessionId, userId: FRIEND, boardId: owned.id });
+    expect((await resolveLiveSessionBoards([session])).has(sessionId)).toBe(false);
+    expect(await followedLiveSessions(VIEWER)).toEqual([]);
+    // Another climber's send on that board does place it.
+    await addTick({ sessionId, userId: STRANGER, boardId: owned.id });
+    expect((await resolveLiveSessionBoards([session])).get(sessionId)).toBe(owned.id);
+    expect((await followedLiveSessions(VIEWER))[0].board?.uuid).toBe(owned.uuid);
+  });
 
-    // Ticks from an earlier session, so they place the boards, not this session.
-    const earlier = await makeSession({ createdBy: FRIEND, status: 'ended' });
-    await addTick({
-      sessionId: earlier,
-      userId: FRIEND,
-      boardId: home.id,
-      climbedAt: new Date(Date.now() - 86_400_000),
-    });
-    await addTick({
-      sessionId: earlier,
-      userId: FRIEND,
-      boardId: garage.id,
-      climbedAt: new Date(Date.now() - 3_600_000),
-    });
-    // Somebody else's newer tick on the home wall does not count.
-    await addTick({ sessionId: earlier, userId: STRANGER, boardId: home.id });
+  it('excludes newer config-only false positives before the board candidate cap', async () => {
+    const board = await projBoard({ name: 'Actually bound wall' });
+    await followBoard(VIEWER, board.uuid);
+    const bound = await makeSession({ createdBy: FRIEND, boardId: board.id, boardPath: PROJ_PATH });
+    await goLive(bound, FRIEND, PROJ_PATH);
+    await db
+      .update(dbSchema.boardSessions)
+      .set({ lastActivity: new Date(Date.now() - 10 * 60_000) })
+      .where(eq(dbSchema.boardSessions.id, bound));
+    await db.insert(dbSchema.boardSessions).values(
+      Array.from({ length: 55 }, () => ({
+        id: uuidv4(),
+        createdByUserId: FRIEND,
+        boardPath: PROJ_PATH,
+        isPublic: true,
+        status: 'active',
+        lastActivity: new Date(),
+        startedAt: new Date(),
+      })),
+    );
+    expect(ids(await followedLiveSessions(VIEWER))).toEqual([bound]);
+    expect(ids(await liveSessionQueries.boardLiveSessions(undefined, { boardId: board.id }, authCtx(VIEWER)))).toEqual([
+      bound,
+    ]);
+  });
 
-    expect((await resolveLiveSessionBoards([session])).get(sessionId)).toBe(garage.id);
+  it.each(['primary', 'named-path', 'binding', 'latest-tick'] as const)(
+    'excludes historical wall matches behind stronger %s evidence before the candidate cap',
+    async (evidence) => {
+      const selected = await projBoard({ ownerId: BOARD_OWNER });
+      const elsewhere = await projBoard({ ownerId: OTHER_STRANGER });
+      const actual = await makeSession({ boardId: selected.id, boardPath: PROJ_PATH });
+      await goLive(actual, STRANGER, PROJ_PATH);
+      const staleIds = Array.from({ length: 55 }, () => `zz-stale-${uuidv4()}`);
+      const stale = new Set(staleIds);
+      await db.insert(dbSchema.boardSessions).values(
+        staleIds.map((id) => ({
+          id,
+          createdByUserId: STRANGER,
+          boardId: evidence === 'primary' ? elsewhere.id : null,
+          boardPath: evidence === 'named-path' ? `/b/${elsewhere.slug}/40` : PROJ_PATH,
+          isPublic: true,
+          status: 'active',
+        })),
+      );
+      await db.insert(dbSchema.boardseshTicks).values(
+        staleIds.flatMap((sessionId) => [
+          {
+            uuid: uuidv4(),
+            userId: STRANGER,
+            boardType: 'kilter',
+            climbUuid: `ls-climb-${uuidv4()}`,
+            angle: 40,
+            status: 'send' as const,
+            climbedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+            sessionId,
+            boardId: selected.id,
+          },
+          ...(evidence === 'latest-tick'
+            ? [
+                {
+                  uuid: uuidv4(),
+                  userId: STRANGER,
+                  boardType: 'kilter',
+                  climbUuid: `ls-climb-${uuidv4()}`,
+                  angle: 40,
+                  status: 'send' as const,
+                  climbedAt: new Date().toISOString(),
+                  sessionId,
+                  boardId: elsewhere.id,
+                },
+              ]
+            : []),
+        ]),
+      );
+      if (evidence === 'binding') {
+        vi.spyOn(pubsub, 'getSessionBoard').mockImplementation(async (sessionId) =>
+          stale.has(sessionId) ? String(elsewhere.id) : null,
+        );
+      }
+      vi.spyOn(roomManager, 'getSessionConnectionLiveness').mockImplementation(
+        async (sessionIds) =>
+          new Map(sessionIds.map((sessionId) => [sessionId, { liveConnectionCount: 1, redisKeyExists: true }])),
+      );
+      // All rows tie at sub-millisecond precision. The stale IDs sort first;
+      // an imprecise timestamp cursor would skip the real session on page two.
+      await db
+        .update(dbSchema.boardSessions)
+        .set({
+          lastActivity: sql`${new Date(Date.now() - 10 * 60_000).toISOString()}::timestamp + interval '123 microseconds'`,
+        })
+        .where(inArray(dbSchema.boardSessions.id, [...staleIds, actual]));
+      expect(ids(await followedLiveSessions(VIEWER, { boardUuid: selected.uuid }))).toEqual([actual]);
+      expect(
+        ids(await liveSessionQueries.boardLiveSessions(undefined, { boardId: selected.id }, authCtx(VIEWER))),
+      ).toEqual([actual]);
+    },
+  );
+
+  it('keeps the exact social arm when a followed climber moved to another board', async () => {
+    const selected = await projBoard({ ownerId: BOARD_OWNER });
+    const elsewhere = await projBoard({ ownerId: FRIEND });
+    await follow(VIEWER, FRIEND);
+    const sessionId = await makeSession({ createdBy: FRIEND, boardId: elsewhere.id, boardPath: PROJ_PATH });
+    await goLive(sessionId, FRIEND, PROJ_PATH);
+    await addTick({ sessionId, userId: FRIEND, boardId: selected.id });
+    const sessions = await followedLiveSessions(VIEWER, { boardUuid: selected.uuid });
+    expect(ids(sessions)).toEqual([sessionId]);
+    expect(sessions[0].reasons).toContain('FOLLOWING_USER');
+    expect(sessions[0].reasons).not.toContain('SELECTED_BOARD');
+    expect(await liveSessionQueries.boardLiveSessions(undefined, { boardId: selected.id }, authCtx(VIEWER))).toEqual(
+      [],
+    );
+  });
+
+  it('shows the followed climber without a guessed board when the actual wall is unidentified', async () => {
+    await projBoard({ name: 'Same Config Garage' });
+    await follow(VIEWER, FRIEND);
+    const sessionId = await makeSession({ createdBy: FRIEND, boardPath: PROJ_PATH });
+    await goLive(sessionId, FRIEND, PROJ_PATH);
+    const [session] = await followedLiveSessions(VIEWER);
+    expect(session.sessionId).toBe(sessionId);
+    expect(session.host?.userId).toBe(FRIEND);
+    expect(session.board).toBeNull();
   });
 });
 
@@ -992,6 +1084,25 @@ describe('followedLiveSessions — board privacy and ordering', () => {
 });
 
 describe('followedLiveSessions — spray walls', () => {
+  it('lists a concrete spray path without a tick, primary board or live board binding', async () => {
+    const wall = await makeSprayWall({ name: 'Path-only Spray Wall' });
+    vi.spyOn(pubsub, 'getBoardSession').mockResolvedValue(null);
+    vi.spyOn(pubsub, 'getSessionBoard').mockResolvedValue(null);
+    await followBoard(VIEWER, wall.uuid);
+    const sessionId = await makeSession({ boardPath: wall.path });
+    await goLive(sessionId, STRANGER, wall.path);
+    expect(
+      await resolveLiveSessionBoards([
+        { id: sessionId, createdByUserId: STRANGER, boardId: null, boardPath: wall.path },
+      ]),
+    ).toEqual(new Map([[sessionId, wall.id]]));
+
+    const [followed] = await followedLiveSessions(VIEWER);
+    expect(followed).toMatchObject({ sessionId, reasons: ['FOLLOWED_BOARD'], board: { name: wall.name } });
+    const [onBoard] = await liveSessionQueries.boardLiveSessions(undefined, { boardId: wall.id }, authCtx(VIEWER));
+    expect(onBoard).toMatchObject({ sessionId, reasons: ['SELECTED_BOARD'], board: { name: wall.name } });
+  });
+
   it('lists a session on a followed public spray wall without the climb on the wall', async () => {
     const wall = await makeSprayWall({ name: 'Garage Spray Wall' });
     await followBoard(VIEWER, wall.uuid);
@@ -1069,6 +1180,75 @@ describe('followedLiveSessions — spray walls', () => {
     expect(JSON.stringify(session)).not.toContain('Hidden Spray Wall');
     expect(JSON.stringify(session)).not.toContain(wall.uuid);
     expect(JSON.stringify(session)).not.toContain('Hidden Spray Problem');
+  });
+});
+
+describe('followedLiveSessions — staying anonymous on boards they don’t own', () => {
+  const stayAnonymous = (userId: string) =>
+    db
+      .update(dbSchema.userProfiles)
+      .set({ anonymousOnForeignBoards: true })
+      .where(eq(dbSchema.userProfiles.userId, userId));
+  const boardLiveSessionsFor = (boardId: number, ctx: ConnectionContext) =>
+    liveSessionQueries.boardLiveSessions(undefined, { boardId }, ctx);
+
+  it('keeps a followed climber anonymous on a board they don’t own: the preference beats the follow', async () => {
+    await follow(VIEWER, FRIEND);
+    await stayAnonymous(FRIEND);
+    const gymWall = await makeBoard({ name: 'Gym Wall' });
+    const sessionId = await makeSession({ createdBy: FRIEND, boardId: gymWall.id });
+    await goLive(sessionId, FRIEND);
+
+    // Following them is no reason to list it: that alone would say where they are.
+    expect(await followedLiveSessions(VIEWER)).toEqual([]);
+
+    // Listed for the board instead, they still count, without a name.
+    await followBoard(VIEWER, gymWall.uuid);
+    const [session, ...rest] = await followedLiveSessions(VIEWER);
+    expect(rest).toEqual([]);
+    expect(session.sessionId).toBe(sessionId);
+    expect(session.reasons).toEqual(['FOLLOWED_BOARD']);
+    expect(session.host).toBeNull();
+    expect(session.participants).toEqual([]);
+    expect(session.followedParticipantIds).toEqual([]);
+    expect(session.participantCount).toBe(1);
+    expect(JSON.stringify(session)).not.toContain(FRIEND);
+    expect(JSON.stringify(session)).not.toContain('Friend Profile');
+
+    // The same for a viewer who doesn't follow them, and on the board's own list.
+    const [forStranger] = await boardLiveSessionsFor(gymWall.id, authCtx(OTHER_STRANGER));
+    expect(forStranger.host).toBeNull();
+    expect(forStranger.participants).toEqual([]);
+    const [forFollower] = await boardLiveSessionsFor(gymWall.id, authCtx(VIEWER));
+    expect(forFollower.reasons).toEqual(['SELECTED_BOARD']);
+    expect(forFollower.host).toBeNull();
+
+    // They see their own name.
+    const [own] = await followedLiveSessions(FRIEND);
+    expect(own.host?.userId).toBe(FRIEND);
+    expect(own.participants.map((participant) => participant.userId)).toEqual([FRIEND]);
+  });
+
+  it('names them on their own board, even with another climber’s wall attached to the session', async () => {
+    await follow(VIEWER, FRIEND);
+    await stayAnonymous(FRIEND);
+    const garage = await makeBoard({ ownerId: FRIEND, name: 'Friend Garage' });
+    const gymWall = await makeBoard({ name: 'Gym Wall' });
+    const sessionId = await makeSession({ createdBy: FRIEND, boardId: garage.id });
+    await db.insert(dbSchema.sessionBoards).values({ sessionId, boardId: gymWall.id });
+    await goLive(sessionId, FRIEND);
+    // Owning the session's board names them only after their own action on it
+    // in this session: any member can move a session onto someone's board.
+    expect(await followedLiveSessions(VIEWER)).toEqual([]);
+    await addTick({ sessionId, userId: FRIEND, boardId: garage.id });
+
+    const [session] = await followedLiveSessions(VIEWER);
+    expect(session.sessionId).toBe(sessionId);
+    expect(session.reasons).toEqual(['FOLLOWING_USER']);
+    expect(session.host?.userId).toBe(FRIEND);
+    expect(session.followedParticipantIds).toEqual([FRIEND]);
+    const [forStranger] = await boardLiveSessionsFor(garage.id, authCtx(OTHER_STRANGER));
+    expect(forStranger.host?.userId).toBe(FRIEND);
   });
 });
 
