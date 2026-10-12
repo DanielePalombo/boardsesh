@@ -23,6 +23,7 @@ const ctrl = vi.hoisted(() => ({
   setOptions: vi.fn(),
   navigation: null as unknown as { setOptions: (options: Record<string, unknown>) => void },
   variant: 'liquidGlass' as 'liquidGlass' | 'material',
+  fontScale: 1,
   addToQueue: vi.fn(),
   openAddToPlaylist: vi.fn(),
   openClimbActions: vi.fn(),
@@ -36,6 +37,7 @@ type CapturedClimbListRowProps = {
   setIds: string;
   angle: number;
   unsupported?: boolean;
+  showProgress?: boolean;
   onPress?: (climb: { uuid: string; name: string }) => void;
   onAddToQueue?: (climb: SchemaClimb) => void;
   onOpenPlaylist?: (climb: SchemaClimb) => void;
@@ -43,6 +45,7 @@ type CapturedClimbListRowProps = {
 
 type CapturedPlaylistEditClimbRowProps = {
   climb: Climb;
+  minimumHeight?: number;
   board: {
     boardName: string;
     layoutId: number;
@@ -59,21 +62,34 @@ const capturedEditRows = vi.hoisted(() => [] as CapturedPlaylistEditClimbRowProp
 
 // ── React Native ──────────────────────────────────────────────────────────────
 vi.mock('react-native', () => ({
+  useWindowDimensions: () => ({ fontScale: ctrl.fontScale }),
   View: ({
     children,
     pointerEvents,
     onLayout,
     accessibilityLabel,
+    style,
   }: {
     children?: ReactNode;
     pointerEvents?: string;
     onLayout?: (e: unknown) => void;
     accessibilityLabel?: string;
+    style?: unknown;
   }) => {
     const attrs: Record<string, unknown> = {};
     if (pointerEvents) attrs['data-pointer-events'] = pointerEvents;
     if (onLayout) attrs['data-has-layout'] = 'true';
     if (accessibilityLabel) attrs['aria-label'] = accessibilityLabel;
+    // Where a view starts and how wide it is: enough to tell a thumbnail-sized
+    // frame, and a separator's inset.
+    const { marginStart, width, minHeight } = Object.assign({}, ...[style].flat(10).filter(Boolean)) as {
+      marginStart?: number;
+      width?: number | string;
+      minHeight?: number;
+    };
+    if (marginStart !== undefined) attrs['data-margin-start'] = marginStart;
+    if (width !== undefined) attrs['data-width'] = width;
+    if (minHeight !== undefined) attrs['data-min-height'] = minHeight;
     return createElement('div', attrs, children);
   },
   Pressable: ({
@@ -343,6 +359,11 @@ vi.mock('../PlaylistEditClimbRow', () => ({
 
 // ── Subject ───────────────────────────────────────────────────────────────────
 import { PlaylistDetailView, type PlaylistDetailViewProps } from '../PlaylistDetailView';
+import {
+  resetClimbRowDisplayForTests,
+  setClimbRowField,
+  applyClimbRowPreset,
+} from '../../../lib/climb-row-display-preference';
 import { useButtonSurface } from '../../Button.surface';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -420,8 +441,10 @@ describe('PlaylistDetailView', () => {
     ctrl.openAddToPlaylist.mockClear();
     ctrl.openClimbActions.mockClear();
     ctrl.variant = 'liquidGlass';
+    ctrl.fontScale = 1;
     capturedClimbRows.length = 0;
     capturedEditRows.length = 0;
+    resetClimbRowDisplayForTests();
   });
 
   // ── Navigation ──────────────────────────────────────────────────────────────
@@ -654,6 +677,7 @@ describe('PlaylistDetailView', () => {
       setIds: '1,20',
       angle: 45,
       unsupported: false,
+      showProgress: true,
     });
   });
 
@@ -673,12 +697,14 @@ describe('PlaylistDetailView', () => {
       layoutId: 1,
       angle: 45,
       unsupported: false,
+      showProgress: true,
     });
     expect(capturedClimbRows[1]).toMatchObject({
       boardName: 'tension',
       layoutId: 9,
       angle: 35,
       unsupported: true,
+      showProgress: true,
     });
   });
 
@@ -736,6 +762,19 @@ describe('PlaylistDetailView', () => {
     expect(ctrl.openAddToPlaylist).not.toHaveBeenCalled();
   });
 
+  it.each([1, 1.5])('gives supported and unavailable edit rows one drag height at font scale %s', (fontScale) => {
+    ctrl.fontScale = fontScale;
+    applyClimbRowPreset('namesOnly');
+    const { container } = render(
+      <PlaylistDetailView
+        {...makeProps({ climbs: [KILTER_CLIMB, UNKNOWN_BOARD_CLIMB, TENSION_CLIMB], editMode: true })}
+      />,
+    );
+    const expectedHeight = fontScale === 1 ? 76 : 105;
+    expect(capturedEditRows.map((row) => row.minimumHeight)).toEqual([expectedHeight, expectedHeight]);
+    expect(container.querySelector(`[data-min-height="${expectedHeight}"]`)).not.toBeNull();
+  });
+
   it('shows an indicator for climbs whose render board cannot be resolved', () => {
     const onActivateClimb = vi.fn();
     const { getByText } = render(
@@ -751,6 +790,41 @@ describe('PlaylistDetailView', () => {
     expect(getByText('detail.unrenderableClimb.subtitle')).not.toBeNull();
     expect(capturedClimbRows).toHaveLength(0);
     expect(onActivateClimb).not.toHaveBeenCalled();
+  });
+
+  // The row for a climb that cannot be drawn stands among climb rows, so it
+  // copies their shape: a thumbnail-sized frame and a separator past it, or with
+  // thumbnails switched off neither.
+  it('gives an unresolved climb a thumbnail-sized frame, with its separator past it', () => {
+    const { container } = render(<PlaylistDetailView {...makeProps({ climbs: [UNKNOWN_BOARD_CLIMB] })} />);
+
+    expect(container.querySelector('[data-icon="warning"]')).not.toBeNull();
+    expect(container.querySelector('[data-width="76"]')).not.toBeNull();
+    // Gutter, thumbnail, gap.
+    expect(container.querySelector('[data-margin-start="104"]')).not.toBeNull();
+  });
+
+  it('drops that frame with thumbnails switched off, and starts the separator at the gutter', () => {
+    setClimbRowField('thumbnail', false);
+
+    const { container, getByText } = render(<PlaylistDetailView {...makeProps({ climbs: [UNKNOWN_BOARD_CLIMB] })} />);
+
+    // Still says which climb it is and why it is not drawn.
+    expect(getByText('Unknown Board Row')).not.toBeNull();
+    expect(getByText('detail.unrenderableClimb.subtitle')).not.toBeNull();
+    expect(container.querySelector('[data-icon="warning"]')).toBeNull();
+    expect(container.querySelector('[data-width="76"]')).toBeNull();
+    expect(container.querySelector('[data-margin-start="104"]')).toBeNull();
+    expect(container.querySelector('[data-margin-start="16"]')).not.toBeNull();
+  });
+
+  it('follows the switch on an unresolved row that is already on screen', () => {
+    const { container } = render(<PlaylistDetailView {...makeProps({ climbs: [UNKNOWN_BOARD_CLIMB] })} />);
+
+    act(() => setClimbRowField('thumbnail', false));
+
+    expect(container.querySelector('[data-width="76"]')).toBeNull();
+    expect(container.querySelector('[data-margin-start="16"]')).not.toBeNull();
   });
 
   it('lets owners remove unresolved climbs in edit mode', () => {

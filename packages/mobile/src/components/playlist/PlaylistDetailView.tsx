@@ -11,6 +11,7 @@ import {
   RefreshControl,
   View,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 import Animated, {
   Extrapolation,
@@ -32,6 +33,7 @@ import { Text } from '../Text';
 import { Icon } from '../Icon';
 import { type IconName } from '../icon-map';
 import { ActivityIndicator } from '../ActivityIndicator';
+import { ClimbProgressProvider, type ClimbProgressTarget } from '../../providers/climb-progress-provider';
 import { ClimbListRow } from '../ClimbListRow';
 import { ClimbListRowSkeleton } from '../ClimbListRowSkeleton';
 import { THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH } from '../climb-list-thumbnail-metrics';
@@ -64,6 +66,13 @@ import { glassSize } from '../../theme/layout';
 import { iosSystemColors } from '../../theme/ios-colors';
 import { spacing, borderRadius } from '../../theme/tokens';
 import { CLIMB_ROW_GUTTER } from '../climb-list-row-styles';
+import {
+  climbRowSeparatorInset,
+  climbRowReorderHeight,
+  DEFAULT_CLIMB_ROW_SURFACE,
+  type ClimbRowReorderRow,
+} from '../climb-row-layout';
+import { useClimbRowField, useClimbRowDisplay } from '../../lib/climb-row-display-preference';
 
 /** Bottom scrim that keeps white title/meta legible across the palette (amber
  *  and green included) without per-colour luminance branching. */
@@ -234,7 +243,9 @@ export function PlaylistDetailView({
   const styles = useTypographyStyles(createStyles);
   const { t } = useTranslation('playlists');
   const { t: tCommon } = useTranslation('common');
-  const { systemColors, brandColors, variant } = useTheme();
+  const { systemColors, brandColors, variant, textStyles } = useTheme();
+  const { fontScale } = useWindowDimensions();
+  const rowDisplay = useClimbRowDisplay();
   const bottomChrome = useBottomChromeMetrics();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -402,6 +413,38 @@ export function PlaylistDetailView({
     return resolvedRows;
   }, [climbs, renderBoard]);
 
+  const editRowHeight = useMemo(() => {
+    if (!editMode) return undefined;
+    const rowShapes: ClimbRowReorderRow[] = [];
+    for (const climb of climbs) {
+      const resolved = resolvedRowsByClimbUuid.get(climb.uuid);
+      const statsAngle = 'statsAngle' in climb ? climb.statsAngle : null;
+      rowShapes.push({
+        supportsMirroring: false,
+        unrenderable: resolved?.kind === 'unrenderable',
+        hasSetAngleMarker:
+          resolved?.kind === 'renderable' &&
+          typeof statsAngle === 'number' &&
+          statsAngle !== resolved.renderBoard.angle,
+      });
+    }
+    return climbRowReorderHeight({
+      rows: rowShapes,
+      display: rowDisplay,
+      surface: { ...DEFAULT_CLIMB_ROW_SURFACE, showAscentStatus: false },
+      fontScale,
+      typeScale: textStyles,
+    });
+  }, [editMode, climbs, resolvedRowsByClimbUuid, rowDisplay, fontScale, textStyles]);
+
+  const progressTargets = useMemo<ClimbProgressTarget[]>(() => {
+    const targets: ClimbProgressTarget[] = [];
+    for (const [climbUuid, row] of resolvedRowsByClimbUuid) {
+      if (row.kind === 'renderable') targets.push({ boardName: row.renderBoard.boardName as BoardName, climbUuid });
+    }
+    return targets;
+  }, [resolvedRowsByClimbUuid]);
+
   // Long press → reaction menu, using the row's resolved render board (a playlist can
   // mix boards, so this isn't always the active board).
   const handleOpenActions = useCallback(
@@ -429,7 +472,14 @@ export function PlaylistDetailView({
       if (!resolvedRow) return null;
 
       if (resolvedRow.kind === 'unrenderable') {
-        return <UnrenderablePlaylistClimbRow climb={item} editMode={editMode} onRemove={onRemoveClimb ?? noopRemove} />;
+        return (
+          <UnrenderablePlaylistClimbRow
+            climb={item}
+            editMode={editMode}
+            minimumHeight={editRowHeight}
+            onRemove={onRemoveClimb ?? noopRemove}
+          />
+        );
       }
 
       if (editMode) {
@@ -439,6 +489,7 @@ export function PlaylistDetailView({
             board={resolvedRow.editBoard}
             rowIndex={index}
             drag={dragControls}
+            minimumHeight={editRowHeight}
             onRemove={onRemoveClimb ?? noopRemove}
             onReorder={onReorderClimb ?? noopReorder}
           />
@@ -458,12 +509,14 @@ export function PlaylistDetailView({
           onAddToQueue={handleAddToQueue}
           onOpenPlaylist={handleOpenPlaylist}
           unsupported={resolvedRow.incompatible}
+          showProgress
         />
       );
     },
     [
       resolvedRowsByClimbUuid,
       editMode,
+      editRowHeight,
       dragControls,
       onRemoveClimb,
       onReorderClimb,
@@ -498,7 +551,7 @@ export function PlaylistDetailView({
   const listEmptyComponent = isLoading ? (
     <View style={styles.skeletonList}>
       {SKELETON_PLACEHOLDERS.map((key) => (
-        <ClimbListRowSkeleton key={key} />
+        <ClimbListRowSkeleton key={key} showProgress={!editMode} />
       ))}
     </View>
   ) : isMaterial ? (
@@ -553,81 +606,83 @@ export function PlaylistDetailView({
     return (
       <View style={[styles.container, { backgroundColor: systemColors.background }]}>
         <ReadableColumn style={styles.container}>
-          <FlashList
-            data={climbs}
-            renderItem={renderItem}
-            keyExtractor={keyExtractor}
-            extraData={editMode}
-            scrollEnabled={!isDragging}
-            onEndReached={handleEndReached}
-            onEndReachedThreshold={0.5}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            refreshControl={refreshControl}
-            contentContainerStyle={{ paddingBottom: listPaddingBottom }}
-            ListHeaderComponent={
-              <>
-                <View onLayout={handleHeroLayout} style={styles.materialHero}>
-                  <View
-                    style={[
-                      styles.materialHeroBand,
-                      { paddingTop: headerBarHeight + spacing[4], backgroundColor: systemColors.secondaryBackground },
-                    ]}
-                  >
+          <ClimbProgressProvider targets={progressTargets} enabled={!editMode}>
+            <FlashList
+              data={climbs}
+              renderItem={renderItem}
+              keyExtractor={keyExtractor}
+              extraData={editMode}
+              scrollEnabled={!isDragging}
+              onEndReached={handleEndReached}
+              onEndReachedThreshold={0.5}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              refreshControl={refreshControl}
+              contentContainerStyle={{ paddingBottom: listPaddingBottom }}
+              ListHeaderComponent={
+                <>
+                  <View onLayout={handleHeroLayout} style={styles.materialHero}>
                     <View
-                      style={[styles.materialHeroEmojiCircle, { backgroundColor: systemColors.tertiaryBackground }]}
+                      style={[
+                        styles.materialHeroBand,
+                        { paddingTop: headerBarHeight + spacing[4], backgroundColor: systemColors.secondaryBackground },
+                      ]}
                     >
-                      {heroEmojiIcon ? (
-                        <Text style={styles.materialHeroEmoji} allowFontScaling={false}>
-                          {heroEmojiIcon}
-                        </Text>
-                      ) : (
-                        <Icon name="tag" size={36} color={systemColors.secondaryLabel} />
-                      )}
-                    </View>
-                    <View style={styles.materialHeroNameRow}>
-                      <Text
-                        variant="title2"
-                        numberOfLines={2}
-                        color={systemColors.label}
-                        style={styles.materialHeroName}
+                      <View
+                        style={[styles.materialHeroEmojiCircle, { backgroundColor: systemColors.tertiaryBackground }]}
                       >
-                        {hero.name}
+                        {heroEmojiIcon ? (
+                          <Text style={styles.materialHeroEmoji} allowFontScaling={false}>
+                            {heroEmojiIcon}
+                          </Text>
+                        ) : (
+                          <Icon name="tag" size={36} color={systemColors.secondaryLabel} />
+                        )}
+                      </View>
+                      <View style={styles.materialHeroNameRow}>
+                        <Text
+                          variant="title2"
+                          numberOfLines={2}
+                          color={systemColors.label}
+                          style={styles.materialHeroName}
+                        >
+                          {hero.name}
+                        </Text>
+                        {renderEditDetailsCog(systemColors.label)}
+                      </View>
+                      <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.materialHeroMeta}>
+                        {t('detail.climbCount', { count: hero.climbCount })}
                       </Text>
-                      {renderEditDetailsCog(systemColors.label)}
+                      {hero.followerLabel ? (
+                        <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.materialHeroMeta}>
+                          {hero.followerLabel}
+                        </Text>
+                      ) : null}
                     </View>
-                    <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.materialHeroMeta}>
-                      {t('detail.climbCount', { count: hero.climbCount })}
-                    </Text>
-                    {hero.followerLabel ? (
-                      <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.materialHeroMeta}>
-                        {hero.followerLabel}
-                      </Text>
+                    {hero.description || hero.subtitle ? (
+                      <View style={styles.heroBelow}>
+                        {hero.description ? (
+                          <Text variant="footnote" numberOfLines={3} color={systemColors.secondaryLabel}>
+                            {hero.description}
+                          </Text>
+                        ) : null}
+                        {hero.subtitle ? (
+                          <Text variant="footnote" numberOfLines={1} color={systemColors.secondaryLabel}>
+                            {hero.subtitle}
+                          </Text>
+                        ) : null}
+                      </View>
                     ) : null}
                   </View>
-                  {hero.description || hero.subtitle ? (
-                    <View style={styles.heroBelow}>
-                      {hero.description ? (
-                        <Text variant="footnote" numberOfLines={3} color={systemColors.secondaryLabel}>
-                          {hero.description}
-                        </Text>
-                      ) : null}
-                      {hero.subtitle ? (
-                        <Text variant="footnote" numberOfLines={1} color={systemColors.secondaryLabel}>
-                          {hero.subtitle}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                </View>
-                {bannerNode}
-                {addToQueueNode}
-                {headerSlot}
-              </>
-            }
-            ListFooterComponent={listFooterComponent}
-            ListEmptyComponent={listEmptyComponent}
-          />
+                  {bannerNode}
+                  {addToQueueNode}
+                  {headerSlot}
+                </>
+              }
+              ListFooterComponent={listFooterComponent}
+              ListEmptyComponent={listEmptyComponent}
+            />
+          </ClimbProgressProvider>
         </ReadableColumn>
 
         {/* Collapsing M3 top app bar — sits over the hero band; its title fades in
@@ -759,35 +814,37 @@ export function PlaylistDetailView({
           list lays its full-bleed hero out behind the island. */}
       <View pointerEvents="none" style={[styles.islandFill, { height: insets.top, backgroundColor: baseColor }]} />
       <ReadableColumn style={styles.container}>
-        <FlashList
-          data={climbs}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          extraData={editMode}
-          scrollEnabled={!isDragging}
-          onEndReached={handleEndReached}
-          onEndReachedThreshold={0.5}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          // The hero banner is full-bleed and runs up behind the status bar / dynamic
-          // island, owning the top inset itself (paddingTop above). Both props are
-          // needed so iOS doesn't inset the content down on the first frame (which
-          // would briefly expose the screen background behind the island).
-          contentInsetAdjustmentBehavior="never"
-          automaticallyAdjustContentInsets={false}
-          refreshControl={refreshControl}
-          contentContainerStyle={{ paddingBottom: listPaddingBottom }}
-          ListHeaderComponent={
-            <>
-              {header}
-              {bannerNode}
-              {addToQueueNode}
-              {headerSlot}
-            </>
-          }
-          ListFooterComponent={listFooterComponent}
-          ListEmptyComponent={listEmptyComponent}
-        />
+        <ClimbProgressProvider targets={progressTargets} enabled={!editMode}>
+          <FlashList
+            data={climbs}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            extraData={editMode}
+            scrollEnabled={!isDragging}
+            onEndReached={handleEndReached}
+            onEndReachedThreshold={0.5}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            // The hero banner is full-bleed and runs up behind the status bar / dynamic
+            // island, owning the top inset itself (paddingTop above). Both props are
+            // needed so iOS doesn't inset the content down on the first frame (which
+            // would briefly expose the screen background behind the island).
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustContentInsets={false}
+            refreshControl={refreshControl}
+            contentContainerStyle={{ paddingBottom: listPaddingBottom }}
+            ListHeaderComponent={
+              <>
+                {header}
+                {bannerNode}
+                {addToQueueNode}
+                {headerSlot}
+              </>
+            }
+            ListFooterComponent={listFooterComponent}
+            ListEmptyComponent={listEmptyComponent}
+          />
+        </ClimbProgressProvider>
       </ReadableColumn>
 
       {/* Collapsed header bar — a progressive blur (matching the tabs' chrome)
@@ -894,14 +951,20 @@ function UnrenderablePlaylistClimbRow({
   climb,
   editMode,
   onRemove,
+  minimumHeight,
 }: {
   climb: Climb;
   editMode: boolean;
   onRemove: (climbUuid: string) => void;
+  minimumHeight?: number;
 }) {
   const styles = useTypographyStyles(createStyles);
   const { t } = useTranslation('playlists');
   const { systemColors, opacity } = useTheme();
+  // This row stands among climb rows, so it follows their thumbnail switch: with
+  // thumbnails off it has no thumbnail-sized frame and its text starts at the
+  // gutter, like theirs.
+  const hasThumbnail = useClimbRowField('thumbnail');
   const subtitle = t('detail.unrenderableClimb.subtitle');
   const accessibilityLabel = `${climb.name}. ${subtitle}`;
 
@@ -912,20 +975,26 @@ function UnrenderablePlaylistClimbRow({
   return (
     <View style={styles.unrenderableOuter}>
       <View
-        style={[styles.unrenderableRow, { backgroundColor: systemColors.background }]}
+        style={[
+          styles.unrenderableRow,
+          { backgroundColor: systemColors.background },
+          minimumHeight === undefined ? null : { minHeight: minimumHeight },
+        ]}
         accessible={!editMode}
         accessibilityRole={editMode ? undefined : 'text'}
         accessibilityLabel={editMode ? undefined : accessibilityLabel}
       >
         <View style={[styles.unrenderableContent, { opacity: opacity.disabled }]}>
-          <View
-            style={[
-              styles.unrenderableThumbnail,
-              { backgroundColor: systemColors.secondaryBackground, borderColor: systemColors.separator },
-            ]}
-          >
-            <Icon name="warning" size={24} color={systemColors.secondaryLabel} />
-          </View>
+          {hasThumbnail ? (
+            <View
+              style={[
+                styles.unrenderableThumbnail,
+                { backgroundColor: systemColors.secondaryBackground, borderColor: systemColors.separator },
+              ]}
+            >
+              <Icon name="warning" size={24} color={systemColors.secondaryLabel} />
+            </View>
+          ) : null}
           <View style={styles.unrenderableText}>
             <Text variant="body" numberOfLines={1} color={systemColors.label} style={styles.unrenderableTitle}>
               {climb.name}
@@ -947,7 +1016,12 @@ function UnrenderablePlaylistClimbRow({
           </PressableSurface>
         ) : null}
       </View>
-      <View style={[styles.unrenderableSeparator, { backgroundColor: systemColors.separator }]} />
+      <View
+        style={[
+          styles.unrenderableSeparator,
+          { marginStart: climbRowSeparatorInset(hasThumbnail), backgroundColor: systemColors.separator },
+        ]}
+      />
     </View>
   );
 }
@@ -1198,6 +1272,5 @@ const createStyles = (textStyles: TypographyScale) =>
     },
     unrenderableSeparator: {
       height: StyleSheet.hairlineWidth,
-      marginStart: THUMBNAIL_WIDTH + CLIMB_ROW_GUTTER + spacing[3],
     },
   });

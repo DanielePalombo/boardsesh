@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 
@@ -67,38 +67,85 @@ vi.mock('@boardsesh/board-react', async () => {
 });
 
 vi.mock('react-native', () => ({
+  // The row asks `climb-row-layout` for its structure, which reads the spacing
+  // tokens; `theme/tokens` reaches `ios-colors`, which calls these at module load.
+  useWindowDimensions: () => ({ fontScale: 1 }),
+  Platform: { OS: 'ios', select: () => undefined },
+  PlatformColor: (name: string) => name,
+  DynamicColorIOS: (appearances: { light: string }) => appearances.light,
   StyleSheet: { create: (styles: unknown) => styles },
   Text: ({ children }: { children?: ReactNode }) => createElement('span', null, children),
-  View: ({ children, accessibilityLabel }: { children?: ReactNode; accessibilityLabel?: string }) =>
-    createElement('div', { 'aria-label': accessibilityLabel }, children),
+  View: ({
+    children,
+    accessibilityLabel,
+    style,
+  }: {
+    children?: ReactNode;
+    accessibilityLabel?: string;
+    style?: unknown;
+  }) =>
+    createElement(
+      'div',
+      {
+        'aria-label': accessibilityLabel,
+        'data-style': JSON.stringify(Object.assign({}, ...[style].flat(10).filter(Boolean))),
+      },
+      children,
+    ),
 }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { direction: string; status: string }) =>
-      key === 'mobile.climbRow.directionStatus' && options ? `${options.direction}: ${options.status}` : key,
+    t: (key: string, options?: { direction?: string; status?: string; grade?: string }) => {
+      if (key === 'mobile.climbRow.directionStatus' && options) return `${options.direction}: ${options.status}`;
+      if (key === 'mobile.climbRow.communityGradeAria' && options) return `Community grade ${options.grade}`;
+      return key;
+    },
   }),
 }));
 
+// The two app-wide grade settings. Both on by default, so every test below can
+// put the climber's own grade or a Boardsesh grade in the column; the tests of
+// what a row costs turn them off.
+const gradeSettings = vi.hoisted(() => ({ personalGrades: true, boardseshGrades: true }));
+
 vi.mock('../../hooks/use-display-grade', () => ({
-  useDisplayGrade: () => ({ boardseshActive: true, resolveGrade }),
+  useBoardseshGradesActive: () => gradeSettings.boardseshGrades,
+  useDisplayGrade: () => ({ boardseshActive: gradeSettings.boardseshGrades, resolveGrade }),
+}));
+
+vi.mock('../../hooks/use-personal-grades', () => ({
+  usePersonalGradesActive: () => gradeSettings.personalGrades,
 }));
 
 const useMyGradeCalls = vi.hoisted(() => [] as Array<{ climbUuid: string; angle: number; options: unknown }>);
 
-vi.mock('../../hooks/use-my-grade', () => ({
-  useMyGrade: (climbUuid: string, angle: number, options: unknown) => {
-    useMyGradeCalls.push({ climbUuid, angle, options });
-    return myGradeOverride.current;
-  },
-}));
+// Like the real hook, the stub reads the logbook, so every mounted caller is one
+// listener on `statusLogbook` and the tests can count the row's subscribers. And
+// like the real hook it reports no grade while personal grades are inactive,
+// still subscribed.
+vi.mock('../../hooks/use-my-grade', async () => {
+  const { useOptionalBoardLogbook } = await import('@boardsesh/board-react');
+  return {
+    useMyGrade: (climbUuid: string, angle: number, options: unknown) => {
+      useOptionalBoardLogbook();
+      useMyGradeCalls.push({ climbUuid, angle, options });
+      return gradeSettings.personalGrades ? myGradeOverride.current : { status: 'none' };
+    },
+  };
+});
 
+const gradeFormatOverride = vi.hoisted(() => ({ current: 'v-grade' as 'v-grade' | 'font' | 'both' }));
 vi.mock('../../hooks/use-grade-format', () => ({
-  useGradeFormat: () => ({ gradeFormat: 'v-grade' }),
+  useGradeFormat: () => ({ gradeFormat: gradeFormatOverride.current }),
 }));
 
 vi.mock('../../providers/theme-provider', () => ({
-  useTheme: () => ({ systemColors: { secondaryLabel: '#8E8E93' }, actionColors: { favorite: '#FF3B30' } }),
+  useTheme: () => ({
+    textStyles: { body: { lineHeight: 22 } },
+    systemColors: { secondaryLabel: '#8E8E93' },
+    actionColors: { favorite: '#FF3B30' },
+  }),
 }));
 
 vi.mock('../../lib/format-climb-stats', () => ({
@@ -109,11 +156,25 @@ vi.mock('../../lib/format-climb-stats', () => ({
 // Text → a span carrying its variant + flattened style colour, so we can find the
 // grade (the only variant="title3") and read the colour applied to it.
 vi.mock('../Text', () => ({
-  Text: ({ children, style, variant }: { children?: ReactNode; style?: unknown; variant?: string }) => {
+  Text: ({
+    children,
+    style,
+    variant,
+    accessibilityLabel,
+  }: {
+    children?: ReactNode;
+    style?: unknown;
+    variant?: string;
+    accessibilityLabel?: string;
+  }) => {
     const flattened = Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean)) : (style ?? {});
     return createElement(
       'span',
-      { 'data-variant': variant, 'data-color': (flattened as { color?: string }).color },
+      {
+        'data-variant': variant,
+        'data-color': (flattened as { color?: string }).color,
+        'aria-label': accessibilityLabel,
+      },
       children,
     );
   },
@@ -139,6 +200,8 @@ vi.mock('../ClimbPlaylistChips', () => ({ ClimbPlaylistChips: () => null }));
 
 import { favoritesStore } from '@boardsesh/climb-actions';
 import { ClimbListItemContent } from '../ClimbListItemContent';
+import { DEFAULT_CLIMB_ROW_DISPLAY } from '../../lib/climb-row-display';
+import { resetClimbRowDisplayForTests, setClimbRowField } from '../../lib/climb-row-display-preference';
 
 const baseClimb = {
   uuid: 'c1',
@@ -153,7 +216,11 @@ const baseClimb = {
 
 const gradeNode = (container: HTMLElement) => container.querySelector('[data-variant="title3"]');
 
-const secondaryNode = (container: HTMLElement) => container.querySelector('[data-variant="caption2"]');
+// The grade column holds one grade. A second, smaller line under it is where the
+// crowd's grade used to sit; nothing may come back there.
+const secondGradeLine = (container: HTMLElement) => container.querySelector('[data-variant="caption2"]');
+// The line under the name: community grade · sends · quality★ · setter.
+const detailLine = (container: HTMLElement) => container.querySelector('[data-variant="footnote"]');
 const iconNames = (container: HTMLElement) =>
   [...container.querySelectorAll('[data-icon]')].map((node) => node.getAttribute('data-icon'));
 
@@ -216,8 +283,34 @@ describe('ClimbListItemContent grade', () => {
 // #5532: a climb pulled in from another angle shows the grade/sends it carries,
 // but the row said nothing about where they came from beyond an a11y-only label.
 describe('ClimbListItemContent set-angle marker', () => {
+  const MY_V10 = { status: 'set', difficultyId: 27, climbedAt: '2026-08-01T00:00:00.000Z' } as const;
+  // The marker as a line of its own under the grade, and the labelled node it
+  // is drawn in wherever it sits.
+  const markerUnderGrade = (container: HTMLElement) => container.querySelector('[data-variant="caption2"]');
+  const renderCrossAngle = (props: { display?: typeof DEFAULT_CLIMB_ROW_DISPLAY; subtitle?: string | null } = {}) =>
+    render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, statsAngle: 45 }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+        showAscentStatus={false}
+        display={props.display}
+        primarySubtitleOverride={props.subtitle}
+      />,
+    );
+
   beforeEach(() => {
+    resolveGrade.mockReset();
     resolveGrade.mockReturnValue({ label: 'V4', color: '#111111', isBoardsesh: false });
+    resetClimbRowDisplayForTests();
+    liveStatsOverride.current = null;
+    myGradeOverride.current = { status: 'unknown' };
+    gradeSettings.personalGrades = true;
+    gradeSettings.boardseshGrades = true;
+    statusLogbook.current = null;
   });
 
   it('marks a climb whose stats came from a different angle than the one browsed', () => {
@@ -232,6 +325,113 @@ describe('ClimbListItemContent set-angle marker', () => {
       />,
     );
     expect(container.textContent).toContain('mobile.climbRow.setAngleMarker');
+  });
+
+  // The marker says the COMMUNITY's numbers were read at another angle, so it
+  // sits with whichever of them the row shows.
+  it('sits under the grade while the column shows the community grade', () => {
+    const { container } = renderCrossAngle();
+
+    expect(markerUnderGrade(container)?.textContent).toBe('mobile.climbRow.setAngleMarker');
+    expect(markerUnderGrade(container)?.getAttribute('aria-label')).toBe('mobile.climbRow.setAngleMarkerAria');
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    expect(detailLine(container)?.hasAttribute('aria-label')).toBe(false);
+  });
+
+  it('sits under the grade while the column shows a Boardsesh grade', () => {
+    resolveGrade.mockReturnValue({ label: '≈V5', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+    const { container } = renderCrossAngle();
+
+    expect(markerUnderGrade(container)?.textContent).toBe('mobile.climbRow.setAngleMarker');
+    expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+  });
+
+  it('leads the detail line once the column shows your own grade, which was logged at this angle', () => {
+    myGradeOverride.current = MY_V10;
+    const { container } = renderCrossAngle();
+
+    expect(gradeNode(container)?.textContent).toBe('V10');
+    // Nothing under your grade says it came from 45°.
+    expect(markerUnderGrade(container)).toBeNull();
+    // In front, so a line cut short at its end still carries it.
+    expect(detailLine(container)?.textContent).toBe('mobile.climbRow.setAngleMarker · V4 · sends · 4.5★');
+    expect(detailLine(container)?.getAttribute('aria-label')).toBe(
+      'mobile.climbRow.setAngleMarkerAria · Community grade V4 · sends · 4.5★',
+    );
+    expect(container.textContent?.split('mobile.climbRow.setAngleMarker')).toHaveLength(2);
+  });
+
+  it('moves to the detail line with the community grade switched off too', () => {
+    myGradeOverride.current = MY_V10;
+    const { container } = renderCrossAngle({ display: { ...DEFAULT_CLIMB_ROW_DISPLAY, communityGrade: false } });
+
+    expect(markerUnderGrade(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('mobile.climbRow.setAngleMarker · sends · 4.5★');
+    expect(detailLine(container)?.getAttribute('aria-label')).toBe('mobile.climbRow.setAngleMarkerAria · sends · 4.5★');
+  });
+
+  it('moves with your grade when it reads the same as the community’s and draws no token', () => {
+    myGradeOverride.current = { status: 'set', difficultyId: 18, climbedAt: null };
+    const { container } = renderCrossAngle();
+
+    expect(gradeNode(container)?.textContent).toBe('V4');
+    expect(markerUnderGrade(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('mobile.climbRow.setAngleMarker · sends · 4.5★');
+  });
+
+  it.each([
+    ['replaces the detail line', 'Sam'],
+    ['hides the detail line', null],
+  ])('stays under your grade on a host that %s, where it has nowhere else to go', (_label, subtitle) => {
+    myGradeOverride.current = MY_V10;
+    const { container } = renderCrossAngle({ subtitle });
+
+    expect(gradeNode(container)?.textContent).toBe('V10');
+    expect(markerUnderGrade(container)?.textContent).toBe('mobile.climbRow.setAngleMarker');
+  });
+
+  it('moves from under the grade to the detail line when your tick lands', () => {
+    myGradeOverride.current = { status: 'none' };
+    const { container } = renderCrossAngle();
+    expect(markerUnderGrade(container)).not.toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+
+    act(() => {
+      myGradeOverride.current = MY_V10;
+      statusLogbook.current = { logbookByClimbAngle: new Map() };
+      statusLogbook.listeners.forEach((listener) => listener());
+    });
+
+    expect(markerUnderGrade(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('mobile.climbRow.setAngleMarker · V4 · sends · 4.5★');
+  });
+
+  it('stays under the grade for a climber with personal grades off, with no logbook read for it', () => {
+    gradeSettings.personalGrades = false;
+    gradeSettings.boardseshGrades = false;
+    const { container } = renderCrossAngle();
+
+    expect(markerUnderGrade(container)?.textContent).toBe('mobile.climbRow.setAngleMarker');
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    // The grade column's subscriber, and none for the detail line.
+    expect(statusLogbook.listeners.size).toBe(1);
+  });
+
+  it('stands alone in the detail line rather than giving way to "Project"', () => {
+    myGradeOverride.current = MY_V10;
+    resolveGrade.mockReturnValue({ label: '', color: '#000000', isBoardsesh: false });
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, statsAngle: 45, ascensionist_count: 0, quality_average: '0', setter_username: '' }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+
+    expect(detailLine(container)?.textContent).toBe('mobile.climbRow.setAngleMarker');
   });
 
   it('leaves a climb unmarked when its stats angle matches the browsed angle', () => {
@@ -350,7 +550,7 @@ describe('ClimbListItemContent hidden chip', () => {
 });
 
 // #4796 / #4828: the grade a climber gave a climb wins over the crowd's, and
-// the crowd's demotes to a marked second line — but only where they disagree.
+// the crowd's moves to the front of the detail line — but only where they disagree.
 describe('ClimbListItemContent personal grade', () => {
   beforeEach(() => {
     resolveGrade.mockReset();
@@ -364,7 +564,8 @@ describe('ClimbListItemContent personal grade', () => {
     resolveGrade.mockReturnValue({ label: 'V4', color: '#111111', isBoardsesh: false });
     const { container } = renderRow();
     expect(gradeNode(container)?.textContent).toBe('V4');
-    expect(secondaryNode(container)).toBeNull();
+    expect(secondGradeLine(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
     expect(iconNames(container)).not.toContain('person');
   });
 
@@ -374,7 +575,8 @@ describe('ClimbListItemContent personal grade', () => {
     myGradeOverride.current = { status: 'none' };
     const { container } = renderRow();
     expect(gradeNode(container)?.textContent).toBe('V4');
-    expect(secondaryNode(container)).toBeNull();
+    expect(secondGradeLine(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
     expect(iconNames(container)).not.toContain('person');
   });
 
@@ -396,15 +598,19 @@ describe('ClimbListItemContent personal grade', () => {
     expect(useMyGradeCalls.at(-1)).toEqual({ climbUuid: baseClimb.uuid, angle: 40, options: { rowDifficulty: 27 } });
   });
 
-  it('shows your grade over the crowd’s, each marked, when they disagree', () => {
+  it('shows your grade, marked, with the crowd’s at the front of the detail line when they disagree', () => {
     // State C — the Woods case in both issues: set at V0, you called it V10.
     resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
     myGradeOverride.current = { status: 'set', difficultyId: 27, climbedAt: '2026-08-01T00:00:00.000Z' };
     const { container } = renderRow();
 
     expect(gradeNode(container)?.textContent).toBe('V10');
-    expect(secondaryNode(container)?.textContent).toBe('V0');
-    expect(iconNames(container)).toEqual(expect.arrayContaining(['person', 'people']));
+    expect(detailLine(container)?.textContent).toBe('V0 · sends · 4.5★');
+    // One grade in the column: the crowd's no longer stacks under yours, and the
+    // glyph that marked it there is gone with it.
+    expect(secondGradeLine(container)).toBeNull();
+    expect(iconNames(container)).toContain('person');
+    expect(iconNames(container)).not.toContain('people');
   });
 
   it('colours the big number by YOUR grade, not the crowd’s', () => {
@@ -426,19 +632,529 @@ describe('ClimbListItemContent personal grade', () => {
     const { container } = renderRow();
 
     expect(gradeNode(container)?.textContent).toBe('V0');
-    expect(secondaryNode(container)).toBeNull();
+    expect(secondGradeLine(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
     expect(iconNames(container)).not.toContain('person');
   });
 
-  it('marks your grade with no second line when there is no crowd number', () => {
+  it('marks your grade with no crowd grade anywhere when there is no crowd number', () => {
     // State D — a draft, or an angle with no stats row.
     resolveGrade.mockReturnValue({ label: '', color: '#111111', isBoardsesh: false });
     myGradeOverride.current = { status: 'set', difficultyId: 27, climbedAt: '2026-08-01T00:00:00.000Z' };
     const { container } = renderRow();
 
     expect(gradeNode(container)?.textContent).toBe('V10');
-    expect(secondaryNode(container)).toBeNull();
+    expect(secondGradeLine(container)).toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
     expect(iconNames(container)).toContain('person');
+  });
+});
+
+// The community's grade leads the detail line when the grade column shows a
+// different one. It is the row's only second grade: the column never stacks.
+describe('ClimbListItemContent community grade token', () => {
+  const MY_V10 = { status: 'set', difficultyId: 27, climbedAt: '2026-08-01T00:00:00.000Z' } as const;
+  const communityGradeOff = { ...DEFAULT_CLIMB_ROW_DISPLAY, communityGrade: false };
+
+  beforeEach(() => {
+    resolveGrade.mockReset();
+    resetClimbRowDisplayForTests();
+    liveStatsOverride.current = null;
+    myGradeOverride.current = { status: 'unknown' };
+    gradeFormatOverride.current = 'v-grade';
+    gradeSettings.personalGrades = true;
+    gradeSettings.boardseshGrades = true;
+    statusLogbook.current = null;
+  });
+
+  afterEach(() => {
+    resetClimbRowDisplayForTests();
+    gradeFormatOverride.current = 'v-grade';
+    gradeSettings.personalGrades = true;
+    gradeSettings.boardseshGrades = true;
+  });
+
+  it('tells a screen reader whose grade the token is', () => {
+    // On screen the token is a bare "V0". Spoken, the line names it; the rest of
+    // the line reads as it always did.
+    resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+    myGradeOverride.current = MY_V10;
+    const { container } = renderRow();
+
+    expect(detailLine(container)?.textContent).toBe('V0 · sends · 4.5★');
+    expect(detailLine(container)?.getAttribute('aria-label')).toBe('Community grade V0 · sends · 4.5★');
+  });
+
+  it('leaves the detail line unlabelled when there is no token to explain', () => {
+    resolveGrade.mockReturnValue({ label: 'V4', color: '#111111', isBoardsesh: false });
+    const { container } = renderRow();
+
+    expect(detailLine(container)?.hasAttribute('aria-label')).toBe(false);
+  });
+
+  it('draws the token in the detail line’s own style, uncoloured', () => {
+    // In this row colour means the big grade and nothing else.
+    resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+    myGradeOverride.current = MY_V10;
+    const { container } = renderRow();
+
+    expect(container.querySelectorAll('[data-variant="footnote"]')).toHaveLength(1);
+    expect(detailLine(container)?.hasAttribute('data-color')).toBe(false);
+  });
+
+  it('shows no token when the climber turned the community grade off', () => {
+    resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+    myGradeOverride.current = MY_V10;
+    const { container } = render(
+      <ClimbListItemContent
+        climb={baseClimb}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+        display={communityGradeOff}
+      />,
+    );
+
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    expect(detailLine(container)?.hasAttribute('aria-label')).toBe(false);
+    // The column is not the switch's business: your grade and its mark stay.
+    expect(gradeNode(container)?.textContent).toBe('V10');
+    expect(iconNames(container)).toContain('person');
+    expect(secondGradeLine(container)).toBeNull();
+  });
+
+  it('follows the stored switch live, with no prop from the host', () => {
+    resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+    myGradeOverride.current = MY_V10;
+    const { container } = renderRow();
+    expect(detailLine(container)?.textContent).toBe('V0 · sends · 4.5★');
+
+    act(() => setClimbRowField('communityGrade', false));
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+
+    act(() => setClimbRowField('communityGrade', true));
+    expect(detailLine(container)?.textContent).toBe('V0 · sends · 4.5★');
+  });
+
+  it('shows the community grade beside an active Boardsesh grade that reads differently', () => {
+    // The stub stands in for an active Boardsesh grade; the token is the plain
+    // community grade for the same climb, "6b/V4".
+    resolveGrade.mockReturnValue({ label: '≈V5', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+    const { container } = renderRow();
+
+    expect(gradeNode(container)?.textContent).toBe('≈V5');
+    expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+    expect(detailLine(container)?.getAttribute('aria-label')).toBe('Community grade V4 · sends · 4.5★');
+    // Not the climber's own grade, so no mark.
+    expect(iconNames(container)).not.toContain('person');
+  });
+
+  it('shows no token when the Boardsesh grade reads the same apart from the estimate mark', () => {
+    resolveGrade.mockReturnValue({ label: '≈V4', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+    const { container } = renderRow();
+
+    expect(gradeNode(container)?.textContent).toBe('≈V4');
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+  });
+
+  it('shows no token when the Boardsesh grade and the community’s are the same', () => {
+    resolveGrade.mockReturnValue({ label: 'V4', color: '#abcdef', isBoardsesh: true, isEstimated: false });
+    const { container } = renderRow();
+
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+  });
+
+  // Both settings on. The token is always the community's grade, so the row
+  // shows yours and the community's; the Boardsesh grade is in the play drawer.
+  it('shows the community grade, never the Boardsesh grade, beside your own with Boardsesh grades on', () => {
+    // Mine V4, Boardsesh V6, community V5.
+    resolveGrade.mockReturnValue({ label: 'V6', color: '#abcdef', isBoardsesh: true, isEstimated: false });
+    myGradeOverride.current = { status: 'set', difficultyId: 18, climbedAt: null };
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, difficulty: '6c/V5' }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+
+    expect(gradeNode(container)?.textContent).toBe('V4');
+    // Marked: it is not the V6 this row would otherwise show.
+    expect(iconNames(container)).toContain('person');
+    expect(detailLine(container)?.textContent).toBe('V5 · sends · 4.5★');
+    expect(detailLine(container)?.getAttribute('aria-label')).toBe('Community grade V5 · sends · 4.5★');
+    expect(container.textContent).not.toContain('V6');
+    expect(secondGradeLine(container)).toBeNull();
+  });
+
+  it('marks your grade with no token when it agrees with the community but not with Boardsesh', () => {
+    // Mine V4, Boardsesh V5, community V4.
+    resolveGrade.mockReturnValue({ label: 'V5', color: '#abcdef', isBoardsesh: true, isEstimated: false });
+    myGradeOverride.current = { status: 'set', difficultyId: 18, climbedAt: null };
+    const { container } = renderRow();
+
+    expect(gradeNode(container)?.textContent).toBe('V4');
+    expect(iconNames(container)).toContain('person');
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+  });
+
+  it('leaves your grade unmarked beside a Boardsesh estimate of the same number', () => {
+    // Mine V5, Boardsesh ≈V5, community V4.
+    resolveGrade.mockReturnValue({ label: '≈V5', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+    myGradeOverride.current = { status: 'set', difficultyId: 20, climbedAt: null };
+    const { container } = renderRow();
+
+    expect(gradeNode(container)?.textContent).toBe('V5');
+    expect(iconNames(container)).not.toContain('person');
+    expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+  });
+
+  it('reads the community grade from the live stats, not the stale row', () => {
+    // The stats store moved the climb to V5 after the list fetched it as V4.
+    liveStatsOverride.current = { ascensionistCount: 10, qualityAverage: '4.5', difficulty: '6c/V5' };
+    resolveGrade.mockReturnValue({ label: 'V7', color: '#abcdef', isBoardsesh: true, isEstimated: false });
+    const { container } = renderRow();
+
+    expect(detailLine(container)?.textContent).toBe('V5 · sends · 4.5★');
+  });
+
+  it('formats the community grade on the climb’s own board scale', () => {
+    // "6a+/V3" is "V3+" on the shared scale, where V3 covers two Font grades, and
+    // plain "V3" on MoonBoard, where it covers one.
+    resolveGrade.mockReturnValue({ label: 'V7', color: '#abcdef', isBoardsesh: true, isEstimated: false });
+    const renderOn = (boardName: 'kilter' | 'moonboard') =>
+      render(
+        <ClimbListItemContent
+          climb={{ ...baseClimb, difficulty: '6a+/V3' }}
+          boardName={boardName}
+          layoutId={1}
+          sizeId={1}
+          setIds="1"
+          angle={40}
+        />,
+      );
+
+    const kilter = renderOn('kilter');
+    expect(detailLine(kilter.container)?.textContent).toBe('V3+ · sends · 4.5★');
+    kilter.unmount();
+    expect(detailLine(renderOn('moonboard').container)?.textContent).toBe('V3 · sends · 4.5★');
+  });
+
+  describe('under the both-systems grade format', () => {
+    beforeEach(() => {
+      gradeFormatOverride.current = 'both';
+    });
+
+    it('shows only the V half of the community grade beside your own', () => {
+      resolveGrade.mockReturnValue({ label: 'V4 / 6B', color: '#111111', isBoardsesh: false });
+      myGradeOverride.current = MY_V10;
+      const { container } = renderRow();
+
+      expect(gradeNode(container)?.textContent).toBe('V10 / 7C+');
+      expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+      expect(detailLine(container)?.getAttribute('aria-label')).toBe('Community grade V4 · sends · 4.5★');
+    });
+
+    it('shows only the V half beside a Boardsesh grade', () => {
+      resolveGrade.mockReturnValue({ label: '≈V5 / 6C', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+      const { container } = renderRow();
+
+      expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+    });
+
+    it('shows no token when the two whole labels read the same', () => {
+      resolveGrade.mockReturnValue({ label: '≈V4 / 6B', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+      const { container } = renderRow();
+
+      expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    });
+
+    it('suppresses the token when only the Font half differs', () => {
+      // Yours 4c against the community's 4a: both are V0.
+      resolveGrade.mockReturnValue({ label: 'V0 / 4A', color: '#111111', isBoardsesh: false });
+      myGradeOverride.current = { status: 'set', difficultyId: 12, climbedAt: null };
+      const { container } = renderRow();
+
+      expect(gradeNode(container)?.textContent).toBe('V0 / 4C');
+      expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+      expect(detailLine(container)?.getAttribute('aria-label')).toBeNull();
+    });
+
+    it('suppresses the token beside a Boardsesh grade on the same V grade', () => {
+      // Boardsesh 6b+ against the community's 6b: both are V4.
+      resolveGrade.mockReturnValue({ label: '≈V4 / 6B+', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+      const { container } = renderRow();
+
+      expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    });
+  });
+
+  it('shows no token on a Project', () => {
+    resolveGrade.mockReturnValue({ label: '', color: '#000000', isBoardsesh: false });
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, difficulty: '', boardseshDifficulty: null }}
+        boardName="spray"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+
+    expect(container.querySelector('[aria-label="mobile.project.chip"]')).not.toBeNull();
+    expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+    expect(detailLine(container)?.hasAttribute('aria-label')).toBe(false);
+  });
+
+  // A host that replaces or hides the computed detail line has nowhere to put the
+  // token. That is the intended outcome for session rows, not an oversight.
+  it.each([
+    ['replaces the detail line', 'Sam'],
+    ['hides the detail line', null],
+  ])('shows no token on a host that %s', (_label, primarySubtitleOverride) => {
+    resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+    myGradeOverride.current = MY_V10;
+    const { container } = render(
+      <ClimbListItemContent
+        climb={baseClimb}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+        showAscentStatus={false}
+        primarySubtitleOverride={primarySubtitleOverride}
+      />,
+    );
+
+    expect(container.textContent).not.toContain('V0');
+    expect(container.textContent).not.toContain('Community grade');
+    expect(container.querySelector('[aria-label^="Community grade"]')).toBeNull();
+    // The column still shows one grade, yours, with its mark.
+    expect(gradeNode(container)?.textContent).toBe('V10');
+    expect(secondGradeLine(container)).toBeNull();
+    expect(iconNames(container)).toContain('person');
+    // And the row mounted no detail-line subscriber for a token it cannot show.
+    expect(statusLogbook.listeners.size).toBe(1);
+  });
+
+  describe('the "Project" fallback', () => {
+    const bareClimb = { ...baseClimb, ascensionist_count: 0, quality_average: '0', setter_username: '' };
+    const renderBare = () =>
+      render(
+        <ClimbListItemContent climb={bareClimb} boardName="kilter" layoutId={1} sizeId={1} setIds="1" angle={40} />,
+      );
+
+    it('still reads Project for a climb with no sends, no rating, no setter and no community grade', () => {
+      resolveGrade.mockReturnValue({ label: '', color: '#000000', isBoardsesh: false });
+      const { container } = renderBare();
+
+      expect(detailLine(container)?.textContent).toBe('mobile.climbRow.projectFallback');
+    });
+
+    it('gives way to the community grade, which is something known about the climb', () => {
+      resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+      myGradeOverride.current = MY_V10;
+      const { container } = renderBare();
+
+      expect(detailLine(container)?.textContent).toBe('V0');
+      expect(detailLine(container)?.getAttribute('aria-label')).toBe('Community grade V0');
+    });
+  });
+
+  // The logbook rule: subscriptions live in memoised leaves, and the detail line
+  // has one only where the climber's own grade can change what it draws.
+  describe('logbook subscriptions', () => {
+    const renderWithoutStatus = (display = DEFAULT_CLIMB_ROW_DISPLAY) =>
+      render(
+        <ClimbListItemContent
+          climb={baseClimb}
+          boardName="kilter"
+          layoutId={1}
+          sizeId={1}
+          setIds="1"
+          angle={40}
+          showAscentStatus={false}
+          display={display}
+        />,
+      );
+
+    beforeEach(() => {
+      resolveGrade.mockReturnValue({ label: 'V4', color: '#111111', isBoardsesh: false });
+    });
+
+    it('mounts no logbook subscriber in the detail line while the switch is off', () => {
+      renderWithoutStatus(communityGradeOff);
+
+      // The grade column's, and nothing else.
+      expect(statusLogbook.listeners.size).toBe(1);
+    });
+
+    it('adds exactly one, the detail line’s own, while the switch is on', () => {
+      renderWithoutStatus();
+
+      expect(statusLogbook.listeners.size).toBe(2);
+    });
+
+    it('drops the detail line’s subscriber the moment the switch goes off', () => {
+      render(
+        <ClimbListItemContent
+          climb={baseClimb}
+          boardName="kilter"
+          layoutId={1}
+          sizeId={1}
+          setIds="1"
+          angle={40}
+          showAscentStatus={false}
+        />,
+      );
+      expect(statusLogbook.listeners.size).toBe(2);
+
+      act(() => setClimbRowField('communityGrade', false));
+
+      expect(statusLogbook.listeners.size).toBe(1);
+    });
+
+    it('asks the logbook about the same climb, angle and row grade as the grade column does', () => {
+      useMyGradeCalls.length = 0;
+      render(
+        <ClimbListItemContent
+          climb={{ ...baseClimb, myDifficulty: 27 }}
+          boardName="kilter"
+          layoutId={1}
+          sizeId={1}
+          setIds="1"
+          angle={40}
+          showAscentStatus={false}
+        />,
+      );
+
+      expect(useMyGradeCalls).toEqual([
+        { climbUuid: baseClimb.uuid, angle: 40, options: { rowDifficulty: 27 } },
+        { climbUuid: baseClimb.uuid, angle: 40, options: { rowDifficulty: 27 } },
+      ]);
+    });
+
+    // What the detail line works out follows the two grade settings, so a row
+    // never pays for a grade it cannot be showing.
+    describe('by grade setting', () => {
+      it('works out no grade at all with personal and Boardsesh grades both off', () => {
+        gradeSettings.personalGrades = false;
+        gradeSettings.boardseshGrades = false;
+        const { container } = renderWithoutStatus();
+
+        expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+        // One logbook subscriber and one grade lookup: the grade column's.
+        expect(statusLogbook.listeners.size).toBe(1);
+        expect(resolveGrade).toHaveBeenCalledTimes(1);
+      });
+
+      it('works the token out without the logbook with only Boardsesh grades on', () => {
+        gradeSettings.personalGrades = false;
+        resolveGrade.mockReturnValue({ label: '≈V5', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+        useMyGradeCalls.length = 0;
+        const { container } = renderWithoutStatus();
+
+        expect(detailLine(container)?.textContent).toBe('V4 · sends · 4.5★');
+        expect(statusLogbook.listeners.size).toBe(1);
+        expect(useMyGradeCalls).toHaveLength(1);
+        // The grade column and the detail line each looked the grade up.
+        expect(resolveGrade).toHaveBeenCalledTimes(2);
+      });
+
+      it('leaves that detail line alone when a tick lands', () => {
+        gradeSettings.personalGrades = false;
+        resolveGrade.mockReturnValue({ label: '≈V5', color: '#abcdef', isBoardsesh: true, isEstimated: true });
+        renderWithoutStatus();
+        resolveGrade.mockClear();
+
+        act(() => {
+          statusLogbook.current = { logbookByClimbAngle: new Map() };
+          statusLogbook.listeners.forEach((listener) => listener());
+        });
+
+        // Only the grade column, the one logbook subscriber, looked again.
+        expect(resolveGrade).toHaveBeenCalledTimes(1);
+      });
+
+      it('reads the logbook with personal grades on, whether or not Boardsesh grades are', () => {
+        gradeSettings.boardseshGrades = false;
+        const personalOnly = renderWithoutStatus();
+        expect(statusLogbook.listeners.size).toBe(2);
+        personalOnly.unmount();
+
+        gradeSettings.boardseshGrades = true;
+        renderWithoutStatus();
+        expect(statusLogbook.listeners.size).toBe(2);
+      });
+
+      it('reads no logbook for the detail line with the token switched off, whatever the settings', () => {
+        for (const personalGrades of [true, false]) {
+          for (const boardseshGrades of [true, false]) {
+            gradeSettings.personalGrades = personalGrades;
+            gradeSettings.boardseshGrades = boardseshGrades;
+            resolveGrade.mockClear();
+            const row = renderWithoutStatus(communityGradeOff);
+
+            expect(statusLogbook.listeners.size).toBe(1);
+            expect(resolveGrade).toHaveBeenCalledTimes(1);
+            row.unmount();
+          }
+        }
+      });
+
+      // The one reason to read the logbook with the token off: a row read at
+      // another angle has a marker whose place follows the climber's own grade.
+      it('reads the logbook for a cross-angle row with the token off, to place the set-angle marker', () => {
+        const renderCrossAngle = () =>
+          render(
+            <ClimbListItemContent
+              climb={{ ...baseClimb, statsAngle: 45 }}
+              boardName="kilter"
+              layoutId={1}
+              sizeId={1}
+              setIds="1"
+              angle={40}
+              showAscentStatus={false}
+              display={communityGradeOff}
+            />,
+          );
+
+        const withPersonalGrades = renderCrossAngle();
+        expect(statusLogbook.listeners.size).toBe(2);
+        withPersonalGrades.unmount();
+
+        gradeSettings.personalGrades = false;
+        renderCrossAngle();
+        expect(statusLogbook.listeners.size).toBe(1);
+      });
+    });
+
+    it('moves the token and the grade together when a tick lands, without touching the thumbnail', () => {
+      resolveGrade.mockReturnValue({ label: 'V0', color: '#111111', isBoardsesh: false });
+      myGradeOverride.current = { status: 'none' };
+      thumbnailRender.mockClear();
+      const { container } = renderWithoutStatus();
+      expect(gradeNode(container)?.textContent).toBe('V0');
+      expect(detailLine(container)?.textContent).toBe('sends · 4.5★');
+      const thumbnailCalls = thumbnailRender.mock.calls.length;
+
+      act(() => {
+        myGradeOverride.current = MY_V10;
+        statusLogbook.current = { logbookByClimbAngle: new Map() };
+        statusLogbook.listeners.forEach((listener) => listener());
+      });
+
+      expect(gradeNode(container)?.textContent).toBe('V10');
+      expect(detailLine(container)?.textContent).toBe('V0 · sends · 4.5★');
+      expect(thumbnailRender.mock.calls).toHaveLength(thumbnailCalls);
+    });
   });
 });
 
@@ -757,5 +1473,64 @@ describe('ClimbListItemContent original and mirror statuses', () => {
     );
     expect(directionRows(container)).toHaveLength(0);
     expect(container.querySelector('[aria-label="mobile.climbRow.ascentStatus.send"]')).not.toBeNull();
+  });
+});
+
+describe('multi-frame route pips', () => {
+  beforeEach(() => {
+    resetClimbRowDisplayForTests();
+    liveStatsOverride.current = null;
+    myGradeOverride.current = { status: 'unknown' };
+    statusLogbook.current = null;
+    gradeFormatOverride.current = 'v-grade';
+    resolveGrade.mockReturnValue({ label: 'V4', color: '#111111', isBoardsesh: false });
+  });
+  afterEach(() => resetClimbRowDisplayForTests());
+  it.each([undefined, null, 1])('adds no frame marker for count %s', (framesCount) => {
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, framesCount }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+    expect(container.querySelector('[data-icon="frames"]')).toBeNull();
+  });
+  it('overlays the picture without allocating a name-line box', () => {
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, framesCount: 4 }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+    const pip = container.querySelector('[data-icon="frames"]')?.parentElement;
+    expect(pip).toBeTruthy();
+    expect(pip?.getAttribute('data-style')).toContain('absolute');
+  });
+  it('moves the marker to the name cluster when pictures are off', () => {
+    setClimbRowField('thumbnail', false);
+    thumbnailRender.mockClear();
+    const { container } = render(
+      <ClimbListItemContent
+        climb={{ ...baseClimb, framesCount: 4 }}
+        boardName="kilter"
+        layoutId={1}
+        sizeId={1}
+        setIds="1"
+        angle={40}
+      />,
+    );
+    const pip = container.querySelector('[data-icon="frames"]')?.parentElement;
+    expect(pip).toBeTruthy();
+    expect(pip?.getAttribute('data-style')).not.toContain('absolute');
+    expect(pip?.parentElement?.textContent).toContain(baseClimb.name);
+    expect(thumbnailRender).not.toHaveBeenCalled();
   });
 });

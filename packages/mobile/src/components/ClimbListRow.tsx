@@ -32,7 +32,9 @@ import type { Climb, BoardName } from '@boardsesh/shared-schema';
 import { Icon } from './Icon';
 import { ClimbListItemContent } from './ClimbListItemContent';
 import { CLIMB_ROW_GUTTER, climbListRowStyles } from './climb-list-row-styles';
+import { CLIMB_ROW_VERTICAL_PADDING } from './climb-row-layout';
 import { hapticLight, hapticMedium, hapticSuccess } from '../lib/haptics';
+import { useClimbRowField } from '../lib/climb-row-display-preference';
 import { useTheme } from '../providers/theme-provider';
 import { iosSystemColors } from '../theme/ios-colors';
 import { brandColors } from '../theme/colors';
@@ -241,10 +243,12 @@ type ClimbListRowProps = {
   showSeparator?: boolean;
   /**
    * Show the playlist-membership tag row in the default content layout. Only the
-   * main filtered climb list opts in; the chips still gate on the user setting +
-   * fetched data. Ignored when `renderContent` supplies a custom layout.
+   * main filtered climb list opts in; the content still needs the user setting,
+   * and the tags their fetched data. Ignored when `renderContent` supplies a
+   * custom layout.
    */
   showPlaylistChips?: boolean;
+  showProgress?: boolean;
   /**
    * Show the favourite heart beside the ascent status in the default content
    * layout. Only the main filtered climb list opts in — it's the surface that
@@ -253,10 +257,12 @@ type ClimbListRowProps = {
    */
   showFavorite?: boolean;
   /**
-   * Show a trailing ⋮ button that opens the reaction menu on tap — a visible,
-   * discoverable entry point beside the long-press. The climbs list passes the
-   * "Show quick-actions button" user setting (on by default), other surfaces keep
-   * long-press only. No-op without `onOpenActions`.
+   * Let this surface show a trailing ⋮ button that opens the reaction menu on tap
+   * — a visible, discoverable entry point beside the long-press. Only the climbs
+   * list opts in; other surfaces keep long-press only. The button also needs the
+   * climber's "Show quick-actions button" setting (on by default), which the row
+   * reads itself so a toggle never rebuilds the list's `renderItem`. No-op
+   * without `onOpenActions`.
    */
   showMoreButton?: boolean;
   /**
@@ -287,12 +293,18 @@ const ClimbListRow = React.memo(function ClimbListRow({
   separatorStyle,
   showSeparator = true,
   showPlaylistChips = false,
+  showProgress = false,
   showFavorite = false,
   showMoreButton = false,
   testID = 'climb-row',
 }: ClimbListRowProps) {
   const { t } = useTranslation('climbs');
   const { systemColors, brandColors: brand } = useTheme();
+  const quickActionsEnabled = useClimbRowField('quickActions');
+  // A host that draws its own content draws its own thumbnail too, so the row
+  // around it keeps the geometry of a row that has one.
+  const thumbnailEnabled = useClimbRowField('thumbnail');
+  const hasThumbnail = thumbnailEnabled || renderContent !== undefined;
   // Active-row highlight colours, derived from the scheme-aware brand so the wash
   // + accent stay visible in dark (lifted #A78BFA) as well as light.
   const highlight = useMemo(() => selectedRowColors(brand.primary), [brand.primary]);
@@ -502,7 +514,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
 
   // The ⋯ button's own tap. It blocks the row gestures so a tap on the button opens the
   // menu without pressing the row; a tap anywhere else never starts this gesture, so the
-  // row behaves normally. Only mounted when `showMoreButton` is set.
+  // row behaves normally. Only mounted while the ⋮ button is.
   const moreButtonGesture = useMemo(
     () =>
       Gesture.Tap()
@@ -557,6 +569,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
       setIds={setIds}
       angle={angle}
       showPlaylistChips={showPlaylistChips}
+      showProgress={showProgress}
       showFavorite={showFavorite}
     />
   );
@@ -609,11 +622,11 @@ const ClimbListRow = React.memo(function ClimbListRow({
 
             {rowContent}
 
-            {showMoreButton && onOpenActions ? (
+            {showMoreButton && quickActionsEnabled && onOpenActions ? (
               <GestureDetector gesture={moreButtonGesture} touchAction="pan-y">
                 <View
                   testID="climb-row-more-button"
-                  style={styles.moreButton}
+                  style={hasThumbnail ? styles.moreButton : [styles.moreButton, styles.moreButtonWithoutThumbnail]}
                   accessible
                   accessibilityRole="button"
                   accessibilityLabel={t('mobile.climbRow.moreActions')}
@@ -637,9 +650,16 @@ const ClimbListRow = React.memo(function ClimbListRow({
         </GestureDetector>
       </ReanimatedSwipeable>
 
-      {/* Separator — inset to start at the text column (after the thumbnail) */}
+      {/* Separator — inset to start at the text column (after the thumbnail, when there is one) */}
       {showSeparator ? (
-        <View style={[climbListRowStyles.separator, { backgroundColor: systemColors.separator }, separatorStyle]} />
+        <View
+          style={[
+            climbListRowStyles.separator,
+            hasThumbnail ? null : climbListRowStyles.separatorWithoutThumbnail,
+            { backgroundColor: systemColors.separator },
+            separatorStyle,
+          ]}
+        />
       ) : null}
     </View>
   );
@@ -695,9 +715,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
   },
-  // Trailing ⋮ affordance. A full 44pt tap target (no hitSlop, no negative margin —
-  // those stacked into ~16pt of overlap with the grade, risking accidental opens);
-  // the row's gap keeps it clear of the grade at the trailing edge.
+  // Trailing ⋮ affordance. A full 44pt tap target (no hitSlop, no negative margin
+  // toward the grade — those stacked into ~16pt of overlap with it, risking
+  // accidental opens); the row's gap keeps it clear of the grade at the trailing edge.
   moreButton: {
     width: 44,
     height: 44,
@@ -707,6 +727,13 @@ const styles = StyleSheet.create({
     // edge sits on the 16pt margin, like the thumbnail on the leading side,
     // instead of 28pt in. Only the empty half of the target overlaps padding.
     marginEnd: MORE_BUTTON_GUTTER_PULL,
+  },
+  // Without a thumbnail the row is as tall as its text, as little as 44pt. The
+  // target stays 44pt and reaches into the row's own vertical padding, so it
+  // never makes a row taller than its text does. It stays inside the row: no
+  // overlap with the row above or below.
+  moreButtonWithoutThumbnail: {
+    marginVertical: -CLIMB_ROW_VERTICAL_PADDING,
   },
   moreIconRotate: {
     transform: [{ rotate: '90deg' }],
