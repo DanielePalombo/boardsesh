@@ -79,6 +79,11 @@ preference, with personal and Boardsesh grades disabled, and waits for those
 preferences to settle. Existing candidates without this optional contract keep
 their original navigation.
 
+Explicit hero capture waits for the current board's saved search to restore,
+then clears actual filters, committed search text and any pending name debounce.
+It waits for genuine default-query results before resolving the requested ID.
+Returning to that hero starts a new reset; ordinary rerenders do not.
+
 The selected-pane marker identifies the owned board and rendered climb only after
 both current board-art layers have displayed. Hidden tabs, stale image events and
 opening-art bridges cannot satisfy it. Tension’s new mirror capture additionally
@@ -88,7 +93,8 @@ then verifies the mirrored artwork and restores the original orientation.
 New search captures reset through the real header action, then use the
 `search-grade` navigation command to apply a range through the existing live
 filter action. Native setup validates both IDs against loaded GetGrades and the
-current exact board configuration. Capture requires the actual selected
+current exact board configuration, and clears restored search text through the
+existing clear action before applying the range. Capture requires the actual selected
 GradeRail endpoints and genuine API count. It then clears through header Reset
 and closes through leading Close before navigation. Trailing Reset must never
 be treated as Apply; Maestro hierarchy existence does not prove an offscreen

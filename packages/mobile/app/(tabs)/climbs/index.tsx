@@ -780,6 +780,39 @@ function ClimbListInner() {
 
   // Search is "ready" once this board's restore has landed — gate queries on it.
   const searchReady = hasBoardConfig && restoredKey === boardKey;
+  const screenshotSearchRequestKey =
+    process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' && screenshotClimbId?.trim() && activeBoard
+      ? `${activeBoard.uuid}:${filterScopeKey}:${screenshotCppScene ?? ''}:${screenshotClimbId}`
+      : null;
+  const screenshotSearchResetRef = useRef<string | null>(null);
+  const [screenshotSearchResetFor, setScreenshotSearchResetFor] = useState<string | null>(null);
+  useEffect(() => {
+    // A reused simulator may restore filters that exclude the requested real
+    // climb. Clear only after restoration, once for this exact board/request.
+    if (!screenshotSearchRequestKey) {
+      screenshotSearchResetRef.current = null;
+      if (screenshotSearchResetFor !== null) setScreenshotSearchResetFor(null);
+      return;
+    }
+    if (
+      !searchReady ||
+      (screenshotTargetBoard && activeBoard?.uuid !== screenshotTargetBoard.uuid) ||
+      screenshotSearchResetRef.current === screenshotSearchRequestKey
+    )
+      return;
+    screenshotSearchResetRef.current = screenshotSearchRequestKey;
+    handleClearName();
+    replaceSearch(DEFAULT_CLIMB_FILTER_STATE, '', DEFAULT_CLIMB_BOARD_FILTER_STATE);
+    setScreenshotSearchResetFor(screenshotSearchRequestKey);
+  }, [
+    screenshotSearchRequestKey,
+    screenshotSearchResetFor,
+    searchReady,
+    screenshotTargetBoard,
+    activeBoard,
+    handleClearName,
+    replaceSearch,
+  ]);
   const searchReadyRef = useRef(searchReady);
   searchReadyRef.current = searchReady;
   const handleOpenFilters = useCallback(() => {
@@ -883,6 +916,21 @@ function ClimbListInner() {
       ),
     [boardName, layoutId, sizeId, setIds, angle, name, queryFilters, queryBoardFilters, personalGrades],
   );
+  const screenshotDefaultSearchInput = useMemo(
+    () =>
+      process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' && boardConfig
+        ? mergeBoardFilters(
+            toClimbSearchInput(DEFAULT_CLIMB_FILTER_STATE, boardConfig, { page: 0, pageSize: PAGE_SIZE }, { name: '' }),
+            DEFAULT_CLIMB_BOARD_FILTER_STATE,
+          )
+        : null,
+    [boardConfig],
+  );
+  const screenshotDefaultSearchReady =
+    screenshotSearchResetFor === screenshotSearchRequestKey &&
+    screenshotDefaultSearchInput !== null &&
+    name === '' &&
+    climbSearchScrollKey(searchInput, false) === climbSearchScrollKey(screenshotDefaultSearchInput, false);
 
   const {
     data: searchPages,
@@ -1327,8 +1375,10 @@ function ClimbListInner() {
   // normal builds.
   const screenshotOpenedForBoardRef = useRef<string | null>(null);
   useEffect(() => {
-    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || (!screenshotOpenFirst && screenshotClimbId === undefined))
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || (!screenshotOpenFirst && screenshotClimbId === undefined)) {
+      screenshotOpenedForBoardRef.current = null;
       return;
+    }
     // When a specific board is requested, wait until it's the active board.
     if (screenshotTargetBoard && activeBoard?.uuid !== screenshotTargetBoard.uuid) return;
     const captureIdentity = `${activeBoard?.uuid}:${screenshotCppScene ?? ''}:${screenshotClimbId ?? 'first'}`;
@@ -1341,7 +1391,8 @@ function ClimbListInner() {
       searchReady &&
         !isPlaceholderData &&
         !isClimbsLoading &&
-        (screenshotClimbId === undefined || screenshotGradesReadyFor === screenshotClimbId),
+        (screenshotClimbId === undefined ||
+          (screenshotDefaultSearchReady && screenshotGradesReadyFor === screenshotClimbId)),
     );
     if (!requestedClimb) return;
     screenshotOpenedForBoardRef.current = captureIdentity;
@@ -1350,6 +1401,7 @@ function ClimbListInner() {
     screenshotOpenFirst,
     screenshotClimbId,
     screenshotGradesReadyFor,
+    screenshotDefaultSearchReady,
     screenshotCppScene,
     searchReady,
     isPlaceholderData,
@@ -1496,12 +1548,14 @@ function ClimbListInner() {
   // CPP-only setup uses the live selection action after genuine board/grades
   // arrive. Latching the route prevents the later native Reset from reapplying.
   const screenshotGradeAppliedRef = useRef<string | null>(null);
+  const [screenshotGradeNameClearedFor, setScreenshotGradeNameClearedFor] = useState<string | null>(null);
   useEffect(() => {
     if (screenshotCppScene !== 'search-grade') {
       screenshotGradeAppliedRef.current = null;
+      if (screenshotGradeNameClearedFor !== null) setScreenshotGradeNameClearedFor(null);
       return;
     }
-    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !showFilters || name.trim()) return;
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !showFilters) return;
     const range = selectScreenshotGradeRange(
       screenshotMinGrade,
       screenshotMaxGrade,
@@ -1509,17 +1563,20 @@ function ClimbListInner() {
       activeBoard,
       screenshotTargetBoard,
       searchInput,
-      searchReady &&
-        !isPlaceholderData &&
-        !isClimbsLoading &&
-        gradesLoaded &&
-        !gradesPlaceholder &&
-        screenshotGradesReadyFor === screenshotGradeSetupKey,
+      searchReady && gradesLoaded && !gradesPlaceholder && screenshotGradesReadyFor === screenshotGradeSetupKey,
       gradeStops,
     );
     if (!range) return;
-    const identity = `${activeBoard!.uuid}:${screenshotCppScene}:${range.minGrade}:${range.maxGrade}`;
+    const identity = `${activeBoard!.uuid}:${filterScopeKey}:${screenshotCppScene}:${range.minGrade}:${range.maxGrade}`;
     if (screenshotGradeAppliedRef.current === identity) return;
+    if (screenshotGradeNameClearedFor !== identity) {
+      // The sheet's filter Reset can retain a saved name. Clear its real text
+      // and pending debounce, then wait for the empty-name query to settle.
+      handleSheetClearName();
+      setScreenshotGradeNameClearedFor(identity);
+      return;
+    }
+    if (name !== '' || isPlaceholderData || isClimbsLoading) return;
     screenshotGradeAppliedRef.current = identity;
     handleLiveFilterSelectionChange({ ...DEFAULT_FILTERS, ...range }, {});
   }, [
@@ -1539,8 +1596,11 @@ function ClimbListInner() {
     gradesPlaceholder,
     screenshotGradesReadyFor,
     screenshotGradeSetupKey,
+    screenshotGradeNameClearedFor,
+    filterScopeKey,
     gradeStops,
     handleLiveFilterSelectionChange,
+    handleSheetClearName,
   ]);
 
   // Screenshot mode: open the long-press reaction menu over the first row. The

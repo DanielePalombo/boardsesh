@@ -20,7 +20,7 @@ import type { ScreenshotSelectableBoard } from '../../../../src/lib/screenshot-b
 import type { NativeStackNavigationOptions } from 'expo-router';
 import type { ScrollEdgeBackdrop } from '../../../../src/hooks/use-scroll-edge-backdrop';
 import type { ClimbFilterSheet } from '../../../../src/components/ClimbFilterSheet';
-import type { ClimbFilters } from '../../../../src/lib/climb-filter-types';
+import { DEFAULT_FILTERS, type ClimbFilters } from '../../../../src/lib/climb-filter-types';
 import type { LastSearch } from '../../../../src/lib/last-search-store';
 import type { BoardSearchConfig, ClimbBoardFilterState } from '@boardsesh/climb-filters';
 import { hasActiveClimbFilters } from '@boardsesh/climb-filters';
@@ -70,6 +70,9 @@ const mocks = vi.hoisted(() => ({
   replaceSearch: vi.fn(),
   filterSheetProps: undefined as FilterSheetProps | undefined,
   searchInput: undefined as { filters: unknown; boardFilters: unknown; name: string } | undefined,
+  searchClimbsForInput: null as
+    | ((input: { filters: unknown; boardFilters: unknown; name: string } | undefined) => Climb[])
+    | null,
   carrySearchGeometry: false,
   screenshotBoards: [] as ScreenshotSelectableBoard[],
   grades: [] as Grade[],
@@ -665,7 +668,9 @@ vi.mock('../../../../src/lib/graphql/hooks/use-infinite-search-climbs', () => ({
   useInfiniteSearchClimbs: (input: typeof mocks.searchInput, enabled = true) => {
     mocks.searchInput = input;
     return {
-      data: enabled ? { pages: [{ climbs: mocks.searchClimbs, hasMore: false }] } : undefined,
+      data: enabled
+        ? { pages: [{ climbs: mocks.searchClimbsForInput?.(input) ?? mocks.searchClimbs, hasMore: false }] }
+        : undefined,
       isLoading: enabled && mocks.isClimbsLoading,
       isError: mocks.searchFailed,
       error: mocks.searchError,
@@ -813,6 +818,7 @@ beforeEach(() => {
   mocks.searchListeners.clear();
   mocks.filterSheetProps = undefined;
   mocks.searchInput = undefined;
+  mocks.searchClimbsForInput = null;
   mocks.carrySearchGeometry = false;
   mocks.screenshotBoards = [];
   mocks.grades = [];
@@ -1561,6 +1567,194 @@ describe('ClimbList screenshot-mode wall-state deep links', () => {
     };
     return requested;
   };
+
+  const excludedSavedSearch: LastSearch = {
+    filters: { ...DEFAULT_FILTERS, minGrade: 24, maxGrade: 26, sortBy: 'quality' },
+    boardFilters: { onlyBenchmarks: true },
+    searchText: 'old project',
+    updatedAt: 1,
+  };
+
+  it.each(['loading', 'placeholder'] as const)(
+    'clears a reused simulator only after restoration and waits for real default rows (%s)',
+    async (pending) => {
+      await withScreenshotMode(async () => {
+        mocks.statefulSearch = true;
+        gradeScene();
+        const requestedClimb = { ...mocks.secondClimb, boardType: 'kilter', layoutId: 1, angle: 40 };
+        const firstClimb = { ...mocks.climb, boardType: 'kilter', layoutId: 1, angle: 40 };
+        mocks.searchClimbsForInput = (input) =>
+          input?.name ||
+          Object.keys(input?.filters as object).length ||
+          Object.keys(input?.boardFilters as object).length
+            ? [firstClimb]
+            : [firstClimb, requestedClimb];
+        mocks.searchParams = {
+          screenshotBoardIndex: '0',
+          screenshotCppScene: 'hero-1',
+          screenshotClimbId: requestedClimb.uuid,
+        };
+        let finishRestore: (saved: LastSearch) => void = () => {};
+        mocks.getLastSearch.mockReturnValueOnce(new Promise<LastSearch>((resolve) => (finishRestore = resolve)));
+        const view = render(<ClimbList />);
+        await act(async () => {});
+        expect(mocks.replaceSearch).not.toHaveBeenCalled();
+        expect(mocks.activateClimb).not.toHaveBeenCalled();
+        mocks.isClimbsLoading = pending === 'loading';
+        mocks.isPlaceholderData = pending === 'placeholder';
+        await act(async () => finishRestore(excludedSavedSearch));
+        expect(mocks.replaceSearch).toHaveBeenNthCalledWith(
+          1,
+          excludedSavedSearch.filters,
+          excludedSavedSearch.searchText,
+          excludedSavedSearch.boardFilters,
+        );
+        expect(mocks.searchState).toEqual({ filters: {}, boardFilters: {}, name: '' });
+        expect(mocks.setName).toHaveBeenCalledWith('');
+        expect(mocks.activateClimb).not.toHaveBeenCalled();
+        const resetCalls = () =>
+          mocks.replaceSearch.mock.calls.filter(([filters]) => Object.keys(filters).length === 0);
+        expect(resetCalls()).toHaveLength(1);
+        view.rerender(<ClimbList />);
+        expect(resetCalls()).toHaveLength(1);
+        mocks.isClimbsLoading = false;
+        mocks.isPlaceholderData = false;
+        view.rerender(<ClimbList />);
+        await waitFor(() => expect(mocks.activateClimb).toHaveBeenCalledTimes(1));
+        expect(mocks.activateClimb.mock.calls[0][0].uuid).toBe(requestedClimb.uuid);
+        expect(mocks.searchInput).toMatchObject({ filters: {}, boardFilters: {}, name: '' });
+      });
+    },
+  );
+
+  it('resets and reopens the same explicit hero after leaving and changing normal search', async () => {
+    await withScreenshotMode(async () => {
+      mocks.statefulSearch = true;
+      gradeScene();
+      const climb = { ...mocks.climb, boardType: 'kilter', layoutId: 1, angle: 40 };
+      const hero = { screenshotBoardIndex: '0', screenshotClimbId: climb.uuid, screenshotCppScene: 'hero-1' };
+      mocks.searchParams = hero;
+      mocks.searchClimbsForInput = (input) =>
+        input?.name || Object.keys(input?.filters as object).length ? [] : [climb];
+      const view = render(<ClimbList />);
+      await waitFor(() => expect(mocks.activateClimb).toHaveBeenCalledTimes(1));
+      mocks.searchParams = {};
+      view.rerender(<ClimbList />);
+      act(() => {
+        mocks.replaceSearch(excludedSavedSearch.filters, excludedSavedSearch.searchText, {});
+      });
+      expect(mocks.searchState.name).toBe('old project');
+      mocks.searchParams = hero;
+      view.rerender(<ClimbList />);
+      await waitFor(() => expect(mocks.activateClimb).toHaveBeenCalledTimes(2));
+      expect(mocks.searchState).toEqual({ filters: {}, boardFilters: {}, name: '' });
+      view.rerender(<ClimbList />);
+      expect(mocks.activateClimb).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('clears restored grade-scene text before waiting for loaded results and never reapplies after Reset', async () => {
+    await withScreenshotMode(async () => {
+      mocks.statefulSearch = true;
+      gradeScene();
+      mocks.getLastSearch.mockResolvedValueOnce(excludedSavedSearch);
+      mocks.isClimbsLoading = true;
+      mocks.searchClimbsForInput = (input) =>
+        input?.name ? [] : [{ ...mocks.climb, boardType: 'kilter', layoutId: 1, angle: 40 }];
+      const view = render(<ClimbList />);
+      await waitFor(() => expect(mocks.setName).toHaveBeenCalledWith(''));
+      expect(mocks.searchState.name).toBe('');
+      expect(mocks.filterSheetProps?.searchName).toBe('');
+      const gradeCalls = () => mocks.replaceSearch.mock.calls.filter(([filters]) => filters.minGrade === 17);
+      expect(gradeCalls()).toHaveLength(0);
+      mocks.isClimbsLoading = false;
+      mocks.isPlaceholderData = true;
+      view.rerender(<ClimbList />);
+      expect(gradeCalls()).toHaveLength(0);
+      mocks.isPlaceholderData = false;
+      view.rerender(<ClimbList />);
+      await waitFor(() => expect(gradeCalls()).toHaveLength(1));
+      await waitFor(() =>
+        expect(mocks.searchInput).toMatchObject({ filters: { minGrade: 17, maxGrade: 19 }, name: '' }),
+      );
+      act(() => mocks.filterSheetProps?.onSelectionChange(DEFAULT_FILTERS, {}));
+      view.rerender(<ClimbList />);
+      expect(mocks.searchState.filters).toEqual({});
+      expect(gradeCalls()).toHaveLength(1);
+      expect(mocks.activateClimb).not.toHaveBeenCalled();
+    });
+  });
+
+  it('preserves restored filters and search text for ordinary app navigation', async () => {
+    mocks.statefulSearch = true;
+    mocks.getLastSearch.mockResolvedValueOnce(excludedSavedSearch);
+    render(<ClimbList />);
+    await waitFor(() => expect(mocks.searchState.name).toBe(excludedSavedSearch.searchText));
+    expect(mocks.searchState.filters).toEqual(excludedSavedSearch.filters);
+    expect(mocks.searchState.boardFilters).toEqual(excludedSavedSearch.boardFilters);
+    expect(mocks.replaceSearch).toHaveBeenCalledTimes(1);
+    expect(mocks.setName).not.toHaveBeenCalled();
+  });
+
+  it('cancels a pending sheet name debounce when entering the grade capture', async () => {
+    await withScreenshotMode(async () => {
+      mocks.statefulSearch = true;
+      gradeScene();
+      mocks.searchParams = { ...mocks.searchParams, screenshotCppScene: 'search' };
+      mocks.getLastSearch.mockResolvedValueOnce(excludedSavedSearch);
+      mocks.isClimbsLoading = true;
+      const view = render(<ClimbList />);
+      await waitFor(() => expect(mocks.filterSheetProps?.searchName).toBe(excludedSavedSearch.searchText));
+      await act(async () => {});
+      vi.useFakeTimers();
+      try {
+        act(() => mocks.filterSheetProps?.onNameChange('late pending'));
+        expect(mocks.searchState.name).toBe(excludedSavedSearch.searchText);
+        mocks.searchParams = { ...mocks.searchParams, screenshotCppScene: 'search-grade' };
+        view.rerender(<ClimbList />);
+        act(() => {
+          vi.advanceTimersByTime(300);
+        });
+        expect(mocks.searchState.name).toBe('');
+        expect(mocks.setName).not.toHaveBeenCalledWith('late pending');
+        const gradeCalls = () => mocks.replaceSearch.mock.calls.filter(([filters]) => filters.minGrade === 17);
+        expect(gradeCalls()).toHaveLength(0);
+        mocks.isClimbsLoading = false;
+        view.rerender(<ClimbList />);
+        act(() => {
+          vi.advanceTimersByTime(250);
+        });
+        expect(gradeCalls()).toHaveLength(1);
+        expect(mocks.searchInput).toMatchObject({ filters: { minGrade: 17, maxGrade: 19 }, name: '' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it('waits for the requested owned board before clearing its restored hero search', async () => {
+    await withScreenshotMode(async () => {
+      mocks.statefulSearch = true;
+      const requested = gradeScene();
+      mocks.activeBoard = { ...requested, uuid: 'previous-owned' };
+      mocks.getLastSearch.mockResolvedValueOnce(excludedSavedSearch);
+      const climb = { ...mocks.climb, boardType: 'kilter', layoutId: 1, angle: 40 };
+      mocks.searchParams = {
+        screenshotBoardIndex: '0',
+        screenshotClimbId: climb.uuid,
+        screenshotCppScene: 'hero-1',
+      };
+      mocks.searchClimbsForInput = (input) => (input?.name ? [] : [climb]);
+      const view = render(<ClimbList />);
+      await waitFor(() => expect(mocks.searchState.name).toBe(excludedSavedSearch.searchText));
+      expect(mocks.setName).not.toHaveBeenCalled();
+      expect(mocks.activateClimb).not.toHaveBeenCalled();
+      mocks.activeBoard = requested;
+      view.rerender(<ClimbList />);
+      await waitFor(() => expect(mocks.activateClimb).toHaveBeenCalledTimes(1));
+      expect(mocks.searchState).toEqual({ filters: {}, boardFilters: {}, name: '' });
+    });
+  });
 
   it('applies a genuine grade range once through the live filter action without a hero selection', async () => {
     await withScreenshotMode(async () => {
