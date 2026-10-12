@@ -520,10 +520,11 @@ reference numbers):
   it has been busy, and the queue's navigation reads state that only a render brings up to date.
 - Everything a step needs is the pager's, created in the drawer: the offset, the step a fling is
   carrying (`untoldStep`), the reaction that tells the JS thread, and the Next and Previous
-  callbacks (`useSwipeNavigation`). `DeferredBoard` takes the carousel down while the drawer
-  measures itself again, and a fling outlives it. Kept in the carousel, the step was lost with it
-  and the callbacks were those of a render that was gone. A drag gets no release when its carousel
-  goes, so the gesture's unmount returns the offset to rest.
+  callbacks (`useSwipeNavigation`). The board/carousel host now stays mounted through geometry
+  refinement, queue broadcasts, and new open targets. Keep the pager and its step bridge in the
+  drawer: a fling can outlive a carousel teardown, and keeping the pending step in the carousel
+  previously lost it with callbacks from an obsolete render. A drag gets no release when its
+  carousel goes, so the gesture's unmount returns the offset to rest.
 
 **Do not** pass anything that only the current slot should have by changing the tree. `playSurface`
 moves between mounted boards now, which is why `useNativeClimbRender` reads it through a ref when
@@ -535,6 +536,55 @@ of the report, and wait four seconds for a paint that had happened.
 ---
 
 ## Profiling workflow
+
+### Opening a climb from the list
+
+The acceptance gate for a cached full-size climb is **p95 at most 100 ms from the
+tap to full-size artwork and usable board gestures**, including after long
+scrolling and repeated openings. Completing the native slide animation is not
+part of that interval. A thumbnail bridge can cover a real render/decode miss,
+but its appearance cannot satisfy the full-artwork gate. Report those misses
+separately instead of mixing them into a warm-cache timing result.
+
+The player mounts its board and gesture core in the opening commit; optional
+details and sheet contents follow separately. Artwork transferred from a row
+must be immutable and fenced by the exact board/frame/render identity, cache
+generation, mirror intent, and privacy/credential epochs. Loading an image is
+not proof that it displayed: readiness needs native `onDisplay` for the matching
+holds and background layers. A replacement prepared behind a bridge is counted
+only after its visible handoff reaches a frame.
+
+On native, the drawer host dispatches the known root-stack `play` route in the
+tap's React batch. The public Expo navigation ref avoids the imperative URL
+queue's extra provider commit; browser and unready/unknown navigators keep the
+URL fallback. Activation reads current queue and masked suggestion-source state
+through the stable snapshot action, so changing the active climb does not
+subscribe the entire climb list to another render. Queue commits remain
+synchronous and keep the same privacy and wall-control checks.
+
+QueueProvider reuses the compatibility result for the same immutable suggestion
+sequence, board target and privacy/credential epochs. Current-climb anchoring
+and the synthetic feed's first-anchor exception remain live. This removes a
+full-list compatibility pass on each subsequent selection; the first pass for
+a new loaded sequence still takes O(N) work.
+
+Measured geometry is reused through `opening-layout-cache.ts`, a 32-entry LRU.
+Reuse requires the complete layout identity: board and intrinsic dimensions,
+climb, viewport, font scale, pixel ratio, locale, safe-area insets, preferences,
+visible section, presentation/pane inset, header, controls, lost-hold banner and
+playback variants. Only positive, complete measurements enter the cache; a
+screen with no visible section may have zero section-header height. Unknown
+models measure normally. Credential/privacy withdrawal clears the cache and
+invalidates an already captured key synchronously.
+
+Verify the timing on a physical device in a pinned release/probe build. Use
+alternating baseline/candidate batches with at least 30 warm opens per build,
+including 60 downward scrolls, repeated opens and recycled rows after hard
+flicks. Compare native hitches under similar thermal conditions. Unit tests and
+simulator screenshots prove lifecycle/layout behavior; they do not establish
+the 100 ms physical-device result or native frame rate. Measure the row's
+immediate touch feedback separately. A bounded delay before presenting the
+drawer can cover preparation, but it still counts toward tap-to-ready time.
 
 For player swipe dismissal on ProMotion iPhones, target the 120 Hz presentation
 budget (8.33 ms) in a release build. Record the OS/build, active display cadence,

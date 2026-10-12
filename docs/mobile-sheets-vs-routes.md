@@ -533,25 +533,47 @@ animation cancellation. A completion after unmount is ignored; if another modal
 has taken focus, the player restores itself underneath it instead of dismissing
 the newer modal. The route's existing programmatic close waiter stays native.
 
+Every opening advances a motion revision. Touch-down captures it; updates,
+release and finalization reject a different revision. Release carries that
+ownership through the JavaScript completion and both removal frames. A fresh opening
+cancels pending motion; callbacks from the previous revision cannot close it.
+Native removal attempts have separate identities: an aborted attempt can restore
+itself, but cannot restore a later removal. Restoration also retires old motion.
+
+After native removal has been requested, the departing route stops consuming
+targets. Its cleanup retires only the nonce it actually served, including that
+nonce's board override. The host retries an explicitly requested navigation once
+after unmount when a newer target is still pending. This retry preserves the
+nonce and checks privacy and credential generations; it excludes pane opens,
+`navigate: false`, superseded targets, and targets another route already consumed.
+
 The iPad pane does not receive this route-owned animation. Keep the modal's
 live-behind presentation and accessory-host mount rules above when changing it.
 
 ### Opening a heavy route
 
-A modal route's present animation can't START until React commits the route's first frame. If
-that first render is heavy (the player mounts board geometry + a stack of hooks), the slide
-visibly lags the tap. Paint only a cheap first frame (a solid/`GlassSurface` background) and
-defer the heavy content one `requestAnimationFrame` — the present runs natively while the
-content fills in mid-slide. See `app/play.tsx`. Don't use `InteractionManager` for this: it
+A modal route's present animation starts after React commits its first frame.
+The player mounts its board and gesture core in that commit, using exact cached
+artwork and geometry when available. Defer optional details and observers rather
+than adding a frame before the board: that delay previously exposed a blank
+player during presentation. See `app/play.tsx` and `PlayCore.tsx`. Don't use
+`InteractionManager` for this: it
 waits out the whole transition and is disabled in screenshot mode.
 
-The player board also waits for the scroll viewport, title header, and Logbook header
-measurements before its one-frame defer starts. The carousel keeps its flex container
-mounted for measurement, but mounts images and prefetch only after it can contain-fit the
-board. Give both the image and zoom wrapper explicit dimensions: a cached image painted
-at an implicit size can visibly grow when layout corrects it during the native slide.
-Keep this measurement gate in screenshot mode too. Once mounted, ordinary resizing and
-climb changes reuse the carousel without restarting the opening placeholder.
+The board and carousel mount immediately with positive dimensions from the exact layout
+cache or an initial contain-fit estimate. Viewport, title, Logbook, and image measurements
+refine that geometry without gating the board's mount. Give both the image and zoom
+wrapper explicit dimensions: a cached image painted at an implicit size can visibly grow
+when layout corrects it during the native slide. Ordinary resizing and climb changes
+reuse the carousel and its pager. This first-commit behavior also applies in screenshot
+mode.
+
+`PlayCore` keeps the ordered angle, wall-latch, mirror, and relay effects together. Its
+navigation model, layout measurements, selection handlers, favorite actions, and sheet
+hosts live in separate modules. The sheet host stays mounted beneath the existing root
+View; visibility does not control its lifetime. Composer credential keys are distinct
+per sheet so an account change resets each draft, while privacy-only changes preserve
+drafts.
 
 ## Worked examples
 

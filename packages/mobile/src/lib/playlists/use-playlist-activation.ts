@@ -36,6 +36,7 @@ import { isTransportNetworkError } from '@boardsesh/offline-sync/error-classific
 import { parseRateLimitError } from '@boardsesh/graphql-client';
 import {
   createPlaylistSuggestionSource,
+  preparePlaylistClimbs,
   getQueueBoardKey,
   MAX_SYNCED_QUEUE_ITEMS,
   type Climb,
@@ -43,7 +44,7 @@ import {
 } from '@boardsesh/queue';
 import { SHARED_EVENTS } from '@boardsesh/analytics';
 import { canAddClimbToBoard } from '@boardsesh/board-config';
-import { useActiveClimbUuid, usePlaylistSuggestionSource, useQueueActions } from '../../providers/queue-provider';
+import { useQueueActions } from '../../providers/queue-provider';
 import { useDrawerHost } from '../../providers/drawer-host-provider';
 import { useQueueSnackbar } from '../../providers/queue-snackbar-provider';
 import { useChoose } from '../../providers/dialog-provider';
@@ -55,6 +56,7 @@ import { track } from '../analytics';
 import { toSchemaClimb } from '../climb-types';
 import { getPrivacyRevocationGeneration, subscribeToPrivacyRevocations } from '../privacy/privacy-cache';
 import { getPlaylistRenderBoardTarget } from './playlist-climb-render-board';
+import type { ReadyBoardArtSnapshot } from '../board-render/ready-board-art';
 import type { PlaylistRenderBoard } from './use-playlist-render-board';
 
 /** Which board-scoped fetch a canary report came from. */
@@ -182,7 +184,7 @@ export type PlaylistAddToQueueState = {
 
 export type PlaylistActivationResult = {
   /** Callback to wire onto a climb row tap. */
-  activate: (climb: Climb) => Promise<void>;
+  activate: (climb: Climb, readyBoardArt?: ReadyBoardArtSnapshot) => Promise<void>;
   /** Bulk additive queueing for the detail screen's "Add to queue" row. */
   addToQueue: PlaylistAddToQueueState;
 };
@@ -277,6 +279,14 @@ export function usePlaylistActivation({
     return current;
   }, [suppliedClimbs, privacyGeneration]);
   const allClimbs = loadedSnapshotCurrent ? suppliedClimbs : EMPTY_LOADED_CLIMBS;
+  const authorizedClimbsByUuid = useMemo(() => {
+    const climbsByUuid = new Map<string, Climb>();
+    for (const climb of allClimbs) {
+      if (!climbsByUuid.has(climb.uuid)) climbsByUuid.set(climb.uuid, climb);
+    }
+    return climbsByUuid;
+  }, [allClimbs, privacyGeneration]);
+  const preparedPreviewClimbs = useMemo(() => preparePlaylistClimbs(allClimbs), [allClimbs, privacyGeneration]);
 
   const replacementAbortRef = useRef<AbortController | null>(null);
   const appendAbortRef = useRef<AbortController | null>(null);
@@ -285,18 +295,6 @@ export function usePlaylistActivation({
   // render, so two taps inside one frame would both pass a state check and fire
   // two fetches (and two appends).
   const isAppendingRef = useRef(false);
-
-  // Mirror the active climb uuid + the live suggestion source into refs so the
-  // returned callback can decide how to handle a re-tap of the already-active
-  // climb without taking a dependency on either (keeps the callback identity
-  // stable). The source tells us whether the drawer's next/previous already
-  // follow THIS list or some other one.
-  const activeClimbUuid = useActiveClimbUuid();
-  const activeClimbUuidRef = useRef(activeClimbUuid);
-  activeClimbUuidRef.current = activeClimbUuid;
-  const playlistSuggestionSource = usePlaylistSuggestionSource();
-  const playlistSuggestionSourceRef = useRef(playlistSuggestionSource);
-  playlistSuggestionSourceRef.current = playlistSuggestionSource;
 
   // Mirrored, not a dependency: `previewOnly` tracks whether anyone else is in
   // the session, and threading it through the callback's deps would churn the
@@ -335,7 +333,7 @@ export function usePlaylistActivation({
         // source at the tapped list so the drawer's next/previous follow it; the
         // shared hook's async refresh then upgrades that source in place. Return a
         // non-null item so the hook treats activation as succeeded.
-        if (activeClimbUuidRef.current === climb.uuid) {
+        if (getQueueSnapshot().currentClimbQueueItem?.climb.uuid === climb.uuid) {
           setPlaylistSuggestionSource(options?.playlistSuggestionSource ?? null);
           // Browse-origin: built here only as a fallback (no pinned item survived
           // to this dispatch), so flag it suggested like every other list tap —
@@ -361,7 +359,13 @@ export function usePlaylistActivation({
         refreshPlaylistSuggestionSource(source);
       },
     }),
-    [setCurrentClimb, setPlaylistSuggestionSource, refreshPlaylistSuggestionSource, privacyGeneration],
+    [
+      getQueueSnapshot,
+      setCurrentClimb,
+      setPlaylistSuggestionSource,
+      refreshPlaylistSuggestionSource,
+      privacyGeneration,
+    ],
   );
 
   // Built once per active board, not per climb: `canAddClimbToBoard` caches its
@@ -381,37 +385,38 @@ export function usePlaylistActivation({
     [activeBoard],
   );
 
-  const resolveTarget = useCallback(
-    (climb: Climb) => {
-      void climb;
-      if (!activeBoard || !activeBoardTarget) return null;
-      return {
-        boardKey: getQueueBoardKey({
-          board_name: activeBoard.boardType,
-          layout_id: activeBoard.layoutId,
-          size_id: activeBoard.sizeId,
-          set_ids: activeBoard.setIds,
-        }),
-        boardName: activeBoard.boardType,
-        angle: activeBoard.angle,
-        // Keep climbs this board cannot draw out of the swipe order. The
-        // playlist-detail screens run the resolver in all-boards mode on
-        // purpose, so `allClimbs` — which seeds the synchronous source before
-        // the board-scoped refresh lands — carries other board types, other
-        // layouts and climbs whose holds don't exist on this size.
-        //
-        // `canAddClimbToBoard`, not identity matching: identity can't see the
-        // two cases that render plausibly while lighting the wrong holds —
-        // Woods numbers each size's holds from its own origin (so an 8x10
-        // climb's ids all exist on a 12x12 as different holds) and MoonBoard's
-        // render data covers the whole grid whichever add-on sets are bolted
-        // on. It is the same predicate the playlist rows dim on and the row
-        // render board resolves through, so what you see, what you swipe to and
-        // what lights up stay one answer. Missing hold data fails open.
-        isClimbable: (candidate: Climb) => canAddClimbToBoard(candidate, activeBoardTarget).ok,
-      };
-    },
-    [activeBoard, activeBoardTarget],
+  const activationTarget = useMemo(() => {
+    if (!activeBoard || !activeBoardTarget) return null;
+    return {
+      boardKey: getQueueBoardKey({
+        board_name: activeBoard.boardType,
+        layout_id: activeBoard.layoutId,
+        size_id: activeBoard.sizeId,
+        set_ids: activeBoard.setIds,
+      }),
+      boardName: activeBoard.boardType,
+      angle: activeBoard.angle,
+      // Keep climbs this board cannot draw out of the swipe order. The
+      // playlist-detail screens run the resolver in all-boards mode on
+      // purpose, so `allClimbs` — which seeds the synchronous source before
+      // the board-scoped refresh lands — carries other board types, other
+      // layouts and climbs whose holds don't exist on this size.
+      //
+      // `canAddClimbToBoard`, not identity matching: identity can't see the
+      // two cases that render plausibly while lighting the wrong holds —
+      // Woods numbers each size's holds from its own origin (so an 8x10
+      // climb's ids all exist on a 12x12 as different holds) and MoonBoard's
+      // render data covers the whole grid whichever add-on sets are bolted
+      // on. It is the same predicate the playlist rows dim on and the row
+      // render board resolves through, so what you see, what you swipe to and
+      // what lights up stay one answer. Missing hold data fails open.
+      isClimbable: (candidate: Climb) => canAddClimbToBoard(candidate, activeBoardTarget).ok,
+    };
+  }, [activeBoard, activeBoardTarget]);
+  const resolveTarget = useCallback((_climb: Climb) => activationTarget, [activationTarget]);
+  const preparedCompatibleClimbs = useMemo(
+    () => (activationTarget ? preparePlaylistClimbs(allClimbs, activationTarget.isClimbable) : undefined),
+    [allClimbs, activationTarget, privacyGeneration],
   );
 
   const fetchClimbsForBoard = useCallback(
@@ -503,7 +508,6 @@ export function usePlaylistActivation({
       appendAbortRef.current?.abort();
       pendingQueueItemRef.current = null;
       loadedClimbsRef.current = [];
-      playlistSuggestionSourceRef.current = null;
     });
     return () => {
       unsubscribe();
@@ -516,6 +520,7 @@ export function usePlaylistActivation({
     queueApi,
     sourceId,
     allClimbs,
+    preparedClimbs: preparedCompatibleClimbs,
     resolveTarget,
     fetchClimbsForBoard,
     // onActivated is intentionally omitted — the drawer is opened in the
@@ -834,16 +839,20 @@ export function usePlaylistActivation({
   // the caller already dispatched, so it doesn't re-commit or treat this as a
   // preview.
   const activatePlaylistClimb = useCallback(
-    (requestedClimb: Climb) => {
+    (requestedClimb: Climb, tappedBoardArt?: ReadyBoardArtSnapshot) => {
       if (!loadedSnapshotCurrent || privacyGeneration !== getPrivacyRevocationGeneration()) return Promise.resolve();
       const capturedGeneration = loadedSnapshotGenerations.current.get(requestedClimb);
       if (capturedGeneration !== undefined && capturedGeneration !== privacyGeneration) return Promise.resolve();
-      const loadedClimb = allClimbs.find((candidate) => candidate.uuid === requestedClimb.uuid);
+      const loadedClimb = authorizedClimbsByUuid.get(requestedClimb.uuid);
       if (!loadedClimb && initialPrivacyGeneration.current !== privacyGeneration) return Promise.resolve();
       // Row adapters may clone a climb. Prefer the authorized loaded projection
       // over details retained by a menu or native gesture callback.
       const climb = loadedClimb ?? requestedClimb;
       const schemaClimb = toSchemaClimb(climb);
+      const readyBoardArt =
+        tappedBoardArt?.climbUuid === climb.uuid && tappedBoardArt.frames === climb.frames ? tappedBoardArt : undefined;
+
+      const openingArtOptions = readyBoardArt ? { readyBoardArt } : {};
 
       // Wrong-board playlist climb: open a view-only drawer against the playlist's
       // board instead of mutating the active-board queue. The drawer navigates the
@@ -861,6 +870,7 @@ export function usePlaylistActivation({
           playlistUuid: sourceId,
           activatedClimb: climb,
           climbs: allClimbs,
+          preparedClimbs: preparedPreviewClimbs,
           boardKey: getQueueBoardKey({
             board_name: viewOnlyBoardConfig.boardName,
             layout_id: viewOnlyBoardConfig.layoutId,
@@ -869,6 +879,7 @@ export function usePlaylistActivation({
           }),
         });
         openPlayDrawer(schemaClimb, {
+          ...openingArtOptions,
           boardConfig: viewOnlyBoardConfig,
           previewQueueItem: item,
           playlistSuggestionSource: previewSuggestionSource,
@@ -887,6 +898,7 @@ export function usePlaylistActivation({
       if (previewOnlyRef.current) {
         const target = resolveTarget(climb);
         openPlayDrawer(schemaClimb, {
+          ...openingArtOptions,
           previewQueueItem: climbToQueueItem(schemaClimb),
           // A null target (no resolvable board) deliberately degrades to a
           // trackless preview: the tapped climb still shows, swipes just walk
@@ -899,6 +911,7 @@ export function usePlaylistActivation({
                 playlistUuid: sourceId,
                 activatedClimb: climb,
                 climbs: allClimbs,
+                preparedClimbs: preparedPreviewClimbs,
                 boardKey: target.boardKey,
               })
             : null,
@@ -942,17 +955,20 @@ export function usePlaylistActivation({
               playlistUuid: sourceId,
               activatedClimb: climb,
               climbs: loadedClimbsRef.current,
+              preparedClimbs: preparedCompatibleClimbs,
               boardKey: target.boardKey,
               isClimbable: target.isClimbable,
             }),
           );
-          openPlayDrawer(schemaClimb, { committedExternally: true });
+          openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
           return replaceQueueWithPlaylist(climb, { previewQueueItem: item });
         }
       }
 
-      const isAlreadyActive = activeClimbUuidRef.current === climb.uuid;
-      const source = playlistSuggestionSourceRef.current;
+      // The list does not subscribe to current-climb or source changes. Read
+      // both live at the tap; the commit adapter reads again before dispatch.
+      const { currentClimbQueueItem, playlistSuggestionSource: source } = getQueueSnapshot();
+      const isAlreadyActive = currentClimbQueueItem?.climb.uuid === climb.uuid;
       const suggestionsAlreadyFollowThisList =
         source?.playlistUuid === sourceId && source?.activatedClimbUuid === climb.uuid;
 
@@ -962,7 +978,7 @@ export function usePlaylistActivation({
       // so just reopen — the drawer renders from currentClimbQueueItem
       // (committedExternally), which already points at this climb.
       if (isAlreadyActive && suggestionsAlreadyFollowThisList) {
-        openPlayDrawer(schemaClimb, { committedExternally: true });
+        openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
         return Promise.resolve();
       }
 
@@ -987,7 +1003,7 @@ export function usePlaylistActivation({
       if (!isAlreadyActive) {
         pendingQueueItemRef.current = climbToQueueItem(schemaClimb, { suggested: true });
       }
-      openPlayDrawer(schemaClimb, { committedExternally: true });
+      openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
       return activate(climb).catch((error: unknown) => {
         console.error('Playlist climb activation failed:', error);
         reportHandledError(error, { tags: { source: 'playlist', op: 'activate-climb' } });
@@ -996,6 +1012,9 @@ export function usePlaylistActivation({
     [
       activate,
       allClimbs,
+      authorizedClimbsByUuid,
+      preparedPreviewClimbs,
+      preparedCompatibleClimbs,
       appendClimbsToQueue,
       getQueueSnapshot,
       openPlayDrawer,

@@ -15,17 +15,20 @@
 // DeferredBoard, whether the switch gate is up, which board "Switch board"
 // targets, and that a neighbouring climb from another board is not peeked under
 // the current art.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, act } from '@testing-library/react';
-import { createElement, type ReactNode } from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render as renderInitial, act } from '@testing-library/react';
+import { createElement, useEffect, useRef, type ReactNode } from 'react';
 import type { Climb } from '@boardsesh/shared-schema';
 import type { ClimbQueueItem } from '@boardsesh/queue';
 import type { LayoutChangeEvent } from 'react-native';
+import { clearOpeningLayoutCache } from '../opening-layout-cache';
 
 type Props = Record<string, unknown>;
 
 const recorded = vi.hoisted(() => ({
   board: [] as Props[],
+  boardMounts: 0,
+  boardUnmounts: 0,
   headers: [] as Props[],
   switchOverlay: [] as Props[],
   actionBar: [] as Props[],
@@ -40,8 +43,11 @@ const recorded = vi.hoisted(() => ({
   sectionsSheet: [] as Props[],
   scrollGate: [] as Props[],
   headerLayout: undefined as ((event: LayoutChangeEvent) => void) | undefined,
+  boardLayout: undefined as ((event: LayoutChangeEvent) => void) | undefined,
 }));
+const viewport = vi.hoisted(() => ({ width: 390, height: 844, fontScale: 1 }));
 const setCurrentClimb = vi.hoisted(() => vi.fn());
+const toggleFavorite = vi.hoisted(() => vi.fn());
 const dismissGestureRef = vi.hoisted(() => ({ current: undefined as unknown }));
 const queueState = vi.hoisted(() => ({
   queue: [] as unknown[],
@@ -120,20 +126,22 @@ vi.mock('react-native', () => ({
   }: {
     children?: ReactNode;
     onLayout?: (event: LayoutChangeEvent) => void;
-    style?: Props[];
+    style?: Props[] | Props;
   }) => {
     const firstScreenStyle = Array.isArray(style)
       ? style.find((entry) => entry && 'height' in entry && 'paddingTop' in entry)
       : undefined;
     if (firstScreenStyle) recorded.firstScreen.push(firstScreenStyle);
-    if (onLayout) recorded.headerLayout = onLayout;
+    if (onLayout && style && !Array.isArray(style) && 'marginHorizontal' in style) recorded.boardLayout = onLayout;
+    else if (onLayout && !style) recorded.headerLayout = onLayout;
     return createElement('div', null, children);
   },
   Pressable: ({ children, onPress }: { children?: ReactNode; onPress?: () => void }) =>
     createElement('button', { onClick: onPress }, children),
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1, absoluteFillObject: {} },
   Platform: { OS: 'web', select: (spec: Record<string, unknown>) => spec.web ?? spec.default },
-  useWindowDimensions: () => ({ width: 390, height: 844 }),
+  PixelRatio: { get: () => 3 },
+  useWindowDimensions: () => viewport,
   AccessibilityInfo: { announceForAccessibility: vi.fn() },
 }));
 vi.mock('react-native-mmkv', () => {
@@ -158,13 +166,15 @@ vi.mock('react-native-reanimated', () => ({
   default: { View: ({ children }: { children?: ReactNode }) => createElement('div', null, children) },
   useAnimatedStyle: () => ({}),
   useAnimatedReaction: () => undefined,
-  useSharedValue: (initial: unknown) => ({ value: initial }),
+  useSharedValue: (initial: unknown) => useRef({ value: initial }).current,
   runOnJS: (fn: unknown) => fn,
 }));
 vi.mock('expo-router', () => ({ router: { dismiss: vi.fn() } }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'random-uuid' }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en-US' } }) }));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
 
 // The drawer reads the ACTIVE board — not the one it is drawing — to decide what
 // a forward swipe may land on (#5099, selection half). That is a React Query
@@ -185,13 +195,15 @@ vi.mock('../../../lib/graphql/use-active-board', () => ({
 // `@boardsesh/board-config` and `lib/board-details` stay REAL: the resolver
 // reads real layouts, sizes and hold placements, which is the whole question.
 vi.mock('@boardsesh/play-view', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@boardsesh/play-view')>()),
   // Real: PlayDrawer calls this to resolve the navigation source (#5403); every
   // case here drives navigation through the canned `navigation.state` above, so
   // it only ever sees a null preview item and returns the (irrelevant) source.
   resolveNavigationSuggestionSource: (await importOriginal<typeof import('@boardsesh/play-view')>())
     .resolveNavigationSuggestionSource,
   findUpcomingQueueItemsWithSuggestions: () => prefetchWalk.items,
-  computeNavigationStateWithSuggestions: () => navigation.state,
+  computeNavigationTargetsWithSuggestions: () => navigation.state,
+  countRemainingQueueItemsWithSuggestions: () => 0,
   boardSupportsMirroring: () => true,
 }));
 vi.mock('@boardsesh/analytics', () => ({
@@ -206,6 +218,12 @@ vi.mock('../../../lib/analytics', () => ({ track: vi.fn() }));
 // --- Children ----------------------------------------------------------------
 vi.mock('../DeferredBoard', () => ({
   DeferredBoard: (props: Props) => {
+    useEffect(() => {
+      recorded.boardMounts += 1;
+      return () => {
+        recorded.boardUnmounts += 1;
+      };
+    }, []);
     recorded.board.push(props);
     return createElement('div', { 'data-testid': 'board' });
   },
@@ -242,6 +260,18 @@ vi.mock('../BoardRenderUnavailable', () => ({ BoardRenderUnavailable: () => null
 vi.mock('../../playback/PlaybackControls', () => ({ PlaybackControls: () => null }));
 vi.mock('../PlayDrawerStatusBarScrim', () => ({ PlayDrawerStatusBarScrim: () => null }));
 vi.mock('../PlayDrawerHeader', () => ({
+  useLivePlayDrawerHeaderModel: (props: Props) =>
+    props.climb
+      ? {
+          headerProps: props,
+          reduceMotion: false,
+          layoutFingerprint: JSON.stringify(props.climb),
+        }
+      : null,
+  PreparedPlayDrawerHeader: ({ model, ...props }: { model: { headerProps: Props } } & Props) => {
+    recorded.headers.push({ ...model.headerProps, ...props });
+    return null;
+  },
   LivePlayDrawerHeader: (props: Props) => {
     recorded.headers.push(props);
     return null;
@@ -304,7 +334,7 @@ vi.mock('../../../lib/graphql/hooks', () => ({
   // here pins a preview at another angle, so it never resolves.
   useClimb: () => ({ data: undefined }),
   useProfile: () => ({ data: undefined }),
-  useToggleFavorite: () => ({ mutate: vi.fn() }),
+  useToggleFavorite: () => ({ mutate: toggleFavorite }),
   useFavoriteStatus: (boardName: string, uuid: string | null, angle: number) => {
     recorded.favoriteStatus.push({ boardName, uuid, angle });
     return { data: undefined };
@@ -387,9 +417,35 @@ function lastBoardProps(): Props {
   return props;
 }
 
+const openingFrames = new Map<number, FrameRequestCallback>();
+let nextOpeningFrame = 0;
+function flushOpeningFrame() {
+  const scheduled = [...openingFrames.values()];
+  openingFrames.clear();
+  act(() => scheduled.forEach((callback) => callback(0)));
+}
+function render(...args: Parameters<typeof renderInitial>) {
+  const rendered = renderInitial(...args);
+  flushOpeningFrame();
+  return rendered;
+}
+
 beforeEach(() => {
+  clearOpeningLayoutCache();
+  viewport.width = 390;
+  viewport.height = 844;
+  viewport.fontScale = 1;
+  openingFrames.clear();
+  nextOpeningFrame = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    openingFrames.set(++nextOpeningFrame, callback);
+    return nextOpeningFrame;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => openingFrames.delete(handle));
   vi.clearAllMocks();
   recorded.board = [];
+  recorded.boardMounts = 0;
+  recorded.boardUnmounts = 0;
   recorded.headers = [];
   recorded.switchOverlay = [];
   recorded.actionBar = [];
@@ -402,6 +458,7 @@ beforeEach(() => {
   recorded.lightbulb = [];
   recorded.scroll = [];
   recorded.headerLayout = undefined;
+  recorded.boardLayout = undefined;
   recorded.firstScreen = [];
   recorded.sectionsSheet = [];
   drawerSections.sections = { ...drawerSections.defaults };
@@ -411,6 +468,7 @@ beforeEach(() => {
   navigation.state = { nextItem: null, prevItem: null, canNext: false, canPrevious: false };
   prefetchWalk.items = [];
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('PlayDrawer relay board compatibility', () => {
   it('forwards the claimed dismiss gesture ref', () => {
@@ -444,10 +502,76 @@ describe('PlayDrawer relay board compatibility', () => {
 });
 
 describe('PlayDrawer opening layout', () => {
-  it.each(['viewport-first', 'headers-first'])('waits for every layout measurement (%s)', (order) => {
+  it('keeps the interactive board mounted from the first commit through queue broadcasts and new targets', () => {
+    const initialItem = queueItem(TWELVE_CLIMB, 'preview-twelve');
+    const target = { climb: TWELVE_CLIMB, options: { previewQueueItem: initialItem }, nonce: 1 };
+    const onOpenQueue = vi.fn();
+    const element = (openTarget: typeof target) =>
+      createElement(PlayDrawer, {
+        presentation: 'pane',
+        boardConfig: TWELVE_BY_TWELVE,
+        onOpenQueue,
+        openTarget,
+      });
+    const view = renderInitial(element(target));
+    const initialBoard = view.getByTestId('board');
+    const firstBoardProps = recorded.board[0];
+    expect(firstBoardProps).toMatchObject({
+      open: true,
+      currentFrames: TWELVE_CLIMB.frames,
+      enabled: true,
+      dismissRef: dismissGestureRef,
+    });
+    expect(firstBoardProps.onSwipeNext).toBeTypeOf('function');
+    expect(firstBoardProps.onSwipePrevious).toBeTypeOf('function');
+    expect(firstBoardProps.onResetZoomReady).toBeTypeOf('function');
+    expect(firstBoardProps.pager).toBeTruthy();
+    expect(firstBoardProps.boardRenderData).toBeTruthy();
+    expect(recorded.boardMounts).toBe(1);
+    expect(recorded.favoriteStatus).toHaveLength(0);
+
+    flushOpeningFrame();
+    expect(recorded.favoriteStatus.length).toBeGreaterThan(0);
+    expect(view.getByTestId('board')).toBe(initialBoard);
+    expect(lastBoardProps().pager).toBe(firstBoardProps.pager);
+
+    queueState.queue = [queueItem(TWELVE_CLIMB, 'broadcast-twelve')];
+    view.rerender(element(target));
+    expect(lastBoardProps().pager).toBe(firstBoardProps.pager);
+    expect(view.getByTestId('board')).toBe(initialBoard);
+
+    const newClimb = { ...TWELVE_CLIMB, uuid: 'replacement-climb', frames: 'p1200r15' };
+    const replacement = {
+      climb: newClimb,
+      options: { previewQueueItem: queueItem(newClimb, 'replacement-item') },
+      nonce: 2,
+    };
+    view.rerender(element(replacement));
+    expect(lastBoardProps().currentFrames).toBe(newClimb.frames);
+    expect(lastBoardProps().pager).toBe(firstBoardProps.pager);
+    expect(view.getByTestId('board')).toBe(initialBoard);
+    expect(recorded.boardMounts).toBe(1);
+    expect(recorded.boardUnmounts).toBe(0);
+    expect(setCurrentClimb).not.toHaveBeenCalled();
+    view.unmount();
+    expect(recorded.boardUnmounts).toBe(1);
+  });
+
+  it.each(['viewport-first', 'headers-first'])('keeps the board mounted through layout callbacks (%s)', (order) => {
     queueState.currentClimbQueueItem = queueItem(TWELVE_CLIMB, 'queue-twelve');
-    renderDrawer(vi.fn());
-    expect(lastBoardProps().layoutReady).toBe(false);
+    const rendered = renderInitial(
+      createElement(PlayDrawer, {
+        presentation: 'pane',
+        boardConfig: TWELVE_BY_TWELVE,
+        onOpenQueue: vi.fn(),
+        openTarget: null,
+      }),
+    );
+    const initialBoard = rendered.getByTestId('board');
+    expect(lastBoardProps()).toMatchObject({ open: true, currentFrames: TWELVE_CLIMB.frames });
+    expect(recorded.favoriteStatus).toHaveLength(0);
+    flushOpeningFrame();
+    expect(recorded.favoriteStatus.length).toBeGreaterThan(0);
     const viewportLayout = recorded.scroll.at(-1)?.onLayout as (event: LayoutChangeEvent) => void;
     const headerLayout = recorded.headerLayout;
     const logbookLayout = recorded.deferredSections.at(-1)?.onFirstSectionHeaderLayout as (height: number) => void;
@@ -460,19 +584,55 @@ describe('PlayDrawer opening layout', () => {
       order === 'viewport-first' ? () => headerLayout(event(70)) : () => viewportLayout(event(844));
 
     act(firstMeasurement);
-    expect(lastBoardProps().layoutReady).toBe(false);
+    expect(rendered.getByTestId('board')).toBe(initialBoard);
     act(() => logbookLayout(44));
-    expect(lastBoardProps().layoutReady).toBe(false);
+    expect(rendered.getByTestId('board')).toBe(initialBoard);
     act(secondMeasurement);
-    expect(lastBoardProps().layoutReady).toBe(true);
+    expect(rendered.getByTestId('board')).toBe(initialBoard);
 
     act(() => viewportLayout(event(600)));
-    expect(lastBoardProps().layoutReady).toBe(true);
+    expect(rendered.getByTestId('board')).toBe(initialBoard);
     expect(recorded.scroll.at(-1)).toMatchObject({
       showsVerticalScrollIndicator: false,
       showsHorizontalScrollIndicator: false,
       nestedScrollEnabled: true,
     });
+  });
+
+  it('reuses measured board geometry on a matching open and invalidates it for font scale', () => {
+    queueState.currentClimbQueueItem = queueItem(TWELVE_CLIMB, 'queue-twelve');
+    const first = renderDrawer();
+    const layout = (width: number, height: number) =>
+      ({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }) as LayoutChangeEvent;
+    act(() => {
+      (recorded.scroll.at(-1)?.onLayout as (event: LayoutChangeEvent) => void)(layout(390, 844));
+      recorded.headerLayout?.(layout(390, 70));
+      (recorded.deferredSections.at(-1)?.onFirstSectionHeaderLayout as (height: number) => void)(44);
+      recorded.boardLayout?.(layout(358, 650));
+    });
+    first.unmount();
+    const same = renderInitial(
+      createElement(PlayDrawer, {
+        presentation: 'pane',
+        boardConfig: TWELVE_BY_TWELVE,
+        onOpenQueue: vi.fn(),
+        openTarget: null,
+      }),
+    );
+    expect(lastBoardProps().containerSize).toEqual({ width: 358, height: 650 });
+    expect(same.getByTestId('board')).toBeTruthy();
+    same.unmount();
+    viewport.fontScale = 1.2;
+    const changed = renderInitial(
+      createElement(PlayDrawer, {
+        presentation: 'pane',
+        boardConfig: TWELVE_BY_TWELVE,
+        onOpenQueue: vi.fn(),
+        openTarget: null,
+      }),
+    );
+    expect(lastBoardProps().containerSize).toBeUndefined();
+    expect(changed.getByTestId('board')).toBeTruthy();
   });
 });
 
@@ -708,7 +868,7 @@ describe('PlayDrawer configurable sections', () => {
       viewportLayout(layoutEvent(568));
       headerLayout(layoutEvent(70));
     });
-    expect(lastBoardProps().layoutReady).toBe(true);
+    expect(lastBoardProps().open).toBe(true);
     expect(recorded.firstScreen.at(-1)?.height).toBe(568);
   });
   it('can restore a first enabled header and scrolling after hiding everything', () => {
@@ -737,17 +897,17 @@ describe('PlayDrawer configurable sections', () => {
       headerLayout(layoutEvent(70));
       logbookHeaderLayout(70);
     });
-    expect(lastBoardProps().layoutReady).toBe(true);
+    expect(lastBoardProps().open).toBe(true);
     expect(recorded.firstScreen.at(-1)?.height).toBe(754);
     hideEverySection();
     drawerSections.sections = { ...drawerSections.sections, betaVideos: true };
     rendered.rerender(
       createElement(PlayDrawer, { boardConfig: TWELVE_BY_TWELVE, onOpenQueue: vi.fn(), openTarget: null }),
     );
-    expect(lastBoardProps().layoutReady).toBe(false);
+    expect(lastBoardProps().open).toBe(true);
     const betaHeaderLayout = recorded.deferredSections.at(-1)?.onFirstSectionHeaderLayout as (height: number) => void;
     act(() => betaHeaderLayout(60));
-    expect(lastBoardProps().layoutReady).toBe(true);
+    expect(lastBoardProps().open).toBe(true);
     expect(recorded.firstScreen.at(-1)?.height).toBe(764);
     const expandFirst = recorded.deferredSections.at(-1)?.onFirstSectionToggle as (expanded: boolean) => void;
     act(() => expandFirst(true));
@@ -797,12 +957,12 @@ describe('PlayDrawer configurable sections', () => {
     expect(recorded.deferredSections.at(-1)?.contentEnabled).toBe(true);
     expect(recorded.scroll.at(-1)?.contentContainerStyle).toHaveProperty('minHeight', undefined);
   });
-  it('waits for preference hydration before mounting sections or the board', () => {
+  it('mounts the board while preference hydration still withholds sections', () => {
     drawerSections.ready = false;
     queueState.currentClimbQueueItem = queueItem(TWELVE_CLIMB, 'queue-twelve');
     renderDrawer();
     expect(recorded.deferredSections).toHaveLength(0);
-    expect(lastBoardProps().layoutReady).toBe(false);
+    expect(lastBoardProps()).toMatchObject({ open: true, currentFrames: TWELVE_CLIMB.frames });
     expect(recorded.scroll.at(-1)?.scrollEnabled).toBe(false);
   });
 });

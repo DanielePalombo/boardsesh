@@ -44,8 +44,10 @@ export type SwipeDismissAnimation = {
   translateY: SharedValue<number>;
   height: SharedValue<number>;
   isDismissing: SharedValue<boolean>;
+  /** Opening ownership captured at touch-down; absent for standalone hosts. */
+  revision?: SharedValue<number>;
   /** Called after the surface has finished sliding offscreen. */
-  onComplete: () => void;
+  onComplete: (revision?: number) => void;
 };
 
 type UseDrawerDismissGestureOptions = {
@@ -93,19 +95,22 @@ export function useDrawerDismissGesture({
   const translateY = swipeDismiss?.translateY ?? localTranslateY;
   const isDismissing = swipeDismiss?.isDismissing ?? localIsDismissing;
   const dismissHeight = swipeDismiss?.height;
+  const dismissRevision = swipeDismiss?.revision;
   // Stable across renders, populated by RNGH when the detector attaches. Handed
   // to the zoomed board's pan so it can block this dismiss.
   const gestureRef = useRef<GestureType | undefined>(undefined);
   // Captured at touch-down: only a gesture that STARTS at the top can dismiss, so
   // a scroll-up that reaches the top doesn't suddenly yank the drawer down.
   const startedAtTop = useSharedValue(false);
+  const startedRevision = useSharedValue<number | null>(null);
 
   // Captured ONCE by the gesture memo — must only close over the ref so a later
   // render's onDismiss is still reached (mirrors use-carousel-gesture).
-  const onDismissRef = useRef(onDismiss);
+  const onDismissRef = useRef<(revision?: number) => void>(onDismiss);
   onDismissRef.current = swipeDismiss?.onComplete ?? onDismiss;
-  const commitDismiss = () => {
-    onDismissRef.current();
+  const commitDismiss = (revision?: number) => {
+    if (revision === undefined) onDismissRef.current();
+    else onDismissRef.current(revision);
   };
 
   const gesture = useMemo(() => {
@@ -122,11 +127,13 @@ export function useDrawerDismissGesture({
       .onBegin(() => {
         'worklet';
         if (isDismissing.value) return;
+        startedRevision.value = dismissRevision?.value ?? null;
         cancelAnimation(translateY);
         startedAtTop.value = scrollYSV.value <= 0;
       })
       .onUpdate((event) => {
         'worklet';
+        if (dismissRevision && startedRevision.value !== dismissRevision.value) return;
         if (isDismissing.value) return;
         // Once the carousel owns the gesture as a horizontal swipe (offset non-zero)
         // or is still settling a fling, block the vertical dismiss entirely — a
@@ -144,6 +151,7 @@ export function useDrawerDismissGesture({
       })
       .onEnd((event) => {
         'worklet';
+        if (dismissRevision && startedRevision.value !== dismissRevision.value) return;
         if (isDismissing.value) return;
         // Same guard as onUpdate, and it must run BEFORE the velocity check: a fast
         // horizontal flick carries vertical velocity, so without this an accidental
@@ -157,6 +165,7 @@ export function useDrawerDismissGesture({
           startedAtTop.value &&
           (translateY.value > DISMISS_DISTANCE_THRESHOLD || event.velocityY > DISMISS_VELOCITY_THRESHOLD);
         if (committed) {
+          const releasedRevision = startedRevision.value ?? undefined;
           isDismissing.value = true;
           if (dismissHeight) {
             // Never pause at the release position waiting for navigation/JS.
@@ -165,8 +174,9 @@ export function useDrawerDismissGesture({
               Math.max(dismissHeight.value, translateY.value),
               { ...springs.snappy, velocity: Math.max(0, event.velocityY), overshootClamping: true },
               (finished) => {
+                if (dismissRevision && dismissRevision.value !== releasedRevision) return;
                 if (finished) {
-                  runOnJS(commitDismiss)();
+                  runOnJS(commitDismiss)(releasedRevision);
                 } else {
                   isDismissing.value = false;
                   translateY.value = withSpring(0, springs.interactive);
@@ -186,6 +196,7 @@ export function useDrawerDismissGesture({
       // Cancellation (including a second finger) still returns an open drag home.
       .onFinalize((_event, success) => {
         'worklet';
+        if (dismissRevision && startedRevision.value !== dismissRevision.value) return;
         if (!dismissHeight) {
           isDismissing.value = false;
           return;
@@ -193,7 +204,18 @@ export function useDrawerDismissGesture({
         if (!success && !isDismissing.value) translateY.value = withSpring(0, springs.interactive);
       });
     return scrollRef ? pan.simultaneousWithExternalGesture(scrollRef) : pan;
-  }, [translateY, isDismissing, dismissHeight, startedAtTop, scrollYSV, scrollRef, swipeTranslateX, swipeIsAnimating]);
+  }, [
+    translateY,
+    isDismissing,
+    dismissHeight,
+    dismissRevision,
+    startedAtTop,
+    startedRevision,
+    scrollYSV,
+    scrollRef,
+    swipeTranslateX,
+    swipeIsAnimating,
+  ]);
 
   return { gesture, translateY, gestureRef };
 }
