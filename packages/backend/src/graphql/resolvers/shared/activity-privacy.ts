@@ -13,20 +13,27 @@ import {
 // Predicate construction must not depend on a database connection or its mocks.
 const queryBuilder = new QueryBuilder();
 
-/** Identifiable logs obey both their author/item audience and their containers. */
+/**
+ * A log follows its author: their account privacy plus the tick's own audience.
+ * The session and wall it was logged in never hide it; projections that name the
+ * wall blank those fields instead (`boardIdentityVisibleCondition`). The climb
+ * clause is separate: a public tick cannot reveal an authored climb whose
+ * audience has narrowed.
+ *
+ * `allowOwnWithoutClimb` is climb-only: raw owner reads (a climber's own
+ * logbook and counts) keep a tick whose climb row is gone. Enriched feeds may
+ * retain denormalized climb names after deletion, so they leave it off.
+ */
 export function tickPrivacyCondition(
   viewerId: string | null | undefined,
   ticks: {
     uuid: SQLWrapper;
     userId: SQLWrapper;
-    sessionId: SQLWrapper;
-    boardId: SQLWrapper;
     climbUuid: SQLWrapper;
     boardType: SQLWrapper;
   } = schema.boardseshTicks,
   allowOwnWithoutClimb = false,
 ): SQL {
-  const board = alias(schema.userBoards, 'privacy_tick_board');
   const climb = alias(schema.boardClimbs, 'privacy_tick_climb');
   const climbAlias = alias(schema.boardClimbAliases, 'privacy_tick_climb_alias');
   const canonicalClimbUuid = queryBuilder
@@ -37,23 +44,8 @@ export function tickPrivacyCondition(
     eq(climb.uuid, sql`COALESCE((${canonicalClimbUuid}), ${ticks.climbUuid})`),
     eq(climb.boardType, ticks.boardType),
   );
-  const containerAccess = and(
-    or(isNull(ticks.sessionId), resourceAccessCondition('session', ticks.sessionId, viewerId)),
-    or(
-      isNull(ticks.boardId),
-      exists(
-        queryBuilder
-          .select({ id: board.id })
-          .from(board)
-          .where(and(eq(board.id, ticks.boardId), resourceAccessCondition('board', board.uuid, viewerId))),
-      ),
-    ),
-  );
   return and(
     contentVisibilityCondition('tick', ticks.uuid, ticks.userId, viewerId),
-    // A public tick cannot reveal metadata from an authored climb whose
-    // audience has since narrowed. Enriched feeds may retain denormalized
-    // names after deletion, so only raw owner reads allow a missing parent.
     or(
       allowOwnWithoutClimb && viewerId ? eq(ticks.userId, viewerId) : sql`false`,
       exists(
@@ -73,12 +65,13 @@ export function tickPrivacyCondition(
           ),
       ),
     ),
-    // The author retains their own logbook even after losing access to a wall.
-    or(viewerId ? eq(ticks.userId, viewerId) : sql`false`, containerAccess),
   )!;
 }
 
-/** Beta can identify its author, tick, wall and climb even without a userId field. */
+/**
+ * Beta follows its author, its tick and its climb. The board it was filmed on
+ * never hides it; readers blank `boardId` instead (`visibleBoardIdentityIds`).
+ */
 export function betaPrivacyCondition(
   viewerId: string | null | undefined,
   beta: {
@@ -87,11 +80,9 @@ export function betaPrivacyCondition(
     link: SQLWrapper;
     createdByUserId: SQLWrapper;
     tickUuid: SQLWrapper;
-    boardId: SQLWrapper;
   } = schema.boardBetaLinks,
 ): SQL {
   const tick = alias(schema.boardseshTicks, 'privacy_beta_tick');
-  const board = alias(schema.userBoards, 'privacy_beta_board');
   const climb = alias(schema.boardClimbs, 'privacy_beta_climb');
   return and(
     contentVisibilityCondition(
@@ -107,15 +98,6 @@ export function betaPrivacyCondition(
           .select({ id: tick.id })
           .from(tick)
           .where(and(eq(tick.uuid, beta.tickUuid), tickPrivacyCondition(viewerId, tick))),
-      ),
-    ),
-    or(
-      isNull(beta.boardId),
-      exists(
-        queryBuilder
-          .select({ id: board.id })
-          .from(board)
-          .where(and(eq(board.id, beta.boardId), resourceAccessCondition('board', board.uuid, viewerId))),
       ),
     ),
     exists(
@@ -138,11 +120,38 @@ export function betaPrivacyCondition(
   )!;
 }
 
+/**
+ * Whether a session may surface for this viewer somewhere they did not open it
+ * by link: a feed or a listing. The session's own policy without the unlisted
+ * link, plus its host and anyone who joined it, so an unlisted session's link
+ * alone never puts it (or its id, which is that link) there.
+ */
+export function listedSessionCondition(sessionId: SQLWrapper, viewerId: string | null | undefined): SQL {
+  return resourceAccessCondition('session', sessionId, viewerId, {
+    allowUnlistedLink: false,
+    unlistedWhen: viewerId
+      ? sql`EXISTS (SELECT 1 FROM board_session_participants listed_session_member
+          WHERE listed_session_member.session_id = ${sessionId} AND listed_session_member.user_id = ${viewerId})`
+      : undefined,
+  });
+}
+
+export type SocialEntityReadOptions = {
+  /**
+   * The read surfaces entities the viewer did not ask for (the global comment
+   * feed, the activity feed). A session there needs `listedSessionCondition`;
+   * a direct read (a thread, a vote, a notification addressed to the viewer)
+   * keeps the unlisted link.
+   */
+  discovery?: boolean;
+};
+
 /** A UUID is an address, not permission to read its discussion or notifications. */
 export function socialEntityPrivacyCondition(
   entityType: SQLWrapper,
   entityId: SQLWrapper,
   viewerId: string | null | undefined,
+  options: SocialEntityReadOptions = {},
 ): SQL {
   // Resolve at most two comment references before checking the real entity.
   // Expanding every entity branch recursively produces a huge query plan (and
@@ -164,7 +173,7 @@ export function socialEntityPrivacyCondition(
         })}
     )
     SELECT 1 FROM privacy_entity_chain privacy_entity_target
-    WHERE ${terminalSocialEntityPrivacyCondition(sql`privacy_entity_target.entity_type`, sql`privacy_entity_target.entity_id`, viewerId)}
+    WHERE ${terminalSocialEntityPrivacyCondition(sql`privacy_entity_target.entity_type`, sql`privacy_entity_target.entity_id`, viewerId, options)}
   )`;
 }
 
@@ -172,6 +181,7 @@ function terminalSocialEntityPrivacyCondition(
   entityType: SQLWrapper,
   entityId: SQLWrapper,
   viewerId: string | null | undefined,
+  { discovery = false }: SocialEntityReadOptions,
 ): SQL {
   const tick = alias(schema.boardseshTicks, 'privacy_entity_tick');
   const climb = alias(schema.boardClimbs, 'privacy_entity_climb');
@@ -183,7 +193,7 @@ function terminalSocialEntityPrivacyCondition(
         .from(tick)
         .where(and(eq(tick.uuid, entityId), tickPrivacyCondition(viewerId, tick))),
     )}
-    WHEN ${entityType} = 'session' THEN ${resourceAccessCondition('session', entityId, viewerId)}
+    WHEN ${entityType} = 'session' THEN ${discovery ? listedSessionCondition(entityId, viewerId) : resourceAccessCondition('session', entityId, viewerId)}
     WHEN ${entityType} = 'board' THEN ${resourceAccessCondition('board', entityId, viewerId)}
     WHEN ${entityType} = 'climb' THEN ${exists(
       queryBuilder

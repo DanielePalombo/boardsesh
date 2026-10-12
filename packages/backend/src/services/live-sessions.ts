@@ -1,4 +1,10 @@
-import { canAccessResource, canViewActivityIdentity, resourceAccessCondition } from './privacy';
+import {
+  canAccessResource,
+  canViewResourceLocation,
+  resourceAccess,
+  resourceAccessCondition,
+  visibleActivityUserIds,
+} from './privacy';
 import { and, desc, eq, exists, gt, inArray, isNotNull, isNull, like, or, sql, type SQL } from 'drizzle-orm';
 import type {
   LiveSession,
@@ -16,7 +22,6 @@ import { pubsub } from '../pubsub/index';
 import { roomManager } from './room-manager';
 import { canReadClimbContent } from './board-session-privacy';
 import { toBoardQueuePreviewItem } from './board-queue-preview';
-import { isRowAnonReadable } from '../graphql/resolvers/board-presence/shared';
 import { isSprayBoardType, sprayBoardRowIsReadable } from '../graphql/resolvers/climbs/spray-read-access';
 import {
   consensusGradeJoinCondition,
@@ -98,9 +103,7 @@ type BoardRow = {
   layoutId: number;
   angle: number;
   ownerId: string;
-  isPublic: boolean;
-  isUnlisted: boolean;
-  hideLocation: boolean;
+  identityVisible: boolean;
   deletedAt: Date | null;
   gymName: string | null;
 };
@@ -414,7 +417,11 @@ async function resolveCreatorConfigBoards(
   return resolved;
 }
 
-async function loadBoardRows(boardIds: readonly number[]): Promise<Map<number, BoardRow>> {
+async function loadBoardRows(
+  boardIds: readonly number[],
+  viewerId: string | null,
+  heldBoardIds: ReadonlySet<number>,
+): Promise<Map<number, BoardRow>> {
   if (boardIds.length === 0) return new Map();
   const rows = await db
     .select({
@@ -426,9 +433,10 @@ async function loadBoardRows(boardIds: readonly number[]): Promise<Map<number, B
       layoutId: dbSchema.userBoards.layoutId,
       angle: dbSchema.userBoards.angle,
       ownerId: dbSchema.userBoards.ownerId,
-      isPublic: dbSchema.userBoards.isPublic,
-      isUnlisted: dbSchema.userBoards.isUnlisted,
-      hideLocation: dbSchema.userBoards.hideLocation,
+      identityVisible: sql<boolean>`${resourceAccessCondition('board', dbSchema.userBoards.uuid, viewerId, {
+        allowUnlistedLink: false,
+        unlistedWhen: heldBoardIds.size > 0 ? inArray(dbSchema.userBoards.id, [...heldBoardIds]) : sql`false`,
+      })}`,
       deletedAt: dbSchema.userBoards.deletedAt,
       gymName: dbSchema.gyms.name,
     })
@@ -442,8 +450,8 @@ async function loadBoardRows(boardIds: readonly number[]): Promise<Map<number, B
  * The board as this viewer may see it, or null. Never leaks a board the viewer
  * could not otherwise find:
  *
- * - it must be live (not deleted) and anonymously readable (public, or a
- *   system-shared board — the one anon rule, `isRowAnonReadable`), or owned;
+ * - it must be live (not deleted) and readable under its current resource
+ *   policy, including audience overrides and revoked grants;
  * - an UNLISTED board is reachable by link, never enumerated, so it is only
  *   named to a viewer who already holds it: they follow it, selected it, or
  *   are reading that board's own sheet (`heldBoardIds`). Same rule as the tick
@@ -451,16 +459,10 @@ async function loadBoardRows(boardIds: readonly number[]): Promise<Map<number, B
  * - a spray wall additionally needs the wall's own enumerable rule, since a
  *   public-flagged wall can still be admin-hidden or scoped to a gym.
  */
-async function toVisibleBoard(
-  row: BoardRow | undefined,
-  viewerId: string | null,
-  heldBoardIds: ReadonlySet<number>,
-): Promise<LiveSessionBoard | null> {
-  if (!row || row.deletedAt) return null;
+async function toVisibleBoard(row: BoardRow | undefined, viewerId: string | null): Promise<LiveSessionBoard | null> {
+  if (!row || row.deletedAt || !row.identityVisible) return null;
   const isOwner = viewerId !== null && row.ownerId === viewerId;
   if (!isOwner) {
-    if (!isRowAnonReadable(row)) return null;
-    if (row.isUnlisted && !heldBoardIds.has(row.id)) return null;
     if (isSprayBoardType(row.boardType) && !(await sprayBoardRowIsReadable(row, viewerId, 'enumerable'))) {
       return null;
     }
@@ -470,7 +472,8 @@ async function toVisibleBoard(
     name: row.name,
     slug: row.slug,
     boardType: row.boardType,
-    gymName: row.hideLocation && !isOwner ? null : row.gymName,
+    // The gym is the board's place: its location policy decides, not the name.
+    gymName: isOwner || (await canViewResourceLocation(row.uuid, viewerId)) ? row.gymName : null,
   };
 }
 
@@ -540,12 +543,18 @@ function recentParticipantRowExists(userCondition: SQL, now: Date): SQL {
 }
 
 /**
- * The SQL half of the visibility rule. A private session only passes when the
- * viewer created it or joined it inside the candidate window; the live roster
+ * The SQL half of the visibility rule. Listings are discovery, not a link: an
+ * unlisted session (a legacy private one) only passes for the viewer who
+ * created it or joined it inside the candidate window, and the live roster
  * confirms the latter afterwards.
  */
-function visibilityPrefilter(viewerId: string | null, _now: Date): SQL {
-  return resourceAccessCondition('session', boardSessions.id, viewerId);
+function visibilityPrefilter(viewerId: string | null, now: Date): SQL {
+  return resourceAccessCondition('session', boardSessions.id, viewerId, {
+    allowUnlistedLink: false,
+    unlistedWhen: viewerId
+      ? recentParticipantRowExists(eq(dbSchema.boardSessionParticipants.userId, viewerId), now)
+      : undefined,
+  });
 }
 
 /**
@@ -815,19 +824,24 @@ async function buildLiveSessions(params: BuildLiveSessionsParams): Promise<LiveS
       : live;
   if (shortlist.length === 0) return [];
 
+  // `withoutLink` is discovery access; `withLink` is what the invite link
+  // opens. A session the viewer may only reach by link is listed only once the
+  // live roster shows them in it. One policy load per candidate.
   const sessionAccess = await Promise.all(
-    shortlist.map((candidate) => canAccessResource('session', candidate.id, viewerId)),
+    shortlist.map((candidate) => resourceAccess('session', candidate.id, viewerId)),
   );
   const rosters = await Promise.all(
-    shortlist.map((candidate, index) => (sessionAccess[index] ? loadRoster(candidate.id) : Promise.resolve([]))),
+    shortlist.map((candidate, index) =>
+      sessionAccess[index].withLink ? loadRoster(candidate.id) : Promise.resolve([]),
+    ),
   );
   const withRosters = shortlist.flatMap((candidate, index) => {
     const roster = rosters[index];
     const viewerIsMember =
       viewerId !== null &&
       (candidate.createdByUserId === viewerId || roster.some((member) => member.userId === viewerId));
-    // Visibility: a private session is pruned for everyone not in it.
-    if (!sessionAccess[index]) return [];
+    // Visibility: an unlisted or restricted session is pruned for everyone not in it.
+    if (!sessionAccess[index].withoutLink && !(sessionAccess[index].withLink && viewerIsMember)) return [];
     return [{ candidate, roster, viewerIsMember }];
   });
   if (withRosters.length === 0) return [];
@@ -866,15 +880,20 @@ async function buildLiveSessions(params: BuildLiveSessionsParams): Promise<LiveS
   const page = listed.sort(compareListed).slice(0, limit);
   if (page.length === 0) return [];
 
-  const [profiles, tickStats, boardRows] = await Promise.all([
-    loadProfiles(
-      page.flatMap(({ candidate, roster }) => [
-        ...signedInUserIds(roster),
-        ...(candidate.createdByUserId ? [candidate.createdByUserId] : []),
-      ]),
-    ),
+  const pageUserIds = page.flatMap(({ candidate, roster }) => [
+    ...signedInUserIds(roster),
+    ...(candidate.createdByUserId ? [candidate.createdByUserId] : []),
+  ]);
+  // Every climber on the page is named by their own account, in one lookup.
+  const [profiles, tickStats, boardRows, visibleUserIds] = await Promise.all([
+    loadProfiles(pageUserIds),
     loadTickStats(page.map(({ candidate }) => candidate.id)),
-    loadBoardRows(page.flatMap(({ boardId }) => (boardId ? [boardId] : []))),
+    loadBoardRows(
+      page.flatMap(({ boardId }) => (boardId ? [boardId] : [])),
+      viewerId,
+      heldBoardIds,
+    ),
+    visibleActivityUserIds(pageUserIds, viewerId),
   ]);
 
   return Promise.all(
@@ -904,15 +923,7 @@ async function buildLiveSessions(params: BuildLiveSessionsParams): Promise<LiveS
       });
       const followedSet = new Set(followedParticipantIds);
       const visibleMembers = new Set(
-        (
-          await Promise.all(
-            members.map(async (member) =>
-              (await canViewActivityIdentity(member.userId, viewerId, { sessionId: candidate.id }))
-                ? member.userId
-                : null,
-            ),
-          )
-        ).filter((userId): userId is string => userId !== null),
+        members.map((member) => member.userId).filter((userId) => visibleUserIds.has(userId)),
       );
       const participants = [
         ...members.filter((member) => followedSet.has(member.userId)),
@@ -923,12 +934,9 @@ async function buildLiveSessions(params: BuildLiveSessionsParams): Promise<LiveS
         .map((member) => toUser(member.userId, member));
 
       const creatorId =
-        candidate.createdByUserId &&
-        (await canViewActivityIdentity(candidate.createdByUserId, viewerId, { sessionId: candidate.id }))
-          ? candidate.createdByUserId
-          : null;
+        candidate.createdByUserId && visibleUserIds.has(candidate.createdByUserId) ? candidate.createdByUserId : null;
       const [board, currentClimb] = await Promise.all([
-        toVisibleBoard(boardRow, viewerId, heldBoardIds),
+        toVisibleBoard(boardRow, viewerId),
         // Public sessions only, and only when the board type is known and is
         // not a spray wall: a spray wall's climbs stay private to the wall even
         // when the session is public, and an unknown type could be one.

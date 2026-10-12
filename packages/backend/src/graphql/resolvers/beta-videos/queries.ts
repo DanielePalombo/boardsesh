@@ -1,6 +1,6 @@
 import { alias } from 'drizzle-orm/pg-core';
 import { betaPrivacyCondition } from '../shared/activity-privacy';
-import { canViewUserActivity } from '../../../services/privacy';
+import { canViewUserActivity, visibleBoardIdentityIds } from '../../../services/privacy';
 import { GraphQLError } from 'graphql';
 import { db } from '../../../db/client';
 import * as dbSchema from '@boardsesh/db/schema';
@@ -283,6 +283,26 @@ function makeLimiter(concurrency: number): <T>(task: () => Promise<T>) => Promis
   };
 }
 
+/**
+ * A beta link follows its author; the board it was filmed on is named only to
+ * people who may see that board, and to the beta's author. One query per page.
+ */
+async function withVisibleBetaBoards<T extends { boardId: number | null }>(
+  items: readonly T[],
+  viewerId: string | null | undefined,
+  authorOf: (item: T) => string | null = () => null,
+): Promise<T[]> {
+  const visible = await visibleBoardIdentityIds(
+    items.map((item) => item.boardId),
+    viewerId,
+  );
+  return items.map((item) =>
+    item.boardId == null || visible.has(item.boardId) || (!!viewerId && authorOf(item) === viewerId)
+      ? item
+      : { ...item, boardId: null },
+  );
+}
+
 async function enrichRowSafe(row: Row): Promise<BetaLinkResult | null> {
   if (isKayaClimbUrl(row.link)) return null;
   if (isInstagramUrl(row.link)) return enrichRow(row, INSTAGRAM_ENRICH);
@@ -305,7 +325,8 @@ type CachedRecentBetaLinkRow = {
   is_listed: boolean | null;
   created_at: string | null;
   tick_uuid: string | null;
-  board_id: number | null;
+  board_id: number | string | null;
+  created_by_user_id: string | null;
   climb_name: string | null;
   layout_id: number | null;
 };
@@ -347,6 +368,7 @@ async function runRecentBetaLinksQuery(
         bl.created_at,
         bl.tick_uuid,
         bl.board_id,
+        bl.created_by_user_id,
         bc.name AS climb_name,
         bc.layout_id AS layout_id
       FROM ${dbSchema.boardBetaLinks} bl
@@ -367,7 +389,7 @@ async function runRecentBetaLinksQuery(
         ) AS user_rank
       FROM scoped
     )
-    SELECT board_type, climb_uuid, link, foreign_username, angle, thumbnail, is_listed, created_at, tick_uuid, board_id, climb_name, layout_id
+    SELECT board_type, climb_uuid, link, foreign_username, angle, thumbnail, is_listed, created_at, tick_uuid, board_id, created_by_user_id, climb_name, layout_id
     FROM ranked
     WHERE foreign_username IS NULL OR user_rank <= ${HOME_PER_USER_CAP}
     ORDER BY created_at DESC
@@ -574,7 +596,8 @@ export const betaLinkQueries = {
       );
 
     const limit = makeLimiter(ENRICH_CONCURRENCY);
-    const enriched = await Promise.all(rows.map((row) => limit(() => enrichRowSafe(row))));
+    const visibleRows = await withVisibleBetaBoards(rows, ctx?.userId, (row) => row.createdByUserId);
+    const enriched = await Promise.all(visibleRows.map((row) => limit(() => enrichRowSafe(row))));
 
     return enriched.filter((r): r is BetaLinkResult => r !== null);
   },
@@ -703,6 +726,7 @@ export const betaLinkQueries = {
         ? await runRecentBetaLinksQuery(scope, ctx?.userId)
         : authorized;
 
+    const authorsByLink = new Map<BetaLinkResult, string | null>();
     const filtered: RecentBetaLinkResult[] = [];
     for (const r of cached) {
       if (isKayaClimbUrl(r.link)) continue;
@@ -719,15 +743,21 @@ export const betaLinkQueries = {
           isListed: r.is_listed,
           createdAt: r.created_at,
           tickUuid: r.tick_uuid ?? null,
-          boardId: r.board_id ?? null,
+          boardId: r.board_id == null ? null : Number(r.board_id),
         },
         climbName: r.climb_name,
         boardType: r.board_type,
         layoutId: r.layout_id ?? null,
       });
+      authorsByLink.set(filtered[filtered.length - 1].betaLink, r.created_by_user_id);
       if (filtered.length >= cappedLimit) break;
     }
-    return filtered;
+    const betaLinks = await withVisibleBetaBoards(
+      filtered.map((item) => item.betaLink),
+      ctx?.userId,
+      (item) => authorsByLink.get(item) ?? null,
+    );
+    return filtered.map((item, index) => ({ ...item, betaLink: betaLinks[index] }));
   },
 
   // Powers the profile-page "Their beta" slider. Returns videos this user
@@ -810,13 +840,17 @@ export const betaLinkQueries = {
       .offset(safeOffset)
       .limit(cappedLimit);
 
-    return rows
-      .filter((r) => !isKayaClimbUrl(r.betaLink.link))
-      .map((r) => ({
-        betaLink: passthroughResult(r.betaLink),
-        climbName: r.climbName,
-        boardType: r.betaLink.boardType,
-        layoutId: r.layoutId ?? null,
-      }));
+    const listed = rows.filter((r) => !isKayaClimbUrl(r.betaLink.link));
+    const betaLinks = await withVisibleBetaBoards(
+      listed.map((r) => r.betaLink),
+      ctx?.userId,
+      (betaLink) => betaLink.createdByUserId,
+    );
+    return listed.map((r, index) => ({
+      betaLink: passthroughResult(betaLinks[index]),
+      climbName: r.climbName,
+      boardType: r.betaLink.boardType,
+      layoutId: r.layoutId ?? null,
+    }));
   },
 };

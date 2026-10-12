@@ -1,4 +1,4 @@
-import { redactSessionUsers, redactQueueItem } from '../../../services/board-session-privacy';
+import { projectSessionBoardPath, redactSessionUsers, redactQueueItem } from '../../../services/board-session-privacy';
 import { canViewActivityIdentity } from '../../../services/privacy';
 import type { ConnectionContext, ClimbQueueItem, SessionUser } from '@boardsesh/shared-schema';
 import { roomManager } from '../../../services/room-manager';
@@ -97,16 +97,19 @@ export async function buildSessionPayload(
     // Treats `sessionData.name === ''` the same as `name === null` —
     // consistent with the `goal` / `color` fields a few lines below.
     name: inputs.name !== undefined ? inputs.name : sessionData?.name || null,
-    boardPath: inputs.boardPath !== undefined ? inputs.boardPath : sessionData?.boardPath || '',
+    boardPath: await projectSessionBoardPath(
+      inputs.boardPath !== undefined ? inputs.boardPath : sessionData?.boardPath || '',
+      ctx.userId,
+    ),
     users: await redactSessionUsers(users, ctx.userId, sessionId),
     queueState: queueState
       ? {
           sequence: queueState.sequence,
           stateHash: queueState.stateHash,
           stateHashOrdered: queueState.stateHashOrdered ?? null,
-          queue: await Promise.all(queueState.queue.map((item) => redactQueueItem(item, ctx.userId, sessionId))),
+          queue: await Promise.all(queueState.queue.map((item) => redactQueueItem(item, ctx.userId))),
           currentClimbQueueItem: queueState.currentClimbQueueItem
-            ? await redactQueueItem(queueState.currentClimbQueueItem, ctx.userId, sessionId)
+            ? await redactQueueItem(queueState.currentClimbQueueItem, ctx.userId)
             : null,
         }
       : null,
@@ -132,9 +135,7 @@ export async function buildSessionPayload(
     // `goal` have one.
     createdByUserId:
       (inputs.createdByUserId ?? sessionData?.createdByUserId) &&
-      (await canViewActivityIdentity((inputs.createdByUserId ?? sessionData?.createdByUserId)!, ctx.userId, {
-        sessionId,
-      }))
+      (await canViewActivityIdentity((inputs.createdByUserId ?? sessionData?.createdByUserId)!, ctx.userId))
         ? inputs.createdByUserId !== undefined
           ? inputs.createdByUserId
           : (sessionData?.createdByUserId ?? null)

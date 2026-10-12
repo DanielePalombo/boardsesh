@@ -2,7 +2,6 @@ import {
   intersectInferredPrivacy,
   loadInferredPrivacy,
   narrowsInferredPrivacy,
-  movedContentNeedsRestriction,
   writeInferredPrivacy,
   type InferredPrivacy,
 } from './privacy';
@@ -209,6 +208,8 @@ export async function reconcileInferredSessions(
     .from(dbSchema.userProfiles)
     .where(eq(dbSchema.userProfiles.userId, userId))
     .limit(1);
+  // The same default getPrivacySettings gives explicit sessions: a session's
+  // name and notes follow the session audience, not the account.
   const defaultPrivacy: InferredPrivacy = {
     audience: profile?.audience ?? (profile?.isPrivate ? 'followers' : 'public'),
     inheritFollowers: false,
@@ -264,6 +265,8 @@ export async function reconcileInferredSessions(
         .where(and(eq(dbSchema.boardSessions.id, sessionId), eq(dbSchema.boardSessions.origin, 'inferred')));
     }
 
+    // A tick's audience is its author's; regrouping never rewrites it. Keep
+    // main's narrowing-only signal for the session containers themselves.
     if (!planned.explicitSessionIds.has(sessionId)) {
       await writeInferredPrivacy(tx, sessionId, userId, privacy);
       if (policies.some((policy) => narrowsInferredPrivacy(policy, privacy))) narrowedAccess = true;
@@ -273,32 +276,6 @@ export async function reconcileInferredSessions(
         const previous = planned.originalAssignments.get(tickId);
         const previousPolicy = previous && previous !== sessionId ? sourcePrivacy.get(previous) : undefined;
         if (previousPolicy && destination && narrowsInferredPrivacy(previousPolicy, destination)) narrowedAccess = true;
-      }
-      // Absorption into a different explicit container must not widen a tick.
-      // A session invite set cannot be encoded as an account item audience;
-      // keep those moved ticks owner-only until their author republishes them.
-      const restrictedTickIds = runResult.tickIds.filter((tickId) => {
-        const previous = planned.originalAssignments.get(tickId);
-        return (
-          previous &&
-          previous !== sessionId &&
-          movedContentNeedsRestriction(sourcePrivacy.get(previous), sourcePrivacy.get(sessionId))
-        );
-      });
-      if (restrictedTickIds.length) {
-        narrowedAccess = true;
-        const ticks = await tx
-          .select({ uuid: dbSchema.boardseshTicks.uuid })
-          .from(dbSchema.boardseshTicks)
-          .where(inArray(dbSchema.boardseshTicks.id, restrictedTickIds.map(BigInt)));
-        for (const tick of ticks)
-          await tx
-            .insert(dbSchema.contentPrivacy)
-            .values({ entityType: 'tick', entityId: tick.uuid, ownerId: userId, audience: 'only_me' })
-            .onConflictDoUpdate({
-              target: [dbSchema.contentPrivacy.entityType, dbSchema.contentPrivacy.entityId],
-              set: { audience: 'only_me' },
-            });
       }
     }
 

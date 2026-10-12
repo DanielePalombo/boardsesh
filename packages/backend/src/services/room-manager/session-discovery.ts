@@ -1,6 +1,6 @@
 import { GraphQLError } from 'graphql';
 import { resolveSessionBoardId } from '../session-board-binding';
-import { notifyResourcePrivacyChanged } from '../board-session-privacy';
+import { notifyResourcePrivacyChanged, projectSessionBoardPath } from '../board-session-privacy';
 import {
   canViewActivityIdentity,
   getResourcePrivacy,
@@ -231,7 +231,8 @@ export async function findNearbySessions(
     .where(
       and(
         eq(sessions.discoverable, true),
-        resourceAccessCondition('session', sessions.id, viewerId),
+        // Nearby is discovery: an unlisted session's link never lists it.
+        resourceAccessCondition('session', sessions.id, viewerId, { allowUnlistedLink: false }),
         sessionBoardLocationCondition(sessions.id, viewerId),
         ne(sessions.status, 'ended'),
         gte(sessions.latitude, box.minLat),
@@ -268,13 +269,13 @@ export async function findNearbySessions(
     result.push({
       id: session.id,
       name: session.name,
-      boardPath: session.boardPath,
+      // A deleted or renamed named board's slug is not this viewer's to read.
+      boardPath: await projectSessionBoardPath(session.boardPath, viewerId),
       latitude: 0,
       longitude: 0,
       createdAt: session.createdAt,
       createdByUserId:
-        session.createdByUserId &&
-        (await canViewActivityIdentity(session.createdByUserId, viewerId, { sessionId: session.id }))
+        session.createdByUserId && (await canViewActivityIdentity(session.createdByUserId, viewerId))
           ? session.createdByUserId
           : null,
       participantCount,
