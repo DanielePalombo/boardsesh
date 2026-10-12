@@ -76,7 +76,7 @@ import {
 import { useBelowFoldContentRequest } from './use-below-fold-content-request';
 import { useDeliberateScrollGesture } from './use-deliberate-scroll-gesture';
 import { usePlayDrawerSectionsPreference } from '../../lib/play-drawer-sections-preference';
-import { visiblePlayDrawerSections } from './play-drawer-sections';
+import { hasSwitchedOnPlayDrawerSection, visiblePlayDrawerSections } from './play-drawer-sections';
 import { useDrawerDismissGesture } from './use-drawer-dismiss-gesture';
 import { useFullLogbookSheet } from './logbook/use-full-logbook-sheet';
 import { usePushAfterPlayerDismiss } from './use-push-after-player-dismiss';
@@ -178,7 +178,6 @@ export function PlayCore({
   // pull-down dismiss gesture, the close chevron, the grabber, and router.dismiss.
   const isPane = presentation === 'pane';
   const { t, i18n } = useTranslation('session');
-  const { t: tCommon } = useTranslation('common');
   const { sections, ready: sectionsReady } = usePlayDrawerSectionsPreference();
   const [sectionsSettingsOpen, setSectionsSettingsOpen] = useState(false);
   const handleOpenSectionsSettings = useCallback(() => setSectionsSettingsOpen(true), []);
@@ -376,6 +375,17 @@ export function PlayCore({
         screenshotMode: process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1',
       }),
     [sections, isAuthenticated, drawerGradeSectionEnabled, displayedClimb?.description],
+  );
+  // The climber's saved choices alone, so it holds still across a swipe between
+  // a climb with setter notes and one without.
+  const hasSwitchedOnSection = useMemo(
+    () =>
+      hasSwitchedOnPlayDrawerSection({
+        sections,
+        isAuthenticated,
+        screenshotMode: process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1',
+      }),
+    [sections, isAuthenticated],
   );
   const firstSectionId = visibleSectionIds[0];
   const hasVisibleSections = sectionsReady && visibleSectionIds.length > 0;
@@ -1249,6 +1259,7 @@ export function PlayCore({
         onTick: handleOpenTickForClimb,
         onReportClimb: handleOpenReportClimbForClimb,
         onOpenQueue: openQueueFromActions,
+        onOpenViewOptions: handleOpenSectionsSettings,
       });
       return;
     }
@@ -1260,6 +1271,7 @@ export function PlayCore({
     handleOpenTickForClimb,
     handleOpenReportClimbForClimb,
     openQueueFromActions,
+    handleOpenSectionsSettings,
   ]);
 
   // Arm (expand) / disarm (collapse) the scroll-into-view for the first section peek.
@@ -1508,15 +1520,6 @@ export function PlayCore({
                           The grabber stays centred: both flanks are absolute. */}
                         <View style={styles.restTimerSlot}>
                           <RestTimerPillHost compact />
-                          {commitBarModel.mode === 'commit' && viewer !== 'anonymous' ? (
-                            <ChromeIconButton
-                              icon="visibility"
-                              role="action"
-                              onPress={handleOpenSectionsSettings}
-                              accessibilityLabel={tCommon('mobile.settings.climbDrawer.sheetTitle')}
-                              testID="play-drawer-section-settings"
-                            />
-                          ) : null}
                         </View>
                       </View>
 
@@ -1718,7 +1721,15 @@ export function PlayCore({
                             onLightbulb={handleLightbulb}
                             onLightbulbLongPress={handleLightbulbLongPress}
                             onOpenActions={handleOpenActions}
-                            onEditSections={handleOpenSectionsSettings}
+                            // Section choices live in ••• → View options. The bar's
+                            // own eye comes back only once nothing this climber could
+                            // see is switched on: it is the way back after Hide all for
+                            // a signed-out web reader, who has no ••• and no Settings.
+                            // It follows their choices, not the climb, so it never
+                            // blinks in and out (shifting the row) during a swipe.
+                            onEditSections={
+                              sectionsReady && !hasSwitchedOnSection ? handleOpenSectionsSettings : undefined
+                            }
                             onOpenQueue={onOpenQueue}
                             onShare={displayedClimbIsDraft ? undefined : handleShare}
                             onTickPress={handleTickFabPress}
@@ -1846,6 +1857,7 @@ export function PlayCore({
         addToQueue={addToQueue}
         dismissPlayerAndWait={dismissPlayerAndWait}
         onAngleChange={onAngleChange}
+        handleOpenSectionsSettings={handleOpenSectionsSettings}
         handleCloseSectionsSettings={handleCloseSectionsSettings}
         handleToggleFavoriteFromMenu={handleToggleFavoriteFromMenu}
         handleOpenAddBetaVideo={handleOpenAddBetaVideo}
@@ -1896,9 +1908,7 @@ const styles = StyleSheet.create({
     right: spacing[2],
     height: 44,
     zIndex: 2,
-    flexDirection: 'row',
-    gap: spacing[2],
-    alignItems: 'center',
+    justifyContent: 'center',
   },
   closeButton: {
     position: 'absolute',
