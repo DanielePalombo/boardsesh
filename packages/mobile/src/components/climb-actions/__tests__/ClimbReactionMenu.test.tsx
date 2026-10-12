@@ -12,7 +12,7 @@ vi.mock('../../PressableSurface', async () => {
       createElement(Pressable, { ...props, onPress: props.disabled ? undefined : props.onPress }),
   };
 });
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import type { Climb } from '@boardsesh/shared-schema';
@@ -23,22 +23,48 @@ const captured = vi.hoisted(() => ({
   actionArgs: null as Record<string, unknown> | null,
   pickerOnBack: undefined as undefined | (() => void),
   pickerOnDetachedFailure: undefined as undefined | ((message: string) => void),
+  pickerMaxHeight: undefined as number | undefined,
   modalOnRequestClose: undefined as undefined | (() => void),
   boardImageProps: null as Record<string, unknown> | null,
   ran: undefined as undefined | string,
   glassSurfaceProps: null as Record<string, unknown> | null,
   fadeColors: null as readonly string[] | null,
+  list: null as null | {
+    maxHeight: unknown;
+    showsVerticalScrollIndicator?: boolean;
+    bounces?: boolean;
+    onScroll?: (event: ScrollEventStub) => void;
+    onContentSizeChange?: (width: number, height: number) => void;
+  },
+}));
+
+type ScrollEventStub = {
+  contentSize: { height: number };
+  layoutMeasurement: { height: number };
+  contentOffset: { y: number };
+};
+
+// The list's animated ref, empty until the ScrollView mock attaches itself to it (so a
+// ScrollView that stops taking the ref leaves nothing to flash).
+// flashScrollIndicators is the scroll hint under test.
+const flashScrollIndicators = vi.hoisted(() => vi.fn());
+const listScrollRef = vi.hoisted(() => ({
+  current: null as null | { flashScrollIndicators: () => void },
 }));
 
 const showToast = vi.hoisted(() => vi.fn());
 
 // Drives the rendering branches: which material sits under the overlay, which
-// scheme, and how tall the window is (a short window forces the action list to
-// scroll, which is what mounts the bottom fade).
+// scheme, how tall the window is and how big the text (a short window or large
+// text forces the action list to scroll, which is what mounts the bottom fade),
+// how many rows the action list has, and the board's shape.
 const ctrl = vi.hoisted(() => ({
   surfaceMode: 'material' as string,
   colorScheme: 'dark' as 'dark' | 'light',
   windowHeight: 800,
+  fontScale: 1,
+  listRows: 2,
+  board: { width: 120, height: 120 },
 }));
 
 vi.mock('react-native', async () => {
@@ -60,7 +86,6 @@ vi.mock('react-native', async () => {
       onPress?: () => void;
       accessibilityLabel?: string;
     }) => createElement('button', { onClick: onPress, 'aria-label': accessibilityLabel }, children),
-    ScrollView: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
     TextInput: () => null,
     View: ({ children, style }: { children?: ReactNode; style?: unknown }) =>
       createElement('div', { 'data-bg': flattenStyle(style).backgroundColor }, children),
@@ -71,19 +96,66 @@ vi.mock('react-native', async () => {
       flatten: flattenStyle,
     },
     PixelRatio: { get: () => 2 },
-    useWindowDimensions: () => ({ width: 400, height: ctrl.windowHeight, fontScale: 1 }),
+    useWindowDimensions: () => ({ width: 400, height: ctrl.windowHeight, fontScale: ctrl.fontScale }),
   };
 });
 
+// Shared values are stable across renders and animated styles are evaluated at
+// render, so a re-render after a scroll event shows what the UI thread would paint.
 vi.mock('react-native-reanimated', async () => {
   const { flattenStyle } = await import('../../../../test/flatten-style');
+  const { useRef } = await import('react');
   return {
     default: {
-      View: ({ children, style }: { children?: ReactNode; style?: unknown }) =>
-        createElement('div', { 'data-bg': flattenStyle(style).backgroundColor }, children),
+      View: ({ children, style, pointerEvents }: { children?: ReactNode; style?: unknown; pointerEvents?: string }) => {
+        const flattened = flattenStyle(style);
+        return createElement(
+          'div',
+          {
+            'data-bg': flattened.backgroundColor,
+            'data-pointer-events': pointerEvents,
+            'data-opacity': flattened.opacity,
+          },
+          children,
+        );
+      },
+      ScrollView: ({
+        children,
+        ref,
+        style,
+        showsVerticalScrollIndicator,
+        bounces,
+        onScroll,
+        onContentSizeChange,
+      }: {
+        children?: ReactNode;
+        ref?: { current: unknown };
+        style?: unknown;
+        showsVerticalScrollIndicator?: boolean;
+        bounces?: boolean;
+        onScroll?: (event: ScrollEventStub) => void;
+        onContentSizeChange?: (width: number, height: number) => void;
+      }) => {
+        if (ref) ref.current = { flashScrollIndicators };
+        captured.list = {
+          maxHeight: flattenStyle(style).maxHeight,
+          showsVerticalScrollIndicator,
+          bounces,
+          onScroll,
+          onContentSizeChange,
+        };
+        return createElement('div', { 'data-list': 'true' }, children);
+      },
     },
-    useAnimatedStyle: () => ({}),
-    useSharedValue: (v: number) => ({ value: v }),
+    Extrapolation: { CLAMP: 'clamp' },
+    interpolate: (input: number, [inputStart, inputEnd]: number[], [outputStart, outputEnd]: number[]) => {
+      const progress = Math.min(1, Math.max(0, (input - inputStart) / (inputEnd - inputStart)));
+      return outputStart + progress * (outputEnd - outputStart);
+    },
+    useAnimatedRef: () => listScrollRef,
+    useAnimatedScrollHandler: (handlers: { onScroll: (event: ScrollEventStub) => void }) => handlers.onScroll,
+    useAnimatedStyle: (updater: () => Record<string, unknown>) => updater(),
+    useSharedValue: (initial: number) => useRef({ value: initial }).current,
     withSpring: (v: number) => v,
     withTiming: (v: number) => v,
     runOnJS: (fn: () => void) => fn,
@@ -138,18 +210,21 @@ vi.mock('../../playlist/InlinePlaylistPicker', () => ({
   InlinePlaylistPicker: ({
     onBack,
     onDetachedFailure,
+    maxHeight,
   }: {
     onBack?: () => void;
     onDetachedFailure?: (message: string) => void;
+    maxHeight?: number;
   }) => {
     captured.pickerOnBack = onBack;
+    captured.pickerMaxHeight = maxHeight;
     captured.pickerOnDetachedFailure = onDetachedFailure;
     return createElement('div', { 'data-picker': 'true' }, 'picker');
   },
 }));
 vi.mock('../../../providers/toast-provider', () => ({ useToast: () => ({ showToast }) }));
 vi.mock('../../../lib/board-details', () => ({
-  getBoardRenderData: () => ({ boardWidth: 120, boardHeight: 120 }),
+  getBoardRenderData: () => ({ boardWidth: ctrl.board.width, boardHeight: ctrl.board.height }),
 }));
 vi.mock('../../../lib/format-climb-stats', () => ({ formatSends: () => '', formatQuality: () => '' }));
 vi.mock('../../../hooks/use-grade-format', () => ({ useGradeFormat: () => ({ formatGrade: () => 'V4' }) }));
@@ -158,6 +233,7 @@ vi.mock('../../../providers/theme-provider', () => ({
   useTheme: () => ({
     colorScheme: ctrl.colorScheme,
     systemColors: { fill: '#222', label: '#fff' },
+    textStyles: { body: { lineHeight: 22 } },
     m3SurfaceContainers: { lowest: '#101018', low: '#202028', base: '#303038', high: '#404048', highest: '#505058' },
   }),
 }));
@@ -190,29 +266,46 @@ vi.mock('../use-climb-actions', () => ({
       },
       { id: 'favorite', title: 'Favorite', icon: 'favorite', color: '#f00', run: () => {} },
       { id: 'share', title: 'Share', icon: 'share', color: '#00f', run: () => (captured.ran = 'share') },
+      // Preview and Favorite are the list's first two rows; these fill it out.
+      ...Array.from({ length: Math.max(0, ctrl.listRows - 2) }, (_, index) => ({
+        id: `extra-${index}`,
+        title: `Extra ${index}`,
+        icon: 'more',
+        color: '#00f',
+        run: () => (captured.ran = `extra-${index}`),
+      })),
     ];
   },
 }));
 
-import { ClimbReactionMenu } from '../ClimbReactionMenu';
+import { ClimbReactionMenu, SCROLL_HINT_FLASH_DELAY_MS } from '../ClimbReactionMenu';
 
 const climb = { uuid: 'climb-1', name: 'Big Move', frames: '', difficulty: 'V4', quality_average: '0' } as Climb;
 const boardConfig = { boardName: 'kilter', layoutId: 1, sizeId: 10, setIds: '1,2', angle: 40 };
 
 function renderMenu(onClose = vi.fn(), extraProps: Record<string, unknown> = {}) {
-  return {
-    onClose,
-    ...render(
-      <ClimbReactionMenu
-        climb={climb}
-        boardConfig={boardConfig as never}
-        isAuthenticated
-        reduceMotion
-        onClose={onClose}
-        {...extraProps}
-      />,
-    ),
-  };
+  // A fresh element each time, so a rerender actually re-runs the component.
+  const menu = () => (
+    <ClimbReactionMenu
+      climb={climb}
+      boardConfig={boardConfig as never}
+      isAuthenticated
+      reduceMotion
+      onClose={onClose}
+      {...extraProps}
+    />
+  );
+  const result = render(menu());
+  return { onClose, ...result, rerenderMenu: () => result.rerender(menu()) };
+}
+
+function resetCtrl() {
+  ctrl.surfaceMode = 'material';
+  ctrl.colorScheme = 'dark';
+  ctrl.windowHeight = 800;
+  ctrl.fontScale = 1;
+  ctrl.listRows = 2;
+  ctrl.board = { width: 120, height: 120 };
 }
 
 describe('ClimbReactionMenu view switching', () => {
@@ -226,9 +319,7 @@ describe('ClimbReactionMenu view switching', () => {
     captured.ran = undefined;
     captured.glassSurfaceProps = null;
     captured.fadeColors = null;
-    ctrl.surfaceMode = 'material';
-    ctrl.colorScheme = 'dark';
-    ctrl.windowHeight = 800;
+    resetCtrl();
   });
 
   it('runs the action when a primary button is pressed', () => {
@@ -403,9 +494,7 @@ describe('ClimbReactionMenu surface treatment', () => {
   beforeEach(() => {
     captured.glassSurfaceProps = null;
     captured.fadeColors = null;
-    ctrl.surfaceMode = 'material';
-    ctrl.colorScheme = 'dark';
-    ctrl.windowHeight = 800;
+    resetCtrl();
   });
 
   it('raises the card to the M3 dialog tone and cast', () => {
@@ -459,5 +548,200 @@ describe('ClimbReactionMenu surface treatment', () => {
     ctrl.windowHeight = 200;
     renderMenu();
     expect(captured.fadeColors).toEqual(['rgba(20, 17, 31, 0)', 'rgba(20, 17, 31, 0.92)']);
+  });
+});
+
+// The menu is a quick peek at the climb: the list shows four rows and half of the
+// fifth, and the rest scroll under a fade and a flashed scroll bar.
+describe('ClimbReactionMenu action list window', () => {
+  // 12pt of padding around the taller of the 22pt body line and the 24pt icon, and
+  // 4pt of list padding. The primary button row's first-frame estimate is 110.
+  const ROW = 48;
+  const PADDING = 4;
+  const PRIMARY_ROW = 110;
+  const flash = flashScrollIndicators;
+  const fadeIn = (container: HTMLElement) => container.querySelector('[data-testid="menu-fade"]');
+
+  beforeEach(() => {
+    resetCtrl();
+    captured.list = null;
+    captured.ran = undefined;
+    captured.boardImageProps = null;
+    captured.pickerOnBack = undefined;
+    captured.pickerMaxHeight = undefined;
+    listScrollRef.current = null;
+    flash.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows a list of four rows whole, with no fade, scroll bar or bounce', () => {
+    ctrl.listRows = 4;
+    const { container } = renderMenu();
+    expect(fadeIn(container)).toBeNull();
+    expect(captured.list?.showsVerticalScrollIndicator).toBe(false);
+    expect(captured.list?.bounces).toBe(false);
+  });
+
+  it('cuts a longer list at four rows and half of the fifth, under a fade that never takes a tap', () => {
+    ctrl.listRows = 7;
+    const { container } = renderMenu();
+    expect(captured.list?.maxHeight).toBeCloseTo(PADDING + 4.5 * ROW);
+    expect(captured.list?.showsVerticalScrollIndicator).toBe(true);
+    expect(captured.list?.bounces).toBe(true);
+    const fade = fadeIn(container);
+    expect(fade).not.toBeNull();
+    expect(fade?.parentElement?.getAttribute('data-pointer-events')).toBe('none');
+  });
+
+  it('still renders and runs the rows below the fold', () => {
+    ctrl.listRows = 7;
+    const { getByLabelText } = renderMenu();
+    act(() => fireEvent.click(getByLabelText('Extra 4')));
+    expect(captured.ran).toBe('extra-4');
+  });
+
+  it('re-cuts the window from the measured row height', () => {
+    ctrl.listRows = 7;
+    renderMenu();
+    // Rows laid out taller than the estimate: the measurement wins.
+    act(() => captured.list?.onContentSizeChange?.(352, 7 * 50 + PADDING * 2));
+    expect(captured.list?.maxHeight).toBeCloseTo(PADDING + 4.5 * 50);
+  });
+
+  // The case this layout is for: a portrait board on a phone takes its whole height
+  // budget, and the card under it lands on exactly four rows and a peek. The picker
+  // gets the same card height, so its cap pins the component to the sizing math.
+  it('lands on four rows and a peek under a board that takes its whole height budget', () => {
+    ctrl.board = { width: 60, height: 120 };
+    ctrl.listRows = 7;
+    const { getByLabelText } = renderMenu();
+    expect(captured.list?.maxHeight).toBeCloseTo(PADDING + 4.5 * ROW);
+    act(() => fireEvent.click(getByLabelText('Add to Playlist')));
+    expect((captured.pickerMaxHeight as number) - PRIMARY_ROW).toBeCloseTo(PADDING + 4.5 * ROW);
+  });
+
+  it('shows fewer rows, still cut mid-row, when a short screen floors the board', () => {
+    ctrl.listRows = 7;
+    ctrl.windowHeight = 520;
+    const { container } = renderMenu();
+    expect(captured.list?.maxHeight).toBeCloseTo(PADDING + 2.5 * ROW);
+    expect(fadeIn(container)).not.toBeNull();
+  });
+
+  it('scrolls even a four-row list, with the fade, when large text leaves no room for it', () => {
+    ctrl.listRows = 4;
+    ctrl.windowHeight = 520;
+    ctrl.fontScale = 2;
+    const { container } = renderMenu();
+    expect(captured.list?.showsVerticalScrollIndicator).toBe(true);
+    expect(fadeIn(container)).not.toBeNull();
+  });
+
+  it('keeps a portrait board the same size whether five or nine actions sit in the list', () => {
+    ctrl.board = { width: 60, height: 120 };
+    ctrl.listRows = 5;
+    renderMenu();
+    const withFive = captured.boardImageProps?.renderWidth as number;
+    ctrl.listRows = 9;
+    renderMenu();
+    expect(captured.boardImageProps?.renderWidth).toBe(withFive);
+    // Four rows fit whole, so the board gets the half row the peek would have taken.
+    ctrl.listRows = 4;
+    renderMenu();
+    expect(captured.boardImageProps?.renderWidth as number).toBeGreaterThan(withFive);
+  });
+
+  it('lifts the fade as the list reaches its end, and brings it back when the list remounts', () => {
+    ctrl.listRows = 7;
+    const { container, rerenderMenu, getByLabelText } = renderMenu();
+    const contentHeight = 7 * ROW + PADDING * 2;
+    const visibleHeight = captured.list?.maxHeight as number;
+    const scrollTo = (offset: number) =>
+      captured.list?.onScroll?.({
+        contentSize: { height: contentHeight },
+        layoutMeasurement: { height: visibleHeight },
+        contentOffset: { y: offset },
+      });
+    const fadeOpacity = () => fadeIn(container)?.parentElement?.getAttribute('data-opacity');
+    const endOffset = contentHeight - visibleHeight;
+
+    expect(fadeOpacity()).toBe('1');
+    act(() => scrollTo(endOffset - ROW));
+    rerenderMenu();
+    expect(fadeOpacity()).toBe('1');
+    act(() => scrollTo(endOffset - ROW / 4));
+    rerenderMenu();
+    expect(Number(fadeOpacity())).toBeCloseTo(0.5);
+    act(() => scrollTo(endOffset));
+    rerenderMenu();
+    expect(fadeOpacity()).toBe('0');
+
+    // The picker unmounts the list; it comes back at the top, so the fade does too.
+    act(() => fireEvent.click(getByLabelText('Add to Playlist')));
+    act(() => captured.pickerOnBack?.());
+    expect(fadeOpacity()).toBe('1');
+  });
+
+  // Play next comes and goes as the session's current climb changes, with no scroll
+  // to tell the fade. A row added below a list scrolled to its end must bring it back.
+  it('brings the fade back when a row lands below a list scrolled to its end', () => {
+    ctrl.listRows = 7;
+    const { container, rerenderMenu } = renderMenu();
+    const endOffset = 7 * ROW + PADDING * 2 - (captured.list?.maxHeight as number);
+    act(() =>
+      captured.list?.onScroll?.({
+        contentSize: { height: 0 },
+        layoutMeasurement: { height: 0 },
+        contentOffset: { y: endOffset },
+      }),
+    );
+    rerenderMenu();
+    const fadeOpacity = () => fadeIn(container)?.parentElement?.getAttribute('data-opacity');
+    expect(fadeOpacity()).toBe('0');
+    ctrl.listRows = 8;
+    rerenderMenu();
+    expect(fadeOpacity()).toBe('1');
+  });
+
+  it('flashes the scroll bar once the card has sprung in', () => {
+    vi.useFakeTimers();
+    ctrl.listRows = 7;
+    renderMenu(vi.fn(), { reduceMotion: false });
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS - 1));
+    expect(flash).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(flash).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not flash after the menu has closed', () => {
+    vi.useFakeTimers();
+    ctrl.listRows = 7;
+    const { unmount } = renderMenu(vi.fn(), { reduceMotion: false });
+    unmount();
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS));
+    expect(flash).not.toHaveBeenCalled();
+  });
+
+  it('never flashes a list with nothing below the fold', () => {
+    vi.useFakeTimers();
+    ctrl.listRows = 4;
+    renderMenu(vi.fn(), { reduceMotion: false });
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS * 2));
+    expect(flash).not.toHaveBeenCalled();
+  });
+
+  it('flashes again when the list comes back from the playlist picker', () => {
+    vi.useFakeTimers();
+    ctrl.listRows = 7;
+    const { getByLabelText } = renderMenu(vi.fn(), { reduceMotion: false });
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS));
+    act(() => fireEvent.click(getByLabelText('Add to Playlist')));
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS));
+    expect(flash).toHaveBeenCalledTimes(1);
+    act(() => captured.pickerOnBack?.());
+    act(() => vi.advanceTimersByTime(SCROLL_HINT_FLASH_DELAY_MS));
+    expect(flash).toHaveBeenCalledTimes(2);
   });
 });
