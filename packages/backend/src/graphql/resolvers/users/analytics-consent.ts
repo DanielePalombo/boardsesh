@@ -16,6 +16,7 @@ import * as dbSchema from '@boardsesh/db/schema';
 import { db } from '../../../db/client';
 import { applyRateLimit, requireAuthenticated, validateInput } from '../shared/helpers';
 import { SetAnalyticsConsentInputSchema } from '../../../validation/schemas';
+import { enqueuePosthogPersonDeletion } from '../../../services/analytics/posthog-person-deletion';
 
 /** The primary pool or a transaction on it: both are a `PgDatabase`. */
 type DrizzleExecutor = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
@@ -125,10 +126,16 @@ function nextDecidedAt(userId: string) {
 }
 
 /**
- * Append one answer, compare-and-set for grants and for any `conditional`
- * (recovered) write. Runs under a per-user transaction-scoped advisory lock so
- * two devices answering at once can't both read the same "latest" and
- * interleave.
+ * Append one answer, compare-and-set for grants and any conditional recovered
+ * write. A per-user advisory lock serializes concurrent device answers.
+ *
+ * A denial that replaces a grant or no answer also queues the erasure of the
+ * account's PostHog person (docs/analytics-consent.md, "Erasure"), in this
+ * transaction, so the job exists exactly when the withdrawal does. No answer
+ * counts: before the consent prompt shipped, both clients identified every
+ * signed-in climber with the account id and their email, so an account whose
+ * first answer is No thanks can still have a person. A repeated denial queues
+ * nothing: the first one already did, and nothing was captured since.
  */
 export async function setAnalyticsConsentForUser(
   userId: string,
@@ -139,15 +146,13 @@ export async function setAnalyticsConsentForUser(
       sql`SELECT pg_advisory_xact_lock(${ANALYTICS_CONSENT_LOCK_NAMESPACE}, hashtext(${userId}))`,
     );
 
+    const latest = await readLatestConsent(transaction, userId);
     if (input.conditional === true || input.analytics === 'granted') {
-      const latest = await readLatestConsent(transaction, userId);
       const stale =
         input.conditional === true
           ? conditionalWriteIsStale(latest, input.basedOnDecidedAt)
           : grantIsStale(latest, input.basedOnDecidedAt);
-      if (latest !== null && stale) {
-        return toAnalyticsConsent(latest);
-      }
+      if (latest !== null && stale) return toAnalyticsConsent(latest);
     }
 
     const [inserted] = await transaction
@@ -160,6 +165,10 @@ export async function setAnalyticsConsentForUser(
         decidedAt: nextDecidedAt(userId),
       })
       .returning(consentColumns);
+    if (input.analytics === 'denied' && latest?.analytics !== 'denied') {
+      // Fail-soft: a missing job is logged, and the withdrawal still commits.
+      await enqueuePosthogPersonDeletion(transaction, { distinctId: userId, reason: 'consent_withdrawn' });
+    }
     return toAnalyticsConsent(inserted);
   });
 }

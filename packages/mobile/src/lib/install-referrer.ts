@@ -80,10 +80,18 @@ export function classifyInstallChannel(parsed: ParsedInstallReferrer): InstallCh
 
 // Fetch-once-ever, cache-the-flag, never-throw. `fetchNative` is injectable so
 // tests can supply a fake result without mocking the native module resolver.
+//
+// Nothing is read before the climber's own Allow. Reading the referrer is
+// reading information from the device for attribution, which needs consent
+// (ePrivacy Art. 5(3)), whether or not the result is published, so the region
+// default does not unlock it either. Waiting costs nothing: Play keeps an
+// install's referrer for 90 days, and InstallReferrerTracker re-runs this when
+// the answer changes to Allow.
 export async function maybeFetchAndAttachInstallReferrer(
   fetchNative: () => Promise<NativeInstallReferrerResult | null> = () =>
     installReferrerNative?.getInstallReferrer() ?? Promise.resolve(null),
 ): Promise<void> {
+  if (!isAttributionPublicationGranted()) return;
   if (fetchInFlight) return;
   fetchInFlight = true;
   try {
@@ -93,6 +101,8 @@ export async function maybeFetchAndAttachInstallReferrer(
       return;
     }
 
+    // Consent can be withdrawn while the preference read is in flight.
+    if (!isAttributionPublicationGranted()) return;
     const result = await fetchNative();
     // Mark fetched regardless of a clean outcome (success or a resolved null,
     // e.g. FEATURE_NOT_SUPPORTED on a sideloaded install) — Play's referrer is

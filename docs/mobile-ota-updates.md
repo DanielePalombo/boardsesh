@@ -1573,6 +1573,13 @@ mounted once near the root beside `AnalyticsScreenTracker`:
 
 - **`OTA Update Status`** — fired once per launch with the running bundle:
   `{ isEnabled, isEmbeddedLaunch, updateId, channel, branch, runtimeVersion, createdAtIso, isEmergencyLaunch }`.
+  It is sent whatever the analytics answer, anonymously
+  (`packages/mobile/src/lib/anonymous-ota-health.ts`): no person profile, no GeoIP, no account,
+  and an explicit property allowlist. Its distinct id is `ota-install:<uuid>`, one random id per
+  install from the app's preference store (`anonymous-install-id.ts`, the same id that buckets
+  signed-out feature flags), so `count(DISTINCT distinct_id)` is installs and a phone
+  crash-looping on a bad bundle counts once. JS older than this sends `ota-launch:<uuid>`, a new id
+  per launch.
   `isEmbeddedLaunch === false` means the install is running an **OTA'd**
   bundle (not the one baked into the binary); group by `updateId` to size the rollout of a specific
   JS-only fix; `runtimeVersion` is the fingerprint cohort that can receive OTAs at all. `channel`
@@ -1722,27 +1729,59 @@ because "nothing published yet" is a diagnosis rather than a fault.
 ### The health check (`scripts/mobile-ota-health-check.ts`)
 
 `vp run mobile:ota-health-check` queries PostHog (HogQL) for `OTA Update Status` events on the
-`production` channel over a window and reports launch count, target-update launch count, and the
-emergency-launch rate:
+`production` channel over a window and reports launches and emergency launches, the same per
+install (distinct `distinct_id`), launches still sent under a per-launch id, and installs running the
+target update:
 
 ```bash
 vp run mobile:ota-health-check                                  # latest production update, last 24h
 vp run mobile:ota-health-check -- --hours 6                     # narrower window
 vp run mobile:ota-health-check -- --update-id <id>             # adoption context for a specific update
 vp run mobile:ota-health-check -- --min-samples 50 --threshold 0.1
+vp run mobile:ota-health-check -- --gate installs               # gate per install (not yet, see below)
 ```
 
-It **exits non-zero only when the emergency-launch rate exceeds `--threshold` (default 10%) AND the
-window has at least `--min-samples` launches (default 30)** — so the low-volume minutes right after a
-publish, or a one-off device failure, never trip it. Every other outcome (healthy, inconclusive,
-missing key, API/network error) exits 0, so it's safe as a non-blocking gate.
+It **exits non-zero only when the gated emergency rate exceeds `--threshold` (default 10%) AND the
+gated denominator reached `--min-samples` (default 30)** — so the low-volume minutes right after a
+publish never trip it. Every other outcome (healthy, inconclusive, missing key, API/network error)
+exits 0, so it's safe as a non-blocking gate.
+
+`--gate` picks the rate:
+
+| `--gate` | Rate | Status |
+| --- | --- | --- |
+| `launches` (default) | emergency launches / launches | Gates today. Every event is one launch whatever id it carries, so this means the same as before the per-install id. |
+| `installs` | installs with an emergency launch / installs that reported | One phone crash-looping counts once. Wrong until the store fleet changes (below). |
+
+Why `installs` waits: an emergency launch runs the **embedded** JS, and every store binary built
+before the per-install id (October 2026) still sends a new `ota-launch:<uuid>` per launch from it.
+Healthy launches on an OTA'd bundle dedupe to one `ota-install:<uuid>` per phone, so with k launches
+per install in the window the install rate reads about k times the launch rate, and a normal 2–3% of
+emergency launches crosses 10%.
+
+**Switching to `--gate installs`.** Keep `--gate launches` until binary adoption says the fleet's
+emergency fallback sends the install id. The evidence is the store consoles, not the health check:
+
+1. Note the first store release cut after the per-install id landed (October 2026) here: version
+   `(not yet released)`. Its embedded JS is the first whose emergency launch sends `ota-install:`.
+2. Switch when App Store Connect and the Play Console both show at least 95% of active installs on
+   that version or later.
+
+The summary line `legacy launches (per-launch id, pre-change JS; healthy and emergency)` is context
+only. It counts every launch still on `ota-launch:`, but an old binary that already runs the new OTA
+sends `ota-install:` on every healthy launch, so the line can read 0 for weeks while such binaries
+remain, and their next emergency launch still falls back to the per-launch id and inflates the install
+rate. A count reaching zero is not adoption.
+
+Then add `--gate installs` to the health-check steps in `.github/workflows/production-deploy.yml`
+and `.github/workflows/mobile-ota-production.yml`, and record the date here. Switched: not yet.
 
 Two notes on what it measures:
 
 - An emergency launch runs the **embedded** bundle, so its `updateId` is the embedded one — you
   can't attribute the failure to the bad update's id. The gate therefore measures the **fleet-wide**
   production emergency rate over the window, not a per-`updateId` rate. The target update's adoption
-  (launches successfully running it) is reported separately, for context only.
+  (installs successfully running it) is reported separately, for context only.
 - The fleet relaunches over **hours**, so the value is a re-run later (manually, or wire it to a
   schedule), not the seconds after a publish.
 

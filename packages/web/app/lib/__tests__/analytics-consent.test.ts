@@ -233,6 +233,71 @@ describe('web analytics consent lifecycle', () => {
     expect(isBackendPosthogProxy('not a url', backend)).toBe(false);
     expect(isBackendPosthogProxy('https://ws.boardsesh.com/api/posthog', null)).toBe(false);
   });
+  it('buckets signed-out flags on one browser id before and after Allow', async () => {
+    const analytics = await import('../analytics');
+    analytics.readPosthogFeatureFlags([]);
+    const flagsBody = (distinctId: string) =>
+      JSON.stringify({ distinct_id: distinctId, $anon_distinct_id: distinctId, $device_id: 'sdk-device' });
+    const lastSentBody = () => {
+      const calls = harness.network.mock.calls as unknown as Array<[string, { body: string }]>;
+      return JSON.parse(calls.at(-1)?.[1].body ?? '{}') as Record<string, unknown>;
+    };
+
+    await harness.clients[0].fetch('https://posthog.test/flags/?v=2', {
+      method: 'POST',
+      headers: {},
+      body: flagsBody('memory-anonymous'),
+    });
+    const beforeAllow = lastSentBody();
+    expect(beforeAllow.distinct_id).toMatch(/^flags-browser:[0-9a-f-]{36}$/);
+    expect(beforeAllow).not.toHaveProperty('$anon_distinct_id');
+    expect(beforeAllow).not.toHaveProperty('$device_id');
+
+    harness.granted = true;
+    harness.change();
+    const persisted = harness.clients.at(-1)!;
+    expect(persisted).not.toBe(harness.clients[0]);
+    await persisted.fetch('https://posthog.test/flags/?v=2', {
+      method: 'POST',
+      headers: {},
+      body: flagsBody('persisted-anonymous'),
+    });
+    const afterAllow = lastSentBody();
+    expect(afterAllow.distinct_id).toBe(beforeAllow.distinct_id);
+    // With consent too: the SDK's anonymous id merges into the account at
+    // sign-in, so it never rides beside the browser's flags id.
+    expect(afterAllow).not.toHaveProperty('$anon_distinct_id');
+    expect(afterAllow).not.toHaveProperty('$device_id');
+  });
+  it('fails a signed-out flag request closed when the browser has no crypto', async () => {
+    vi.stubGlobal('crypto', undefined);
+    try {
+      const analytics = await import('../analytics');
+      analytics.readPosthogFeatureFlags([]);
+      await expect(
+        harness.clients[0].fetch('https://posthog.test/flags/?v=2', {
+          method: 'POST',
+          headers: {},
+          body: JSON.stringify({ distinct_id: 'memory-anonymous' }),
+        }),
+      ).rejects.toThrow('No secure random source');
+      expect(harness.network).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it('leaves signed-in flags on the account id', async () => {
+    const analytics = await import('../analytics');
+    analytics.setAnalyticsFlagAccountId('account-a');
+    analytics.readPosthogFeatureFlags([]);
+    await harness.clients.at(-1)!.fetch('https://posthog.test/flags/?v=2', {
+      method: 'POST',
+      headers: {},
+      body: JSON.stringify({ distinct_id: 'account-a' }),
+    });
+    const calls = harness.network.mock.calls as unknown as Array<[string, { body: string }]>;
+    expect(JSON.parse(calls.at(-1)?.[1].body ?? '{}').distinct_id).toBe('account-a');
+  });
   it('keeps the grant after identity reset on sign-out', async () => {
     harness.granted = true;
     const analytics = await import('../analytics');

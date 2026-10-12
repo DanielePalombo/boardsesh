@@ -4325,7 +4325,7 @@ export type Mutation = {
    * behind, because other people's ticks point at them.
    */
   purgeDeletedSprayWallPhotos: SprayWallPhotoPurgeResult;
-  /** HTTP cron credentials only. Deletes user_activity_days rows older than 13 months. */
+  /** HTTP cron credentials only. Deletes user_activity_days rows older than 60 days. */
   purgeExpiredUserActivity: UserActivityPurgeResult;
   /**
    * Move a gym's ownership to another account (global admin only) — a sold gym,
@@ -4616,7 +4616,10 @@ export type Mutation = {
   setSprayWallRenderSettings: SprayWall;
   /** Setter override: directly set community status for your own climb. */
   setterOverrideCommunityStatus: ClimbCommunityStatus;
-  /** HTTP cron credentials only. Counts yesterday's DAU and the trailing WAU and MAU, and sends one aggregate PostHog event. */
+  /**
+   * HTTP cron credentials only. Counts one UTC day's DAU and the trailing WAU and MAU, and sends one aggregate PostHog event.
+   * day (YYYY-MM-DD) re-runs a missed day, from yesterday back to 30 days ago; without it, yesterday.
+   */
   snapshotActiveUsers: ActiveUsersSnapshotResult;
   /**
    * Submit in-app rating + optional comment. Public — unauthenticated testers
@@ -5420,6 +5423,11 @@ export type MutationSetSprayWallRenderSettingsArgs = {
 /** Root mutation type for all write operations. */
 export type MutationSetterOverrideCommunityStatusArgs = {
   input: SetterOverrideInput;
+};
+
+/** Root mutation type for all write operations. */
+export type MutationSnapshotActiveUsersArgs = {
+  day?: InputMaybe<Scalars['String']['input']>;
 };
 
 /** Root mutation type for all write operations. */

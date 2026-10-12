@@ -13,6 +13,8 @@ import { applySessionReplayConsent } from '../session-replay-consent';
 import { BACKEND_URL } from '../env';
 import { deferConsentDestination, consumeConsentDestination } from '../consent-navigation';
 import { grantedConsent, grantAnalyticsForTest } from '../../../test/consent-fixture';
+import { resetAnonymousInstallIdForTests } from '../anonymous-install-id';
+import { removePreference } from '../preference-store';
 vi.mock('../replay-privacy', () => ({
   isNativeReplayPrivacyReady: () => true,
   applyNativeReplayPrivacy: async () => {},
@@ -119,7 +121,7 @@ describe('mobile consent privacy boundaries', () => {
       headers: {},
       body: JSON.stringify({ distinct_id: 'account-b' }),
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls.at(-1)?.[1]?.body)).distinct_id).toMatch(/^flags-launch:/);
+    expect(JSON.parse(String(fetchSpy.mock.calls.at(-1)?.[1]?.body)).distinct_id).toMatch(/^flags-install:/);
   });
   it('preserves the real fetch Response contract when guarding flags JSON', async () => {
     vi.spyOn(PostHog.prototype, 'fetch').mockImplementation(
@@ -215,15 +217,66 @@ describe('mobile consent privacy boundaries', () => {
     });
     expect(sanitizeRememberedPosthogFile('broken')).toBeNull();
   });
-  it('consented signed-out flags retain the SDK anonymous bucketing identity', async () => {
+  it('signed-out flags bucket on the install id, unchanged by Allow', async () => {
     const fetchSpy = vi.spyOn(PostHog.prototype, 'fetch');
+    const client = new ConsentPostHog('phc_test');
+    const flagsDistinctId = async (sdkDistinctId: string) => {
+      await client.fetch('https://backend/api/posthog/flags/', {
+        method: 'POST',
+        headers: {},
+        body: JSON.stringify({
+          distinct_id: sdkDistinctId,
+          $anon_distinct_id: sdkDistinctId,
+          $device_id: 'sdk-device',
+        }),
+      });
+      const sent = JSON.parse(fetchSpy.mock.calls.at(-1)?.[1]?.body as string) as Record<string, unknown>;
+      // Consented or not, the SDK's anonymous and device ids never ride beside
+      // the install's flags id: the anonymous id merges into the account.
+      expect(sent).not.toHaveProperty('$anon_distinct_id');
+      expect(sent).not.toHaveProperty('$device_id');
+      return sent.distinct_id;
+    };
+    // Consented: the SDK's own anonymous id never decides the bucket.
+    const consented = await flagsDistinctId('consented-anonymous');
+    expect(consented).toMatch(/^flags-install:[0-9a-f-]{36}$/);
+    // Without consent, the same install keeps the same bucket.
+    updateConsentState({ sdkReady: false });
+    expect(isProductAnalyticsGranted()).toBe(false);
+    expect(await flagsDistinctId('memory-anonymous')).toBe(consented);
+  });
+  it('fails closed for signed-out flags when no secure random source exists', async () => {
+    const fetchSpy = vi.spyOn(PostHog.prototype, 'fetch');
+    resetAnonymousInstallIdForTests();
+    await removePreference('anonymousInstallId');
+    // No Web Crypto, and expo-crypto's native module is absent under node.
+    vi.stubGlobal('crypto', undefined);
+    try {
+      const client = new ConsentPostHog('phc_test');
+      await expect(
+        client.fetch('https://backend/api/posthog/flags/', {
+          method: 'POST',
+          headers: {},
+          body: JSON.stringify({ distinct_id: 'sdk-anonymous' }),
+        }),
+      ).rejects.toThrow('No secure random source');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      resetAnonymousInstallIdForTests();
+    }
+  });
+  it('consented signed-in flags keep the identified account id', async () => {
+    const fetchSpy = vi.spyOn(PostHog.prototype, 'fetch');
+    updateConsentState({ accountId: 'account-c', authSettled: true });
+    setPosthogFlagIdentity('account-c');
     const client = new ConsentPostHog('phc_test');
     await client.fetch('https://backend/api/posthog/flags/', {
       method: 'POST',
       headers: {},
-      body: JSON.stringify({ distinct_id: 'consented-anonymous' }),
+      body: JSON.stringify({ distinct_id: 'account-c' }),
     });
-    expect(JSON.parse(String(fetchSpy.mock.calls.at(-1)?.[1]?.body)).distinct_id).toBe('consented-anonymous');
+    expect(JSON.parse(fetchSpy.mock.calls.at(-1)?.[1]?.body as string).distinct_id).toBe('account-c');
   });
   it('a delayed disk write finishes before withdrawal deletes every legacy SDK file', async () => {
     const files = new Map<string, string>();

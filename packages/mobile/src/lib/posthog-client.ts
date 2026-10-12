@@ -18,6 +18,7 @@ import {
   isAnalyticsGranted,
 } from '@boardsesh/consent';
 import { notifyAnalyticsIdentityChanged } from './analytics-identity-events';
+import { getFlagsInstallDistinctId } from './anonymous-install-id';
 import { applySessionReplayConsent } from './session-replay-consent';
 import { applyNativeReplayPrivacy } from './replay-privacy';
 import { isDevBuild } from './is-dev-build';
@@ -94,7 +95,6 @@ const apiKey = process.env.EXPO_PUBLIC_POSTHOG_KEY;
 const host = `${BACKEND_URL}/api/posthog`;
 const captureRequests = new Set<AbortController>();
 let initializingIdentity = false;
-const flagLaunchId = `flags-launch:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
 subscribeConsent(() => {
   if (isProductAnalyticsGranted()) return;
@@ -132,19 +132,31 @@ export class ConsentPostHog extends PostHog {
         if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
           const granted = isProductAnalyticsGranted();
           const flagsIdentity = authority.accountId;
+          // Signed out, flags bucket on one id per install whatever the
+          // consent answer, so a percentage rollout neither re-rolls every
+          // launch nor flips on Allow (anonymous-install-id.ts). Signed in,
+          // the account id: consented, the SDK has identified with it.
+          const distinctId = flagsIdentity
+            ? granted && 'distinct_id' in payload
+              ? payload.distinct_id
+              : flagsIdentity
+            : await getFlagsInstallDistinctId();
+          // No secure id: fail closed. Flags keep their cached or shipped
+          // defaults rather than bucketing on something guessable.
+          if (distinctId === null) throw new Error('No secure random source for the flags id');
           options = {
             ...options,
             body: JSON.stringify({
               ...payload,
-              distinct_id: granted
-                ? 'distinct_id' in payload
-                  ? payload.distinct_id
-                  : (flagsIdentity ?? flagLaunchId)
-                : (flagsIdentity ?? flagLaunchId),
+              distinct_id: distinctId,
+              // Signed out, the SDK's anonymous and device ids never ride
+              // beside the install's flags id, consented or not: the anonymous
+              // id merges into the account at sign-in, so sending both would
+              // tie the flags id to the account one step removed. Bucketing
+              // uses distinct_id only.
+              ...(!granted || !flagsIdentity ? { $device_id: undefined, $anon_distinct_id: undefined } : {}),
               ...(!granted
                 ? {
-                    $device_id: undefined,
-                    $anon_distinct_id: undefined,
                     person_properties:
                       'person_properties' in payload ? functionalFlagProperties(payload.person_properties) : {},
                     group_properties: {},

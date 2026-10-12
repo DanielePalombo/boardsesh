@@ -19,11 +19,16 @@ vi.mock('../services/analytics/posthog', () => ({
 }));
 
 import { db } from '../db/client';
-import { purgeExpiredUserActivity, retentionCutoffDay, snapshotActiveUsers } from '../services/active-users-snapshot';
+import {
+  purgeExpiredUserActivity,
+  resolveSnapshotDay,
+  retentionCutoffDay,
+  snapshotActiveUsers,
+} from '../services/active-users-snapshot';
 import { activeUsersMutations } from '../graphql/resolvers/users/active-users';
 
 /**
- * The daily first-party active-user snapshot and the 13-month retention sweep
+ * The daily first-party active-user snapshot and the 60-day retention sweep
  * (#2644), against the worker database.
  */
 
@@ -132,6 +137,24 @@ describe('snapshotActiveUsers', () => {
     expect(uuids[2]).not.toBe(uuids[0]);
   });
 
+  it('re-runs a missed day from a later morning, dated and keyed to that day', async () => {
+    const userId = await createUser();
+    await seedActivity([
+      { userId, day: '2026-09-10', platform: 'ios' },
+      { userId, day: '2026-09-20', platform: 'ios' },
+    ]);
+
+    const rerun = await snapshotActiveUsers({ now: RUN_AT, day: '2026-09-20' });
+    const onTime = await snapshotActiveUsers({ now: new Date('2026-09-21T00:20:00.000Z') });
+
+    expect(rerun).toMatchObject({ day: '2026-09-20', dailyActiveUsers: 1, monthlyActiveUsers: 1 });
+    const [[, rerunOptions], [, onTimeOptions]] = captureBackendEventMock.mock.calls;
+    expect(rerunOptions.timestamp).toEqual(new Date('2026-09-20T12:00:00.000Z'));
+    // The same day's event either way, so a late re-run of a day that did send collapses into it.
+    expect(rerunOptions.uuid).toBe(onTimeOptions.uuid);
+    expect(onTime.day).toBe('2026-09-20');
+  });
+
   it('reports zeros, not an error, on an empty table', async () => {
     const result = await snapshotActiveUsers({ now: RUN_AT });
 
@@ -140,31 +163,61 @@ describe('snapshotActiveUsers', () => {
   });
 });
 
+describe('resolveSnapshotDay', () => {
+  it('is yesterday without a day', () => {
+    expect(resolveSnapshotDay(RUN_AT, undefined)).toBe(SNAPSHOT_DAY);
+    expect(resolveSnapshotDay(RUN_AT, null)).toBe(SNAPSHOT_DAY);
+  });
+
+  it('takes any day from yesterday back to 30 days ago, whose 30-day window retention still holds', () => {
+    expect(resolveSnapshotDay(RUN_AT, '2026-10-08')).toBe('2026-10-08');
+    expect(resolveSnapshotDay(RUN_AT, '2026-09-09')).toBe('2026-09-09');
+    // Its MAU window starts 29 days earlier, on the oldest day the purge keeps.
+    expect(retentionCutoffDay(RUN_AT) <= '2026-08-11').toBe(true);
+  });
+
+  it.each([
+    ['today', '2026-10-09'],
+    ['the future', '2026-12-01'],
+    ['31 days back', '2026-09-08'],
+    ['not a date', 'yesterday'],
+    ['a day that does not exist', '2026-02-30'],
+    ['a month that does not exist', '2026-13-01'],
+  ])('refuses %s', (_label, day) => {
+    expect(() => resolveSnapshotDay(RUN_AT, day)).toThrow(/day must be/);
+  });
+});
+
 describe('retentionCutoffDay', () => {
   it.each([
-    ['2026-10-08T05:00:00.000Z', '2025-09-08'],
-    ['2026-01-15T05:00:00.000Z', '2024-12-15'],
-    // March 31 minus 13 months has no Feb 31: clamp to the last day.
-    ['2027-03-31T05:00:00.000Z', '2026-02-28'],
-  ])('keeps 13 months back from %s', (now, expectedCutoff) => {
+    ['2026-10-08T05:00:00.000Z', '2026-08-09'],
+    // Across a year boundary.
+    ['2026-01-15T05:00:00.000Z', '2025-11-16'],
+    // Across a short February.
+    ['2027-03-31T05:00:00.000Z', '2027-01-30'],
+    // Late in the UTC day still counts that day.
+    ['2026-10-08T23:59:59.000Z', '2026-08-09'],
+  ])('keeps 60 days back from %s', (now, expectedCutoff) => {
     expect(retentionCutoffDay(new Date(now))).toBe(expectedCutoff);
   });
 });
 
 describe('purgeExpiredUserActivity', () => {
-  it('deletes rows older than 13 months and keeps the cutoff day itself', async () => {
+  it('deletes rows older than 60 days and keeps the cutoff day itself', async () => {
     const userId = await createUser();
     await seedActivity([
-      { userId, day: '2025-09-07', platform: 'web' },
-      { userId, day: '2025-09-08', platform: 'web' },
+      { userId, day: '2026-08-08', platform: 'web' },
+      { userId, day: '2026-08-09', platform: 'web' },
+      // The oldest day the trailing 30-day MAU reads on 2026-10-08.
+      { userId, day: '2026-09-08', platform: 'android' },
       { userId, day: '2026-10-07', platform: 'ios' },
     ]);
 
     const result = await purgeExpiredUserActivity({ now: new Date('2026-10-08T07:00:00.000Z') });
 
-    expect(result).toMatchObject({ rowsDeleted: 1, cutoffDay: '2025-09-08' });
+    expect(result).toMatchObject({ rowsDeleted: 1, cutoffDay: '2026-08-09' });
     const remainingDays = (await db.select().from(dbSchema.userActivityDays)).map((row) => row.day).sort();
-    expect(remainingDays).toEqual(['2025-09-08', '2026-10-07']);
+    expect(remainingDays).toEqual(['2026-08-09', '2026-09-08', '2026-10-07']);
   });
 
   it('is idempotent: a second run deletes nothing', async () => {
@@ -196,6 +249,16 @@ describe('cron-only mutations', () => {
     await expect(activeUsersMutations.purgeExpiredUserActivity(null, {}, ctx)).rejects.toThrow(
       'Cron authentication required',
     );
+    expect(captureBackendEventMock).not.toHaveBeenCalled();
+  });
+
+  it('turns an invalid day into a bad-input error', async () => {
+    await expect(
+      activeUsersMutations.snapshotActiveUsers(null, { day: '2020-01-01' }, cronCtx()),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/day must be between/),
+      extensions: { code: 'BAD_USER_INPUT' },
+    });
     expect(captureBackendEventMock).not.toHaveBeenCalled();
   });
 

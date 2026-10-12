@@ -120,9 +120,11 @@ lives in the backend.
   `Active Users Snapshot` event. Overlap-safe: the counts are reads, and the
   event's uuid is derived from the day, so a second send collapses into the
   first. A response with `captured: false` (no PostHog key, or a non-production
-  backend) is logged as a warning, not a failed run.
+  backend) is logged as a warning, not a failed run. A day the job missed is
+  re-run by posting the mutation with `day: "YYYY-MM-DD"` (up to 30 days back;
+  [analytics-consent.md](./analytics-consent.md#first-party-active-users)).
 - `purge-user-activity` (07:30 UTC, after the 07:00 spray-wall purge) deletes
-  rows older than 13 months. Overlap-safe: a second run deletes nothing.
+  rows older than 60 days. Overlap-safe: a second run deletes nothing.
 
 Same failure handling as the other backend jobs: a non-2xx or GraphQL errors
 inside an HTTP 200 fail the run, and only 502/503 is retried once after two

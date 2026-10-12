@@ -78,6 +78,40 @@ const PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE_OPTIONS = {
 } as const;
 
 /**
+ * The backend's PostHog person erasure (docs/analytics-consent.md, "Erasure").
+ * Two jobs per deleted account or per withdrawal (15 minutes and 7 days after
+ * it), enqueued in the transaction that records it. Lives here because the
+ * migrator creates the queue.
+ */
+export const POSTHOG_PERSON_DELETION_QUEUE = 'posthog-person-deletion';
+
+/**
+ * Twelve tries with doubling, jittered delays capped at six hours cover a
+ * PostHog outage of about a day: pg-boss waits `retryDelay * 2^n * (1 + rand) / 2`
+ * before retry n, so 60 to 120 s, then 2 to 4 min, ... then 6 h. All twelve
+ * take 26.5 to 32.5 hours.
+ *
+ * A job (the account id, a reason, a pass and the anonymous ids discovered for
+ * it, nothing else) waits up to 14 days past its start time while queued or
+ * between retries (`retentionSeconds`, stated here). Each pass is two jobs: a
+ * discovery and the delete step it queues. The backend registers no worker until it holds the erasure
+ * key, so 14 days is how long a missing key can go unnoticed before jobs are
+ * lost. A job is kept 7 days after it completes or fails (`deleteAfterSeconds`)
+ * so an operator can retry a failed erasure by hand.
+ *
+ * Pinned by posthog-person-deletion-enqueue.test.ts.
+ */
+export const POSTHOG_PERSON_DELETION_QUEUE_OPTIONS = {
+  retryLimit: 12,
+  retryDelay: 60,
+  retryBackoff: true,
+  retryDelayMax: 6 * 60 * 60,
+  expireInSeconds: 120,
+  retentionSeconds: 14 * 24 * 60 * 60,
+  deleteAfterSeconds: 7 * 24 * 60 * 60,
+} as const;
+
+/**
  * Completed jobs of the once-a-minute crons (the two reconcilers and pg-boss's
  * own `__pgboss__send-it` dispatcher) are kept 1 day, not pg-boss's 7-day
  * default. The queue-stats monitor seq-scans this table on every pass.
@@ -715,6 +749,11 @@ export async function initializeJobQueueSchema(
     const { policy: _playlistGradePolicy, ...mutablePlaylistGradeOptions } =
       PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE_OPTIONS;
     await boss.updateQueue(PLAYLIST_GRADE_SUMMARY_REFRESH_QUEUE, mutablePlaylistGradeOptions);
+    await boss.createQueue(POSTHOG_PERSON_DELETION_QUEUE, {
+      partition: false,
+      ...POSTHOG_PERSON_DELETION_QUEUE_OPTIONS,
+    });
+    await boss.updateQueue(POSTHOG_PERSON_DELETION_QUEUE, POSTHOG_PERSON_DELETION_QUEUE_OPTIONS);
     // Family queues are stately. A queue created under an earlier policy keeps
     // it (pg-boss cannot change a policy), which is why these are new names
     // rather than the retired `background-probe-<role>` queues.
