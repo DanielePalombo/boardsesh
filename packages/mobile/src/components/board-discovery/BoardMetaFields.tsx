@@ -22,6 +22,7 @@ import { PressableSurface } from '../PressableSurface';
 import { useCallback, useEffect, useMemo, type ComponentProps } from 'react';
 import { StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { OwnPublicGymWarning } from './OwnPublicGymWarning';
 import { useTheme } from '../../providers/theme-provider';
 import { useDeviceLocation, type LocationStatus } from '../../lib/use-device-location';
 import { canOpenAppSettings, openAppSettings } from '../../lib/open-app-settings';
@@ -63,6 +64,8 @@ export type BoardVisibilityBuilder = {
   setLocationName: (next: string) => void;
   coords: { latitude: number; longitude: number } | null;
   setCoords: (next: { latitude: number; longitude: number } | null) => void;
+  /** The board's gym, for the location hint and the own-public-gym warning. */
+  selectedGym?: { uuid: string } | null;
 };
 
 /** Uppercase caption above a field group. Exported so both forms label alike. */
@@ -289,11 +292,15 @@ export function BoardVisibilityFields({
           />
         </>
       )}
+      {/* The switch always governs the board's own place. A viewer it is hidden
+          from still sees a public gym's listed location, which the hint says. */}
       <SwitchRow
         label={t('mobile.create.hideLocation')}
+        description={builder.selectedGym ? t('mobile.create.gymLocationHint') : undefined}
         value={builder.hideLocation}
         onValueChange={builder.setHideLocation}
       />
+      <OwnPublicGymWarning gymUuid={builder.selectedGym?.uuid} />
 
       <SectionLabel>{t('mobile.create.location')}</SectionLabel>
       <BuilderTextInput

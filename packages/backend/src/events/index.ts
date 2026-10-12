@@ -18,6 +18,7 @@ import {
 import { isHideProposalEvent } from './notification-worker';
 import { resolveClimbNoMatch } from '../graphql/resolvers/shared/helpers';
 import { logger } from '../utils/logger';
+import { writeFollowRequestNotification } from './follow-request-notifications';
 import { climbStatsJoinConditions, resolvedClimbAngleSql } from '../db/queries/util/climb-stats-join';
 
 /** The values `notifications.entity_type` actually accepts, for the guard below. */
@@ -51,9 +52,44 @@ async function createInlineNotification(event: SocialEvent): Promise<void> {
 
     switch (event.type) {
       case 'follow.created': {
+        // The owner approved this follow themselves; they need no notification of it.
+        if (event.metadata.fromFollowRequestApproval === 'true') return;
         recipientId = event.metadata.followedUserId;
         notificationType = 'new_follower';
         break;
+      }
+      case 'follow.requested': {
+        // Same locked, deduplicated write as the worker, so local-only mode
+        // behaves like production.
+        const followRequestRecipient = event.metadata.recipientUserId;
+        if (!followRequestRecipient) return;
+        const uuid = await writeFollowRequestNotification(event.actorId, followRequestRecipient);
+        if (!uuid) return;
+        const [requester] = await db
+          .select({
+            name: dbSchema.users.name,
+            image: dbSchema.users.image,
+            displayName: dbSchema.userProfiles.displayName,
+            avatarUrl: dbSchema.userProfiles.avatarUrl,
+          })
+          .from(dbSchema.users)
+          .leftJoin(dbSchema.userProfiles, eq(dbSchema.users.id, dbSchema.userProfiles.userId))
+          .where(eq(dbSchema.users.id, event.actorId))
+          .limit(1);
+        pubsub.publishNotificationEvent(followRequestRecipient, {
+          notification: {
+            uuid,
+            type: 'follow_request',
+            actorId: event.actorId,
+            actorDisplayName: requester?.displayName || requester?.name || undefined,
+            actorAvatarUrl: requester?.avatarUrl || requester?.image || undefined,
+            entityType: null,
+            entityId: event.actorId,
+            isRead: false,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        return;
       }
       case 'comment.created': {
         if (event.entityType === 'tick') {

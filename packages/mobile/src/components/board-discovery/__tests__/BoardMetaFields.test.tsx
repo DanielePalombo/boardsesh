@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+// The warning reads the gym over GraphQL; its own suite covers it.
+vi.mock('../OwnPublicGymWarning', () => ({ OwnPublicGymWarning: () => null }));
 vi.mock('../../AccessibleTextInput', async () => {
   const { TextInput } = await import('react-native');
   return { AccessibleTextInput: TextInput };

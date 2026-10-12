@@ -240,6 +240,7 @@ beforeEach(() => {
   background.save.mockResolvedValue({ outcome: 'saved' });
   buildUpdateInputMock.mockReturnValue({ boardUuid: 'board-uuid', name: 'Klimmuur MoonBoard' });
   updateSprayWallMock.mockResolvedValue({ uuid: 'board-uuid', layoutId: 4242 });
+  linkBoardToGymMock.mockResolvedValue(true);
   updateBoardMock.mockResolvedValue({ uuid: 'board-uuid', name: 'Klimmuur MoonBoard' } as unknown as UserBoard);
 });
 
@@ -432,6 +433,44 @@ describe('EditBoard', () => {
     await waitFor(() => expect(setActiveBoardMock).toHaveBeenCalledTimes(1));
     expect(setActiveBoardMock).toHaveBeenCalledWith(expect.objectContaining({ gymUuid: null, gymName: null }));
     expect(backMock).not.toHaveBeenCalled();
+  });
+
+  // A gym the climber doesn't run is checked against the board's stored
+  // coordinates, which `updateBoard` writes from the picker, so the gym change
+  // runs after it. A board with no stored place could not join one otherwise.
+  const recordCallOrder = () => {
+    const calls: string[] = [];
+    linkBoardToGymMock.mockImplementation(async ({ gymUuid }: { gymUuid: string | null }) => {
+      calls.push(`link:${gymUuid ?? 'none'}`);
+      return true;
+    });
+    updateBoardMock.mockImplementation(async () => {
+      calls.push('update');
+      return { uuid: 'board-uuid', name: 'Klimmuur MoonBoard' } as unknown as UserBoard;
+    });
+    return calls;
+  };
+
+  it('joins a gym after updateBoard', async () => {
+    state.selectedGym = { uuid: 'gym-uuid', name: 'Klimmuur Centrum' };
+    const calls = recordCallOrder();
+
+    render(createElement(EditBoard));
+    fireEvent.click(screen.getByText('submit'));
+
+    await waitFor(() => expect(backMock).toHaveBeenCalled());
+    expect(calls).toEqual(['update', 'link:gym-uuid']);
+  });
+
+  it('leaves a cleared gym after updateBoard', async () => {
+    state.boardGymUuid = 'gym-uuid';
+    const calls = recordCallOrder();
+
+    render(createElement(EditBoard));
+    fireEvent.click(screen.getByText('submit'));
+
+    await waitFor(() => expect(backMock).toHaveBeenCalled());
+    expect(calls).toEqual(['update', 'link:none']);
   });
 
   it('leaves the stored copy alone when the edited board is not the active one', async () => {

@@ -2,6 +2,7 @@ import { useHeaderHeight } from 'expo-router/react-navigation';
 import { PressableSurface } from '../PressableSurface';
 import { AudiencePicker, BOARD_AUDIENCES } from '../privacy/AudiencePicker';
 import { ResourcePrivacyControl } from '../privacy/ResourcePrivacyControl';
+import { OwnPublicGymWarning } from './OwnPublicGymWarning';
 import { usePrivacySettings } from '../../lib/graphql/hooks/use-privacy';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -388,7 +389,7 @@ export function BoardForm({
         ) : null}
 
         {privacySettings?.enabled && currentBoardUuid ? (
-          <ResourcePrivacyControl kind="board" resourceId={currentBoardUuid} />
+          <ResourcePrivacyControl kind="board" resourceId={currentBoardUuid} gymUuid={builder.selectedGym?.uuid} />
         ) : null}
 
         {privacySettings?.enabled && !currentBoardUuid ? (
@@ -396,7 +397,7 @@ export function BoardForm({
             <AudiencePicker
               resource
               confirmPublic={privacySettings.isPrivate}
-              audience={builder.privacyAudience ?? 'invite_only'}
+              audience={builder.privacyAudience ?? 'public'}
               options={BOARD_AUDIENCES}
               disabled={submitting}
               label={tSettings('privacy.boardAudience')}
@@ -416,6 +417,7 @@ export function BoardForm({
                 builder.setHideLocation(!visible);
               }}
             />
+            <OwnPublicGymWarning gymUuid={builder.selectedGym?.uuid} />
           </View>
         ) : null}
 

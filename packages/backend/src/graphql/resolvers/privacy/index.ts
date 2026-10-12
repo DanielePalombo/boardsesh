@@ -5,7 +5,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import { GraphQLError } from 'graphql';
 import { z } from 'zod';
 import type { ConnectionContext } from '@boardsesh/shared-schema';
-import type { PrivacyContentType, PrivacyResourceKind } from '@boardsesh/privacy';
+import { normalizeLocationAudience, type PrivacyContentType, type PrivacyResourceKind } from '@boardsesh/privacy';
 import * as schema from '@boardsesh/db/schema';
 import { db } from '../../../db/client';
 import { requireAuthenticated, applyRateLimit, validateInput } from '../shared/helpers';
@@ -20,10 +20,13 @@ import {
 } from '../../../services/privacy';
 import { publishSocialEvent } from '../../../events';
 import { isShareLinkAudience, revokeBoardShareLinks } from '../../../services/board-share-links';
+import { deleteFollowRequestNotifications, lockFollowRequestPair } from '../../../events/follow-request-notifications';
 import { logger } from '../../../utils/logger';
 
 const resourceAudience = z.enum(['public', 'unlisted', 'followers', 'invite_only', 'only_me']);
-const locationAudience = z.enum(['public', 'followers', 'members', 'only_me']);
+// `followers` stays accepted for older clients but is stored as `members`: on a
+// public account follows auto-approve, so it would not restrict anything.
+const locationAudience = z.enum(['public', 'followers', 'members', 'only_me']).transform(normalizeLocationAudience);
 const contentAudience = z.enum(['public', 'followers', 'only_me']);
 const contentType = z.enum(['tick', 'session', 'comment', 'climb', 'playlist', 'beta']);
 const identifier = z.string().min(1).max(2048);
@@ -76,14 +79,31 @@ async function privacyActor(ctx: ConnectionContext): Promise<string> {
   await applyRateLimit(ctx, 30, 'privacyMutation');
   return userId;
 }
-async function publishFollow(followerId: string, followingId: string): Promise<void> {
+/**
+ * Answering a pending follow request only carries out a choice the owner made
+ * when they went private, so it works with the controls switched off too. A
+ * rollback that turns the controls off keeps old clients' followUser creating
+ * requests, and the owner must still be able to answer them from the inbox.
+ */
+async function followRequestAnswerActor(ctx: ConnectionContext): Promise<string> {
+  const userId = actor(ctx);
+  await applyRateLimit(ctx, 30, 'privacyMutation');
+  return userId;
+}
+async function publishFollow(
+  followerId: string,
+  followingId: string,
+  { fromApproval = false }: { fromApproval?: boolean } = {},
+): Promise<void> {
   await publishSocialEvent({
     type: 'follow.created',
     actorId: followerId,
     entityType: 'user',
     entityId: followingId,
     timestamp: Date.now(),
-    metadata: { followedUserId: followingId },
+    // An approval is the account owner's own tap: telling them "X started
+    // following you" right after it would only echo what they just did.
+    metadata: { followedUserId: followingId, ...(fromApproval ? { fromFollowRequestApproval: 'true' } : {}) },
   }).catch((error: unknown) => logger.error('[Privacy] follow event failed', { error }));
 }
 export async function getPrivacyRelationship(viewerId: string | null | undefined, userId: string) {
@@ -108,12 +128,34 @@ export async function getPrivacyRelationship(viewerId: string | null | undefined
   ]);
   return { userId, isPrivate: settings.isPrivate, isFollowing, requestPending: requests.length > 0 && !isFollowing };
 }
+async function publishFollowRequest(requesterId: string, recipientId: string): Promise<void> {
+  // entityId is the requester, so each request is its own inbox row with its
+  // own Approve and Decline, rather than one group for every requester.
+  await publishSocialEvent({
+    type: 'follow.requested',
+    actorId: requesterId,
+    entityType: 'user',
+    entityId: requesterId,
+    timestamp: Date.now(),
+    metadata: { recipientUserId: recipientId },
+  }).catch((error: unknown) => logger.error('[Privacy] follow request event failed', { error }));
+}
+/**
+ * What a follow attempt did. `following`: the follow exists (made now or
+ * earlier). `requested`: the account is private, so only a request exists and
+ * the requester must not be shown as following.
+ */
+export type PrivacyFollowOutcome = 'following' | 'requested';
 /** Used by legacy followUser too: an old client cannot skip private approval. */
-export async function requestPrivacyFollow(followerId: string, followingId: string): Promise<void> {
+export async function requestPrivacyFollow(followerId: string, followingId: string): Promise<PrivacyFollowOutcome> {
   if (followerId === followingId)
     throw new GraphQLError('Cannot follow yourself', { extensions: { code: 'BAD_USER_INPUT' } });
   let createdFollow = false;
+  let createdRequest = false;
+  let outcome: PrivacyFollowOutcome = 'following';
   await db.transaction(async (transaction) => {
+    // Pair lock before the users row lock: see lockFollowRequestPair.
+    await lockFollowRequestPair(transaction, followerId, followingId);
     const [subject] = await transaction
       .select({ id: schema.users.id })
       .from(schema.users)
@@ -132,10 +174,13 @@ export async function requestPrivacyFollow(followerId: string, followingId: stri
       .limit(1);
     if (existing) return;
     if (profile?.isPrivate) {
-      await transaction
+      outcome = 'requested';
+      const inserted = await transaction
         .insert(schema.userFollowRequests)
         .values({ requesterId: followerId, recipientId: followingId })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ requesterId: schema.userFollowRequests.requesterId });
+      createdRequest = inserted.length > 0;
     } else {
       const inserted = await transaction
         .insert(schema.userFollows)
@@ -143,6 +188,8 @@ export async function requestPrivacyFollow(followerId: string, followingId: stri
         .onConflictDoNothing()
         .returning({ id: schema.userFollows.id });
       createdFollow = inserted.length > 0;
+      // The account is public now, so any older request became a follow: its
+      // inbox row has nothing left to answer.
       await transaction
         .delete(schema.userFollowRequests)
         .where(
@@ -151,14 +198,20 @@ export async function requestPrivacyFollow(followerId: string, followingId: stri
             eq(schema.userFollowRequests.recipientId, followingId),
           ),
         );
+      await deleteFollowRequestNotifications(followerId, followingId, transaction);
     }
   });
   // No privacyChanged here: a request grants nothing, and a direct follow of a
   // public account only widens what the follower's own client can read. That
   // client refreshes its own caches after the mutation.
   if (createdFollow) await publishFollow(followerId, followingId);
+  if (createdRequest) await publishFollowRequest(followerId, followingId);
+  return outcome;
 }
-/** Returns whether a follow existed and was removed, so callers can skip no-ops. */
+/**
+ * Unfollow or remove a follower, retaining a hidden request notification for
+ * its day-long dedup window. Returns whether approved access was removed.
+ */
 export async function removePrivacyFollow(followerId: string, followingId: string): Promise<boolean> {
   return db.transaction(async (transaction) => {
     // Same recipient lock as approval and account visibility, so a racing approval cannot recreate access.
@@ -485,6 +538,7 @@ export const privacyMutations = {
     await requestPrivacyFollow(requesterId, userId);
     return getPrivacyRelationship(requesterId, userId);
   },
+  // The follow_request notification is kept, hidden, on purpose: see removePrivacyFollow.
   cancelFollowRequest: async (_: unknown, { userId }: { userId: string }, ctx: ConnectionContext) => {
     const requesterId = await privacyActor(ctx);
     await db.transaction(async (transaction) => {
@@ -505,9 +559,11 @@ export const privacyMutations = {
     return true;
   },
   approveFollowRequest: async (_: unknown, { userId }: { userId: string }, ctx: ConnectionContext) => {
-    const recipientId = await privacyActor(ctx);
+    const recipientId = await followRequestAnswerActor(ctx);
     let accepted = false;
     await db.transaction(async (transaction) => {
+      // Pair lock before the users row lock: see lockFollowRequestPair.
+      await lockFollowRequestPair(transaction, userId, recipientId);
       await transaction
         .select({ id: schema.users.id })
         .from(schema.users)
@@ -522,6 +578,7 @@ export const privacyMutations = {
           ),
         )
         .returning();
+      await deleteFollowRequestNotifications(userId, recipientId, transaction);
       if (!requests.length) return;
       const inserted = await transaction
         .insert(schema.userFollows)
@@ -531,14 +588,16 @@ export const privacyMutations = {
       accepted = inserted.length > 0;
     });
     if (accepted) {
-      await publishFollow(userId, recipientId);
+      await publishFollow(userId, recipientId, { fromApproval: true });
       pubsub.publishPrivacyChanged('approveFollowRequest');
     }
     return true;
   },
   declineFollowRequest: async (_: unknown, { userId }: { userId: string }, ctx: ConnectionContext) => {
-    const recipientId = await privacyActor(ctx);
+    const recipientId = await followRequestAnswerActor(ctx);
     await db.transaction(async (transaction) => {
+      // Pair lock before the users row lock: see lockFollowRequestPair.
+      await lockFollowRequestPair(transaction, userId, recipientId);
       await transaction
         .select({ id: schema.users.id })
         .from(schema.users)
@@ -552,6 +611,7 @@ export const privacyMutations = {
             eq(schema.userFollowRequests.recipientId, recipientId),
           ),
         );
+      await deleteFollowRequestNotifications(userId, recipientId, transaction);
     });
     return true;
   },

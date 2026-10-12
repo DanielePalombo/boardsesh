@@ -33,11 +33,13 @@ vi.mock('../../use-auth-token', () => ({ useAuthToken: () => ({ data: 'token' })
 import {
   GROUPED_NOTIFICATIONS_QUERY_KEY,
   NOTIFICATIONS_UNREAD_COUNT_QUERY_KEY,
+  useAnswerFollowRequest,
   useGroupedNotifications,
   nextActorsOffset,
   useMarkAllAsRead,
   useMarkGroupAsRead,
 } from '../use-notifications';
+import { APPROVE_FOLLOW_REQUEST, DECLINE_FOLLOW_REQUEST } from '@boardsesh/graphql/operations/privacy';
 
 function makeWrapper() {
   const queryClient = new QueryClient({
@@ -230,6 +232,101 @@ describe('useMarkGroupAsRead', () => {
     });
 
     expect(requestMock.mock.calls[0][1]).toEqual({ type: 'comment_on_tick', entityType: 'tick', entityId: 'T1' });
+  });
+});
+
+describe('useAnswerFollowRequest', () => {
+  const request = (uuid: string, isRead = false) =>
+    makeGroup(uuid, {
+      type: 'follow_request',
+      entityId: `requester-${uuid}`,
+      actors: [{ id: `requester-${uuid}`, displayName: 'Jo', avatarUrl: null }],
+      isRead,
+    });
+
+  it('approves the requester and drops the answered row and its unread mark', async () => {
+    requestMock.mockResolvedValue({ approveFollowRequest: true });
+
+    const { queryClient, Wrapper } = makeWrapper();
+    queryClient.setQueryData(NOTIFICATIONS_UNREAD_COUNT_QUERY_KEY, 4);
+    queryClient.setQueryData(GROUPED_NOTIFICATIONS_QUERY_KEY, {
+      pages: [{ groups: [request('a'), makeGroup('b')], totalCount: 2, unreadCount: 4, hasMore: false }],
+      pageParams: [0],
+    });
+
+    const { result } = renderHook(() => useAnswerFollowRequest(), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current({ notification: request('a'), answer: 'approve' });
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(APPROVE_FOLLOW_REQUEST, { userId: 'requester-a' });
+    const cached = queryClient.getQueryData<{ pages: GroupedNotificationConnection[] }>(
+      GROUPED_NOTIFICATIONS_QUERY_KEY,
+    );
+    expect(cached?.pages[0].groups.map((group) => group.uuid)).toEqual(['b']);
+    expect(queryClient.getQueryData(NOTIFICATIONS_UNREAD_COUNT_QUERY_KEY)).toBe(3);
+  });
+
+  it('refreshes follower lists and profiles after an approval, but not after a decline', async () => {
+    requestMock.mockResolvedValue({ approveFollowRequest: true });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useAnswerFollowRequest(), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current({ notification: request('a'), answer: 'approve' });
+    });
+    const approvedKeys = invalidate.mock.calls.map(([filters]) => filters?.queryKey?.[0]);
+    expect(approvedKeys).toEqual(
+      expect.arrayContaining([
+        'privacyFollowRequests',
+        'followers',
+        'following',
+        'publicProfile',
+        'privacyRelationship',
+      ]),
+    );
+
+    invalidate.mockClear();
+    await act(async () => {
+      await result.current({ notification: request('b'), answer: 'decline' });
+    });
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey?.[0])).toEqual(['privacyFollowRequests']);
+  });
+
+  it('declines without touching the badge for a row already read', async () => {
+    requestMock.mockResolvedValue({ declineFollowRequest: true });
+
+    const { queryClient, Wrapper } = makeWrapper();
+    queryClient.setQueryData(NOTIFICATIONS_UNREAD_COUNT_QUERY_KEY, 2);
+
+    const { result } = renderHook(() => useAnswerFollowRequest(), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current({ notification: request('a', true), answer: 'decline' });
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(DECLINE_FOLLOW_REQUEST, { userId: 'requester-a' });
+    expect(queryClient.getQueryData(NOTIFICATIONS_UNREAD_COUNT_QUERY_KEY)).toBe(2);
+  });
+
+  it('keeps the row when the server refuses', async () => {
+    requestMock.mockRejectedValue(new Error('offline'));
+
+    const { queryClient, Wrapper } = makeWrapper();
+    queryClient.setQueryData(GROUPED_NOTIFICATIONS_QUERY_KEY, {
+      pages: [{ groups: [request('a')], totalCount: 1, unreadCount: 1, hasMore: false }],
+      pageParams: [0],
+    });
+
+    const { result } = renderHook(() => useAnswerFollowRequest(), { wrapper: Wrapper });
+    await act(async () => {
+      await expect(result.current({ notification: request('a'), answer: 'approve' })).rejects.toThrow('offline');
+    });
+
+    const cached = queryClient.getQueryData<{ pages: GroupedNotificationConnection[] }>(
+      GROUPED_NOTIFICATIONS_QUERY_KEY,
+    );
+    expect(cached?.pages[0].groups.map((group) => group.uuid)).toEqual(['a']);
   });
 });
 
