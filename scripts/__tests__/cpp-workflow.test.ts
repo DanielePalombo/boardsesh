@@ -46,6 +46,8 @@ function compute(overrides: NodeJS.ProcessEnv = {}) {
       PUBLISH_BASELINE: 'false',
       FIXTURE_SNAPSHOT: '',
       CPP_SCENARIO: '',
+      EVENT_NAME: 'workflow_dispatch',
+      GITHUB_REF: 'refs/heads/main',
       GITHUB_OUTPUT: output,
       ...overrides,
     },
@@ -149,6 +151,57 @@ describe('CPP workflow isolation and matrix', () => {
     ).toBe(true);
   });
 
+  it('stages all four targets through the full native replay matrix', () => {
+    const result = compute({ CPP_ACTION: 'stage-assets' });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const matrix = JSON.parse(readFileSync(result.output, 'utf8').trim().slice('matrix='.length)) as {
+      include: Array<{ target: string; locale: string; device: { slug: string } }>;
+    };
+    expect(matrix.include).toHaveLength(64);
+    expect(new Set(matrix.include.map(({ target, locale, device }) => `${target}/${locale}/${device.slug}`)).size).toBe(
+      64,
+    );
+  });
+
+  it.each([
+    { CPP_TARGET: 'none' },
+    { GITHUB_REF: 'refs/heads/feature' },
+    { EVENT_NAME: 'workflow_run' },
+    { FIXTURES_MODE: 'record' },
+    { FIXTURES_MODE: 'live' },
+    { LOCALES: 'en-US' },
+    { UPLOAD_DEFAULT: 'true' },
+    { PUBLISH_BASELINE: 'true' },
+  ])('rejects staging without a trusted main full replay selection: %j', (overrides) => {
+    const result = compute({ CPP_ACTION: 'stage-assets', ...overrides });
+    expect(result.status).not.toBe(0);
+  });
+
+  it('checks staging source SHA and main before requesting Apple credentials', () => {
+    const steps = workflow.jobs['cpp-finalize'].steps;
+    const guardIndex = steps.findIndex(({ name }) => name === 'Verify trusted source for CPP asset staging');
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(guardIndex).toBeLessThan(steps.findIndex(({ uses }) => uses === './.github/actions/asc-cpp'));
+    const script = steps[guardIndex].run!;
+    const sourceSha = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+    const runGuard = (overrides: NodeJS.ProcessEnv = {}) =>
+      spawnSync('bash', ['-c', script], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          SOURCE_SHA: sourceSha,
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          GITHUB_REF: 'refs/heads/main',
+          ...overrides,
+        },
+      });
+    const successful = runGuard();
+    expect(successful.status, successful.stdout + successful.stderr).toBe(0);
+    expect(runGuard({ SOURCE_SHA: 'different-commit' }).status).not.toBe(0);
+    expect(runGuard({ GITHUB_REF: 'refs/heads/feature' }).status).not.toBe(0);
+    expect(runGuard({ GITHUB_EVENT_NAME: 'workflow_run' }).status).not.toBe(0);
+  });
+
   it.each([
     { CPP_ACTION: 'submit', LOCALES: 'en-US' },
     { CPP_ACTION: 'upload', FIXTURES_MODE: 'live' },
@@ -206,5 +259,7 @@ describe('CPP workflow isolation and matrix', () => {
     expect(workflow.jobs['cpp-plan'].environment).toBe('Production');
     expect(workflow.concurrency.group).toContain("inputs.cpp_action == 'upload'");
     expect(workflow.concurrency.group).toContain("inputs.cpp_action == 'submit'");
+    expect(workflow.concurrency.group).toContain("inputs.cpp_action == 'stage-assets'");
+    expect(workflow.jobs['cpp-finalize'].if).toContain("inputs.cpp_action == 'stage-assets'");
   });
 });

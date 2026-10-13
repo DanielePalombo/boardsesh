@@ -204,10 +204,10 @@ on:
         default: none
         options: [none, all, kilter, tension, moonboard, spray]
       cpp_action:
-        description: 'CPP action. plan reads Apple; create creates empty drafts. Both skip native captures.'
+        description: 'CPP action. plan/create skip native capture; stage-assets fills existing drafts without keyword edits or review.'
         type: choice
         default: capture
-        options: [plan, create, capture, upload, submit]
+        options: [plan, create, capture, stage-assets, upload, submit]
       cpp_keyword_ids:
         description: 'Verified Apple keyword ID mapping JSON: locale -> keyword -> ID.'
         type: string
@@ -241,7 +241,7 @@ concurrency:
   # so `inputs.upload`/`inputs.publish_baseline` are compared explicitly
   # (never read bare) to stay null-tolerant on `workflow_run`, where `inputs`
   # is null and both comparisons read false.
-  group: ${{ (github.event_name == 'workflow_run' || inputs.upload == true || inputs.publish_baseline == true || ((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'create' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit' || inputs.fixtures == 'record'))) && 'mobile-screenshots-ios' || format('mobile-screenshots-ios-dispatch-{0}', github.run_id) }}
+  group: ${{ (github.event_name == 'workflow_run' || inputs.upload == true || inputs.publish_baseline == true || ((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'create' || inputs.cpp_action == 'stage-assets' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit' || inputs.fixtures == 'record'))) && 'mobile-screenshots-ios' || format('mobile-screenshots-ios-dispatch-{0}', github.run_id) }}
   cancel-in-progress: false
 
 permissions:
@@ -303,12 +303,13 @@ jobs:
           case "$CPP_TARGET" in
             none)
               [ "$CPP_ACTION" != create ] || { echo '::error::CPP draft creation requires a target or all.'; exit 1; }
+              [ "$CPP_ACTION" != stage-assets ] || { echo '::error::CPP asset staging requires a target or all.'; exit 1; }
               echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"; exit 0 ;;
             all) targets='["kilter","tension","moonboard","spray"]' ;;
             kilter|tension|moonboard|spray) targets=$(jq -cn --arg target "$CPP_TARGET" '[$target]') ;;
             *) echo '::error::Invalid CPP target'; exit 1 ;;
           esac
-          case "$CPP_ACTION" in plan|create|capture|upload|submit) ;; *) echo '::error::Invalid CPP action'; exit 1 ;; esac
+          case "$CPP_ACTION" in plan|create|capture|stage-assets|upload|submit) ;; *) echo '::error::Invalid CPP action'; exit 1 ;; esac
           if [ "$UPLOAD_DEFAULT" = true ] || [ "$PUBLISH_BASELINE" = true ]; then
             echo '::error::CPP runs use cpp_action; default listing upload/baseline flags must be false.'
             exit 1
@@ -325,8 +326,12 @@ jobs:
             echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ "$CPP_ACTION" = stage-assets ] && { [ "$EVENT_NAME" != workflow_dispatch ] || [ "$GITHUB_REF" != refs/heads/main ]; }; then
+            echo '::error::CPP asset staging requires a manual dispatch from main.'
+            exit 1
+          fi
           if [ "$CPP_ACTION" != capture ] && [ "$CPP_ACTION" != plan ] && { [ "$FIXTURES_MODE" != replay ] || [ -n "$LOCALES" ]; }; then
-            echo '::error::CPP upload/submit requires replay and the full locale/device matrix.'
+            echo '::error::CPP staging/upload/submit requires replay and the full locale/device matrix.'
             exit 1
           fi
           if [ "$CPP_TARGET" = all ] && { [ -n "$FIXTURE_SNAPSHOT" ] || [ "$FIXTURES_MODE" != replay ]; }; then
@@ -1278,7 +1283,7 @@ jobs:
 
   cpp-finalize:
     needs: [setup, cpp-capture]
-    if: ${{ needs.cpp-capture.result == 'success' && (inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit') }}
+    if: ${{ needs.cpp-capture.result == 'success' && (inputs.cpp_action == 'stage-assets' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit') }}
     runs-on: ubuntu-latest
     # 720 images are reconciled serially. One five-second Apple processing poll
     # per image already consumes 60 minutes, before transfers and submission.
@@ -1291,6 +1296,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.setup.outputs.source_sha }}
+      - name: Verify trusted source for CPP asset staging
+        if: ${{ inputs.cpp_action == 'stage-assets' }}
+        env:
+          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF" = refs/heads/main ] || { echo '::error::CPP asset staging requires main.'; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ] || { echo '::error::CPP source SHA mismatch.'; exit 1; }
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: '22.x'
