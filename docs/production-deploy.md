@@ -684,6 +684,13 @@ policies to `unlisted`. Never roll the backend back to a build from before
 #6345: an older backend reads an `unlisted` session as open, so those sessions
 would be listed in Climbing, nearby discovery and the global comment feed.
 
+Once migration `0275_drop_sync_deletion_stream_columns` has run, never roll the
+backend back to `549969d683` or any other build containing #6339's code
+(`5f8f9bace2`, live 2026-10-13 from 01:56 UTC until #6431 deployed). Its
+`syncDeletions` page query names `stream_at` and `is_membership_withdrawal`,
+which `0275` dropped, so every deletion sync would fail. Any build from #6431 on
+is a safe target. See [sync-deletions-cutoff.md](sync-deletions-cutoff.md).
+
 ## Required GitHub configuration
 
 Web-specific config lives in the **Production** GitHub environment alongside

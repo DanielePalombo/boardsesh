@@ -1919,6 +1919,20 @@
       "when": 1791848889615,
       "tag": "0273_climb_membership_withdrawal_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1791866044871,
+      "tag": "0274_drop_sync_deletion_stream_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1791866109016,
+      "tag": "0275_drop_sync_deletion_stream_columns",
+      "breakpoints": true
     }
   ]
 }

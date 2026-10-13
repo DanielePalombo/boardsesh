@@ -1,4 +1,4 @@
-import { pgTable, bigserial, text, timestamp, index, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, bigserial, text, timestamp, index } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 /**
@@ -29,13 +29,6 @@ export const syncDeletions = pgTable(
     // Nullable: NULL means reference-data deletion visible to all clients.
     userId: text('user_id'),
     deletedAt: timestamp('deleted_at').defaultNow().notNull(),
-    // DB-owned insertion time for cursor ordering. Historical rows stay NULL;
-    // deleted_at remains the client-side resurrection guard, which may be backdated.
-    streamAt: timestamp('stream_at'),
-    // Internal classification only. A reference-membership withdrawal may be
-    // skipped for a viewer still entitled to the current row; hard deletes and
-    // historical markers retain their installed deletion behavior.
-    isMembershipWithdrawal: boolean('is_membership_withdrawal').default(false).notNull(),
   },
   (table) => ({
     // Composite-cursor scan for syncDeletions: filter by user scope, then walk
@@ -47,14 +40,6 @@ export const syncDeletions = pgTable(
     // the reference-data (NULL-scoped) branch its own narrow scan.
     nullScopeIdx: index('sync_deletions_null_scope_idx')
       .on(table.deletedAt, table.id)
-      .where(sql`${table.userId} IS NULL`),
-    userStreamIdx: index('sync_deletions_user_stream_idx').on(
-      table.userId,
-      sql`COALESCE(${table.streamAt}, ${table.deletedAt})`,
-      table.id,
-    ),
-    nullStreamIdx: index('sync_deletions_null_stream_idx')
-      .on(sql`COALESCE(${table.streamAt}, ${table.deletedAt})`, table.id)
       .where(sql`${table.userId} IS NULL`),
     // Prune path (sync-deletions-prune.ts): DELETE WHERE deleted_at < cutoff
     // can't use the user-scoped composite or the NULL-scope partial index.

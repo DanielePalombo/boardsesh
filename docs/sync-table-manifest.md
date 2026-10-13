@@ -167,10 +167,6 @@ upserts**, and a tombstone only deletes local rows with `updated_at <= deletedAt
 these make server-side delete-then-recreate converge. Bulk board re-imports suppress the deletion triggers entirely
 via `SET LOCAL boardsesh.suppress_sync_tombstones = 'on'` (see `clearBoardData`).
 
-Two triggers from #6339 still fire even though its code was reverted: a climb that stops being published and
-listed gets a NULL-scoped `board_climbs` marker one second before its new `updated_at`, and every marker gets a
-`stream_at` the resolver ignores. See [sync-deletions-cutoff.md](sync-deletions-cutoff.md).
-
 ## Idempotency contract
 
 - `saveTick(input)` and `createPlaylist(input)` gain **optional `uuid: ID`**. When the client supplies it:
