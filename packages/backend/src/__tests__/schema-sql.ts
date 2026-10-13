@@ -8,6 +8,24 @@ import { socialEntityTypeEnum } from '@boardsesh/db/schema';
 
 const socialEntityTypeLabels = socialEntityTypeEnum.enumValues.map((entityType) => `'${entityType}'`).join(', ');
 
+const deletionStreamSchema = readFileSync(
+  new URL('../../../db/drizzle/0271_sync_deletions_stream.sql', import.meta.url),
+  'utf8',
+);
+const deletionCutoffFunction = readFileSync(
+  new URL('../../../db/scripts/sync-deletions-cutoff-function.sql', import.meta.url),
+  'utf8',
+);
+// Worker databases use the test superuser. Production's separate-owner admin
+// prerequisite is covered by its dedicated contract tests, not bypassed there.
+const deletionStreamTrigger = readFileSync(
+  new URL('../../../db/drizzle/0272_sync_deletions_cutoff_guard.sql', import.meta.url),
+  'utf8',
+)
+  .split('--> statement-breakpoint')
+  .slice(1)
+  .join('\n');
+
 // Install the real wall deletion triggers so resolver tests exercise offline
 // tombstones as well as the row's deleted_at flag. Install at the schema tail
 // after all referenced tables exist; trigger installation has no DDL ordering dependency.
@@ -85,6 +103,22 @@ const anonymousOnForeignBoardsSchema = readFileSync(
 // after user_boards so its foreign key and partial unique index match production.
 const boardShareLinksSchema = readFileSync(
   new URL('../../../db/drizzle/0267_board_share_links.sql', import.meta.url),
+  'utf8',
+);
+// The trigger that tells devices a climb changed side of the publication rule,
+// from the migration itself so every test runs against the function production
+// has. It writes `sync_deletions`, `board_climb_stats` and `board_climb_grades`,
+// so it installs after all three exist.
+const referenceMembershipSchema = readFileSync(
+  new URL('../../../db/drizzle/0270_climb_reference_membership.sql', import.meta.url),
+  'utf8',
+);
+// The generated discriminator column, replayed instead of a separate fixture
+// copy. Nothing in this release writes it as true: the trigger that flags a
+// withdrawal ships one release later, once every backend serving sync filters
+// flagged markers.
+const membershipWithdrawalSchema = readFileSync(
+  new URL('../../../db/drizzle/0273_climb_membership_withdrawal_flag.sql', import.meta.url),
   'utf8',
 );
 
@@ -1623,6 +1657,9 @@ CREATE INDEX "board_climb_events_chronological_idx" ON "board_climb_events" USIN
   -- the daily prune's DELETE WHERE deleted_at < cutoff.
   CREATE INDEX IF NOT EXISTS "sync_deletions_deleted_at_idx" ON "sync_deletions" ("deleted_at");
   CREATE INDEX IF NOT EXISTS "board_climbs_sync_cursor_idx" ON "board_climbs" ("board_type", "updated_at", "sync_seq");
+  -- Mirrors migration 0247. The PROTECTED sync stream finds a caller's own
+  -- climbs through it, and the plan tests explain against it.
+  CREATE INDEX IF NOT EXISTS "board_climbs_user_export_idx" ON "board_climbs" ("user_id", "board_type") WHERE "user_id" IS NOT NULL;
   CREATE INDEX IF NOT EXISTS "board_climb_stats_sync_cursor_idx" ON "board_climb_stats" ("board_type", "updated_at", "sync_seq");
   CREATE INDEX IF NOT EXISTS "board_climb_grades_sync_cursor_idx" ON "board_climb_grades" ("board_type", "computed_at", "sync_seq");
 
@@ -2166,4 +2203,10 @@ CREATE INDEX "board_climb_events_chronological_idx" ON "board_climb_events" USIN
   ${privacySchema}
   ${anonymousOnForeignBoardsSchema};
   ${boardShareLinksSchema}
+  ${referenceMembershipSchema}
+  ${deletionStreamSchema}
+  ${deletionCutoffFunction}
+  DROP FUNCTION IF EXISTS public.stamp_sync_deletion_stream_at() CASCADE;
+  ${deletionStreamTrigger}
+  ${membershipWithdrawalSchema}
 `;

@@ -1891,6 +1891,34 @@
       "when": 1791842577778,
       "tag": "0269_privacy_public_defaults_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 270,
+      "version": "7",
+      "when": 1791848889612,
+      "tag": "0270_climb_reference_membership",
+      "breakpoints": true
+    },
+    {
+      "idx": 271,
+      "version": "7",
+      "when": 1791848889613,
+      "tag": "0271_sync_deletions_stream",
+      "breakpoints": true
+    },
+    {
+      "idx": 272,
+      "version": "7",
+      "when": 1791848889614,
+      "tag": "0272_sync_deletions_cutoff_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 273,
+      "version": "7",
+      "when": 1791848889615,
+      "tag": "0273_climb_membership_withdrawal_flag",
+      "breakpoints": true
     }
   ]
 }
