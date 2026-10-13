@@ -44,10 +44,13 @@ marker's `deleted_at`, looked up by id (`deletionResumeTimestamp` in
   account's marker keeps the cursor's time.
 - A resumed #6339 cursor can deliver a marker twice; the client's
   `updated_at <= deletedAt` guard makes that harmless.
-- It still misses a marker from a transaction that started before the named
-  marker's transaction and wrote after #6339 issued the cursor. That
-  transaction outlived the stability window, which is the long-transaction miss
-  that predates #6339.
+- It can still miss a marker from a transaction that started before the named
+  marker's transaction and committed after it. That includes short
+  transactions, not only ones that outlived the stability window: the
+  independent review lost a marker from a 1 s transaction that landed just past
+  a full #6339 page. Only devices holding a cursor #6339 issued are exposed,
+  and only for markers written in that overlap. We accept that rather than
+  widen the resume point further.
 
 Once every such cursor has advanced, the lookup is a no-op. It can stay; it
 costs one primary-key read per page.
