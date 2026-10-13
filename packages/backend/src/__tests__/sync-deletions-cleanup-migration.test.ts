@@ -121,4 +121,38 @@ describe('0274/0275 drop what #6339 left in the database', () => {
       expect(markers).toEqual([{ table_name: 'board_climbs', user_id: null }]);
     });
   });
+
+  it('does not hold board_climbs while an open marker write keeps sync_deletions busy', async () => {
+    const lockStep = migration('0274_drop_sync_deletion_stream_triggers').split('--> statement-breakpoint')[0];
+    const connect = () => postgres(getWorkerDatabaseUrl(), { max: 1, onnotice: () => {} });
+    const [markerWriter, migrator, climbReader] = [connect(), connect(), connect()];
+    try {
+      // An open transaction that wrote a deletion marker holds ROW EXCLUSIVE on
+      // sync_deletions, which ACCESS EXCLUSIVE has to wait for.
+      await markerWriter.unsafe('BEGIN');
+      await markerWriter`INSERT INTO sync_deletions (table_name, record_id) VALUES ('board_climbs', 'lock-step-probe')`;
+
+      const lockStepRun = migrator
+        .begin(async (transaction) => {
+          await transaction.unsafe(lockStep);
+          throw new RollBack();
+        })
+        .catch((error: unknown) => {
+          if (!(error instanceof RollBack)) throw error;
+        });
+
+      // Half a second in, the lock step has been refused sync_deletions. Had it
+      // kept board_climbs while waiting, this read would wait out its 3 s too.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const readStartedAt = performance.now();
+      await climbReader`SELECT count(*) FROM board_climbs`;
+      const readMs = performance.now() - readStartedAt;
+
+      await markerWriter.unsafe('ROLLBACK');
+      await lockStepRun;
+      expect(readMs).toBeLessThan(1000);
+    } finally {
+      await Promise.all([markerWriter.end(), migrator.end(), climbReader.end()]);
+    }
+  });
 });

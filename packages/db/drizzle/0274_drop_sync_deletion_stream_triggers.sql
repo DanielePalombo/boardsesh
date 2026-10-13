@@ -25,9 +25,16 @@
 -- page and sync pull reads board_climbs, and every delete on a synced table
 -- writes sync_deletions, so a bare DROP TRIGGER would queue behind one long
 -- reader and then block everything behind itself. Take both locks up front in
--- one retry-protected step, the 0144/0220/0250 shape. The drops themselves are
--- catalogue-only and finish in milliseconds, and the deploy runs every pending
--- migration in one transaction, so the locks are released at its commit.
+-- one retry-protected step, the 0144/0220/0250 shape, with one change: only
+-- board_climbs is waited for. Each attempt waits up to 3 s for it, and climb
+-- reads queue behind that wait. It then asks for sync_deletions with NOWAIT. If
+-- a transaction is still writing a deletion marker, the attempt fails, and
+-- rolling back this block releases board_climbs at once instead of holding it
+-- for a second 3 s wait. So climb reads stall for at most 3 s per attempt, at
+-- most 40 attempts one second apart (about 160 s), and then the deploy fails
+-- and rolls back. The drops themselves are catalogue-only and finish in
+-- milliseconds, and the deploy runs every pending migration in one
+-- transaction, so the locks are released at its commit.
 DO $$
 DECLARE
   attempts integer := 0;
@@ -36,7 +43,8 @@ BEGIN
     attempts := attempts + 1;
     BEGIN
       SET LOCAL lock_timeout = '3s';
-      LOCK TABLE "board_climbs", "sync_deletions" IN ACCESS EXCLUSIVE MODE;
+      LOCK TABLE "board_climbs" IN ACCESS EXCLUSIVE MODE;
+      LOCK TABLE "sync_deletions" IN ACCESS EXCLUSIVE MODE NOWAIT;
       SET LOCAL lock_timeout = '0';
       RETURN;
     EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
