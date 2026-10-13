@@ -373,7 +373,7 @@ export type AscentFeedInput = {
   climbName?: InputMaybe<Scalars['String']['input']>;
   /** When true, only include flashes within the selected status mode */
   flashOnly?: InputMaybe<Scalars['Boolean']['input']>;
-  /** Optional start date filter (ISO date string, inclusive) */
+  /** Optional start of the date range, inclusive. Either a calendar day (YYYY-MM-DD, from that UTC day's midnight) or an ISO 8601 instant with Z or an offset (from exactly that instant). */
   fromDate?: InputMaybe<Scalars['String']['input']>;
   /** Optional layout filters within the selected board type */
   layoutIds?: InputMaybe<Array<Scalars['Int']['input']>>;
@@ -387,12 +387,16 @@ export type AscentFeedInput = {
   minAngle?: InputMaybe<Scalars['Int']['input']>;
   /** Optional minimum difficulty filter (difficulty_id) */
   minDifficulty?: InputMaybe<Scalars['Int']['input']>;
+  /** Only include ascents the climber rated at least this many stars (1-5): the tick's own stars, else their synced rating, as the logbook row shows */
+  minQuality?: InputMaybe<Scalars['Int']['input']>;
   /** Number of items to skip */
   offset?: InputMaybe<Scalars['Int']['input']>;
   /** Optional secondary sort field */
   secondarySortBy?: InputMaybe<Scalars['String']['input']>;
   /** Optional secondary sort order */
   secondarySortOrder?: InputMaybe<Scalars['String']['input']>;
+  /** Only include climbs by these setters (exact setter usernames) */
+  setterUsernames?: InputMaybe<Array<Scalars['String']['input']>>;
   /** Primary sort field */
   sortBy?: InputMaybe<Scalars['String']['input']>;
   /** Primary sort order: desc (default) or asc */
@@ -401,7 +405,7 @@ export type AscentFeedInput = {
   status?: InputMaybe<Scalars['String']['input']>;
   /** Status mode filter: both, send, attempt */
   statusMode?: InputMaybe<Scalars['String']['input']>;
-  /** Optional end date filter (ISO date string, inclusive) */
+  /** Optional end of the date range. Either a calendar day (YYYY-MM-DD, through the end of that UTC day, inclusive) or an ISO 8601 instant with Z or an offset (EXCLUSIVE: send the start of the day after the last local day you want). */
   toDate?: InputMaybe<Scalars['String']['input']>;
 };
 
@@ -3996,6 +4000,15 @@ export type LiveSessionUser = {
 
 export type LocationSyncEntityType = 'BOARD' | 'GYM';
 
+/** A setter of climbs the user has logged. */
+export type LoggedSetter = {
+  __typename?: 'LoggedSetter';
+  /** Setter username, as on the climb */
+  setterUsername: Scalars['String']['output'];
+  /** How many of the user's logged ascents are on this setter's climbs */
+  tickCount: Scalars['Int']['output'];
+};
+
 /** Input for merging duplicate gyms into a canonical survivor (admin only). */
 export type MergeGymsInput = {
   /** Explicit acknowledgement required to keep a SYSTEM listing as the survivor over a user-owned or claim-approved duplicate. Rejected without it. */
@@ -7261,6 +7274,11 @@ export type Query = {
    */
   userGroupedAscentsFeed: GroupedAscentFeedResult;
   /**
+   * Setters of the climbs a user has logged, most-logged first. Uses the same
+   * visibility rules as userAscentsFeed. Powers the logbook setter filter.
+   */
+  userLoggedSetters: Array<LoggedSetter>;
+  /**
    * Get current user's playlists for a board+layout.
    * Requires authentication.
    */
@@ -8121,6 +8139,12 @@ export type QueryUserFavoriteClimbsArgs = {
 /** Root query type for all read operations. */
 export type QueryUserGroupedAscentsFeedArgs = {
   input?: InputMaybe<AscentFeedInput>;
+  userId: Scalars['ID']['input'];
+};
+
+/** Root query type for all read operations. */
+export type QueryUserLoggedSettersArgs = {
+  input?: InputMaybe<UserLoggedSettersInput>;
   userId: Scalars['ID']['input'];
 };
 
@@ -11210,6 +11234,18 @@ export type UserLeft = {
   userId: Scalars['ID']['output'];
 };
 
+/** Narrows userLoggedSetters to the same board scope as the logbook. */
+export type UserLoggedSettersInput = {
+  /** Optional board type filter for multiple board types */
+  boardTypes?: InputMaybe<Array<Scalars['String']['input']>>;
+  /** Optional layout filters within the selected board type */
+  layoutIds?: InputMaybe<Array<Scalars['Int']['input']>>;
+  /** Maximum number of setters to return (default 50, max 200) */
+  limit?: InputMaybe<Scalars['Int']['input']>;
+  /** Optional case-insensitive partial match on the setter username */
+  search?: InputMaybe<Scalars['String']['input']>;
+};
+
 /** Event when a participant's realtime presence state changes. */
 export type UserPresenceChanged = {
   __typename?: 'UserPresenceChanged';
@@ -11713,6 +11749,7 @@ export type ResolversTypes = ResolversObject<{
   LiveSessionReason: LiveSessionReason;
   LiveSessionUser: ResolverTypeWrapper<LiveSessionUser>;
   LocationSyncEntityType: LocationSyncEntityType;
+  LoggedSetter: ResolverTypeWrapper<LoggedSetter>;
   MergeGymsInput: MergeGymsInput;
   MergeGymsResult: ResolverTypeWrapper<MergeGymsResult>;
   MoonBoardClimbDuplicateCandidateInput: MoonBoardClimbDuplicateCandidateInput;
@@ -11966,6 +12003,7 @@ export type ResolversTypes = ResolversObject<{
   UserDataExportStatus: ResolverTypeWrapper<UserDataExportStatus>;
   UserJoined: ResolverTypeWrapper<UserJoined>;
   UserLeft: ResolverTypeWrapper<UserLeft>;
+  UserLoggedSettersInput: UserLoggedSettersInput;
   UserPresenceChanged: ResolverTypeWrapper<UserPresenceChanged>;
   UserProfile: ResolverTypeWrapper<UserProfile>;
   UserSearchConnection: ResolverTypeWrapper<UserSearchConnection>;
@@ -12212,6 +12250,7 @@ export type ResolversParentTypes = ResolversObject<{
   LiveSessionBoard: LiveSessionBoard;
   LiveSessionClimb: LiveSessionClimb;
   LiveSessionUser: LiveSessionUser;
+  LoggedSetter: LoggedSetter;
   MergeGymsInput: MergeGymsInput;
   MergeGymsResult: MergeGymsResult;
   MoonBoardClimbDuplicateCandidateInput: MoonBoardClimbDuplicateCandidateInput;
@@ -12432,6 +12471,7 @@ export type ResolversParentTypes = ResolversObject<{
   UserDataExportStatus: UserDataExportStatus;
   UserJoined: UserJoined;
   UserLeft: UserLeft;
+  UserLoggedSettersInput: UserLoggedSettersInput;
   UserPresenceChanged: UserPresenceChanged;
   UserProfile: UserProfile;
   UserSearchConnection: UserSearchConnection;
@@ -14503,6 +14543,15 @@ export type LiveSessionUserResolvers<
   avatarUrl?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   displayName?: Resolver<Maybe<ResolversTypes['String']>, ParentType, ContextType>;
   userId?: Resolver<ResolversTypes['ID'], ParentType, ContextType>;
+  __isTypeOf?: IsTypeOfResolverFn<ParentType, ContextType>;
+}>;
+
+export type LoggedSetterResolvers<
+  ContextType = ConnectionContext,
+  ParentType extends ResolversParentTypes['LoggedSetter'] = ResolversParentTypes['LoggedSetter'],
+> = ResolversObject<{
+  setterUsername?: Resolver<ResolversTypes['String'], ParentType, ContextType>;
+  tickCount?: Resolver<ResolversTypes['Int'], ParentType, ContextType>;
   __isTypeOf?: IsTypeOfResolverFn<ParentType, ContextType>;
 }>;
 
@@ -16852,6 +16901,12 @@ export type QueryResolvers<
     ContextType,
     RequireFields<QueryUserGroupedAscentsFeedArgs, 'userId'>
   >;
+  userLoggedSetters?: Resolver<
+    Array<ResolversTypes['LoggedSetter']>,
+    ParentType,
+    ContextType,
+    RequireFields<QueryUserLoggedSettersArgs, 'userId'>
+  >;
   userPlaylists?: Resolver<
     Array<ResolversTypes['Playlist']>,
     ParentType,
@@ -18521,6 +18576,7 @@ export type Resolvers<ContextType = ConnectionContext> = ResolversObject<{
   LiveSessionBoard?: LiveSessionBoardResolvers<ContextType>;
   LiveSessionClimb?: LiveSessionClimbResolvers<ContextType>;
   LiveSessionUser?: LiveSessionUserResolvers<ContextType>;
+  LoggedSetter?: LoggedSetterResolvers<ContextType>;
   MergeGymsResult?: MergeGymsResultResolvers<ContextType>;
   MoonBoardClimbDuplicateMatch?: MoonBoardClimbDuplicateMatchResolvers<ContextType>;
   Mutation?: MutationResolvers<ContextType>;

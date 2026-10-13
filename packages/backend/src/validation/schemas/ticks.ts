@@ -151,10 +151,52 @@ export const InstagramBetaScanInputSchema = z.object({
 /**
  * Ascent feed input validation schema
  */
-// Logbook date filters are calendar days (YYYY-MM-DD). The web/mobile clients
-// sanitize to this shape via @boardsesh/logbook, but the backend owns its own
-// invariant so a direct GraphQL call can't push a malformed date into the query.
+// Logbook date filters are calendar days (YYYY-MM-DD) or exact instants. The
+// web/mobile clients sanitize to these shapes via @boardsesh/logbook, but the
+// backend owns its own invariant so a direct GraphQL call can't push a malformed
+// date into the query.
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Postgres has no year 0 and no zone displacement past ±15:59. Both would reach
+// it as an internal "out of range" error, so they are refused here instead.
+const DATE_BOUND_YEAR_MESSAGE = 'Date bounds start at year 0001';
+const MAX_OFFSET_HOURS = 15;
+
+function isAfterYearZero(value: string): boolean {
+  return !value.startsWith('0000');
+}
+
+// z.iso.datetime has already pinned the offset to `Z` or `±HH:MM`.
+function hasSupportedPostgresOffset(value: string): boolean {
+  const offset = /[+-](\d{2}):\d{2}$/.exec(value);
+  return offset === null || Number(offset[1]) <= MAX_OFFSET_HOURS;
+}
+
+/**
+ * A logbook date bound. A calendar day is that whole UTC day, the contract
+ * older clients rely on. An instant must carry `Z` or an offset: it is the edge
+ * of the climber's local day, which only the client knows. A zone-less
+ * date-time is refused, because the server would have to guess the zone.
+ */
+const LogbookDateBoundSchema = z.union([
+  // z.iso.date checks the calendar too (no 2026-13-45, no 2026-02-30).
+  z.iso.date().refine(isAfterYearZero, DATE_BOUND_YEAR_MESSAGE),
+  z.iso
+    .datetime({ offset: true })
+    .refine(isAfterYearZero, DATE_BOUND_YEAR_MESSAGE)
+    .refine(hasSupportedPostgresTimestampPrecision, 'Date bounds support at most six fractional-second digits')
+    .refine(hasSupportedPostgresOffset, 'Time zone offsets run from -15:59 to +15:59'),
+]);
+
+/** True for the calendar-day form of a logbook date bound (YYYY-MM-DD). */
+export function isCalendarDayBound(value: string): boolean {
+  return ISO_DATE_PATTERN.test(value);
+}
+
+// Setter filter bounds, shared by the feed filter and the setter picker search.
+const SETTER_USERNAME_MAX_LENGTH = 100;
+const MAX_SETTER_FILTER_ENTRIES = 20;
+const SetterUsernameSchema = z.string().min(1).max(SETTER_USERNAME_MAX_LENGTH);
 
 export const AscentFeedInputSchema = z.object({
   limit: z.number().int().min(1).max(50).optional().default(20),
@@ -187,8 +229,23 @@ export const AscentFeedInputSchema = z.object({
   minAngle: z.number().int().min(-5).max(90).optional(),
   maxAngle: z.number().int().min(-5).max(90).optional(),
   benchmarkOnly: z.boolean().optional(),
-  fromDate: z.string().regex(ISO_DATE_PATTERN).optional(),
-  toDate: z.string().regex(ISO_DATE_PATTERN).optional(),
+  // Stars the logbook row shows: the tick's own, else the climber's synced rating.
+  minQuality: z.number().int().min(1).max(5).optional(),
+  // Exact setter usernames. Capped so one request can't build a huge IN list.
+  setterUsernames: z.array(SetterUsernameSchema).max(MAX_SETTER_FILTER_ENTRIES).optional(),
+  fromDate: LogbookDateBoundSchema.optional(),
+  toDate: LogbookDateBoundSchema.optional(),
+});
+
+/**
+ * userLoggedSetters input: the same board scope as the logbook feed, plus a
+ * setter-name search for the picker.
+ */
+export const UserLoggedSettersInputSchema = z.object({
+  boardTypes: z.array(BoardNameSchema).optional(),
+  layoutIds: z.array(z.number().int().positive()).optional(),
+  search: z.string().trim().max(SETTER_USERNAME_MAX_LENGTH).optional(),
+  limit: z.number().int().min(1).max(200).optional().default(50),
 });
 
 /**
