@@ -8,24 +8,6 @@ import { socialEntityTypeEnum } from '@boardsesh/db/schema';
 
 const socialEntityTypeLabels = socialEntityTypeEnum.enumValues.map((entityType) => `'${entityType}'`).join(', ');
 
-const deletionStreamSchema = readFileSync(
-  new URL('../../../db/drizzle/0271_sync_deletions_stream.sql', import.meta.url),
-  'utf8',
-);
-const deletionCutoffFunction = readFileSync(
-  new URL('../../../db/scripts/sync-deletions-cutoff-function.sql', import.meta.url),
-  'utf8',
-);
-// Worker databases use the test superuser. Production's separate-owner admin
-// prerequisite is covered by its dedicated contract tests, not bypassed there.
-const deletionStreamTrigger = readFileSync(
-  new URL('../../../db/drizzle/0272_sync_deletions_cutoff_guard.sql', import.meta.url),
-  'utf8',
-)
-  .split('--> statement-breakpoint')
-  .slice(1)
-  .join('\n');
-
 // Install the real wall deletion triggers so resolver tests exercise offline
 // tombstones as well as the row's deleted_at flag. Install at the schema tail
 // after all referenced tables exist; trigger installation has no DDL ordering dependency.
@@ -103,23 +85,6 @@ const anonymousOnForeignBoardsSchema = readFileSync(
 // after user_boards so its foreign key and partial unique index match production.
 const boardShareLinksSchema = readFileSync(
   new URL('../../../db/drizzle/0267_board_share_links.sql', import.meta.url),
-  'utf8',
-);
-// The trigger that tells devices a climb changed side of the publication rule,
-// from the migration itself so every test runs against the function production
-// has. #6339's code was reverted but its migrations stayed applied, so the
-// pre-#6339 resolvers must keep working with this trigger and the deletion
-// stream stamping below firing underneath them. It writes `sync_deletions`, `board_climb_stats` and `board_climb_grades`,
-// so it installs after all three exist.
-const referenceMembershipSchema = readFileSync(
-  new URL('../../../db/drizzle/0270_climb_reference_membership.sql', import.meta.url),
-  'utf8',
-);
-// The generated discriminator column, replayed instead of a separate fixture
-// copy. Nothing writes it as true and, since #6339's code was reverted, nothing
-// reads it. It mirrors production until the cleanup migration drops it.
-const membershipWithdrawalSchema = readFileSync(
-  new URL('../../../db/drizzle/0273_climb_membership_withdrawal_flag.sql', import.meta.url),
   'utf8',
 );
 
@@ -2201,10 +2166,4 @@ CREATE INDEX "board_climb_events_chronological_idx" ON "board_climb_events" USIN
   ${privacySchema}
   ${anonymousOnForeignBoardsSchema};
   ${boardShareLinksSchema}
-  ${referenceMembershipSchema}
-  ${deletionStreamSchema}
-  ${deletionCutoffFunction}
-  DROP FUNCTION IF EXISTS public.stamp_sync_deletion_stream_at() CASCADE;
-  ${deletionStreamTrigger}
-  ${membershipWithdrawalSchema}
 `;

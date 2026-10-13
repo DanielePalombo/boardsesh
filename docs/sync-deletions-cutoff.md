@@ -1,99 +1,109 @@
-# Deletion sync cutoff: database objects with no reader
+# Deletion sync cutoff (historical)
+
+Nothing in the running system uses anything described here. This page exists
+because four applied migrations still need an admin step to replay, and because
+production needs one admin step to finish removing them.
+
+## What happened
 
 #6339 added a publication rule for board sync and an ordering guard for
-`syncDeletions`. Production applied its four migrations on 2026-10-13 at
-01:56 UTC. #6431 reverted the code and kept the migrations, because a migration
-that production has applied is never edited or removed. The backend reads none
-of these objects now. A follow-up migration drops them once #6431's backend is
-live, and an administrator then removes the helper and its role.
+`syncDeletions`. Production applied its migrations `0270` to `0273` on
+2026-10-13 at 01:56 UTC. #6431 reverted the code and kept the migrations,
+because an applied migration is never edited or removed. Migrations `0274` and
+`0275` then dropped what they had created:
 
-## What is in the database
+| Created by | Object                                                                         | Dropped by |
+| ---------- | ------------------------------------------------------------------------------ | ---------- |
+| `0270`     | trigger `trg_board_climbs_reference_membership` on `board_climbs`              | `0274`     |
+| `0270`     | function `sync_board_climb_reference_membership()`                             | `0274`     |
+| `0271`     | column `sync_deletions.stream_at`                                              | `0275`     |
+| `0271`     | indexes `sync_deletions_user_stream_idx`, `sync_deletions_null_stream_idx`     | `0275`     |
+| `0272`     | trigger `trg_sync_deletion_stream_at` on `sync_deletions`                      | `0274`     |
+| `0272`     | function `stamp_sync_deletion_stream_at()`                                     | `0274`     |
+| `0273`     | column `sync_deletions.is_membership_withdrawal`                               | `0275`     |
+| admin step | function `public.sync_deletions_safe_cutoff(double precision)`                 | teardown   |
+| admin step | role `boardsesh_sync_cutoff_owner` and its `pg_read_all_stats` membership     | teardown   |
 
-| Migration                               | Object                                                                                                          | Still fires? |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------ |
-| `0270_climb_reference_membership`       | `trg_board_climbs_reference_membership` on `board_climbs`, function `sync_board_climb_reference_membership()` | Yes          |
-| `0271_sync_deletions_stream`            | `sync_deletions.stream_at`, `sync_deletions_user_stream_idx`, `sync_deletions_null_stream_idx`                 | Indexes only |
-| `0272_sync_deletions_cutoff_guard`      | `trg_sync_deletion_stream_at` on `sync_deletions`, function `stamp_sync_deletion_stream_at()`                  | Yes          |
-| `0273_climb_membership_withdrawal_flag` | `sync_deletions.is_membership_withdrawal` (`boolean NOT NULL DEFAULT false`)                                   | No           |
-| admin bootstrap, outside any migration  | `public.sync_deletions_safe_cutoff(double precision)`, role `boardsesh_sync_cutoff_owner`                      | No caller    |
+The last two are not a migration's to drop. An administrator installed them,
+the migration login cannot remove them, and `0272` needs them to replay.
 
-What the two live triggers do under the reverted backend:
+## Cursors #6339 issued
 
-- **0270.** When an update moves a climb out of "published and listed", it
-  writes a NULL-scoped `board_climbs` marker stamped one second before the
-  row's new `updated_at`. A device drops its older copy, then pulls the new row
-  on its next climb page if `syncClimbs` still returns it, so the climb comes
-  back with its new flags. A protected climb that changes owner gets a marker
-  scoped to the old owner. In either direction the trigger also bumps the
-  climb's `board_climb_stats` and `board_climb_grades` cursor fields, so devices
-  pull those rows again. Bulk imports that set
-  `boardsesh.suppress_sync_tombstones` skip the marker. The trigger adds work
-  to the write; it does not change what the write stores.
-- **0272.** Every new marker gets `stream_at = clock_timestamp()`. The resolver
-  pages on `(deleted_at, id)` again and never reads `stream_at`.
-- **0273.** No writer sets the flag, so every marker is an ordinary one.
+`syncDeletions` keeps one piece of this history after the cleanup. A device
+that last pulled deletions from #6339's backend holds a cursor whose time is the
+last marker's `stream_at`, later than that marker's `deleted_at`. All markers of
+one transaction share one `deleted_at`, so a plain `(deleted_at, id)` comparison
+would skip the rest of a transaction whenever #6339's page ended inside it. The
+resolver therefore resumes from the earlier of the cursor's time and the named
+marker's `deleted_at`, looked up by id (`deletionResumeTimestamp` in
+`resolvers/sync/queries.ts`).
 
-A device whose last deletion cursor came from #6339's backend holds a
-`stream_at` value in the cursor's `updatedAt`, which is later than that
-marker's `deleted_at`. Every marker one transaction writes shares one
-`deleted_at`, so comparing `deleted_at` with that cursor would skip the rest of
-the transaction for good whenever a page ended inside it: a playlist's climbs, a
-catalogue delete, any multi-row delete. No long transaction is needed for that.
-So the resolver resumes from the earlier of the cursor's time and the
-`deleted_at` of the marker the cursor names, looked up by id
-(`deletionResumeTimestamp` in `resolvers/sync/queries.ts`). It names no column
-#6339 added.
+- It names no dropped column, so it works on both sides of `0275`.
+- A cursor the current resolver issued holds the marker's exact `deleted_at`,
+  so nothing changes for it. An epoch cursor, a pruned marker or another
+  account's marker keeps the cursor's time.
+- A resumed #6339 cursor can deliver a marker twice; the client's
+  `updated_at <= deletedAt` guard makes that harmless.
+- It still misses a marker from a transaction that started before the named
+  marker's transaction and wrote after #6339 issued the cursor. That
+  transaction outlived the stability window, which is the long-transaction miss
+  that predates #6339.
 
-- A cursor the reverted resolver issued already holds the named marker's exact
-  `deleted_at`, so the lookup changes nothing. An epoch cursor, a pruned marker
-  or a marker outside the caller's scope keeps the cursor's time.
-- A resumed #6339 cursor can deliver a marker twice: one another transaction
-  wrote between the named marker's `deleted_at` and its `stream_at`, which
-  #6339 already sent. The client's `updated_at <= deletedAt` guard makes that
-  harmless.
-- It can still miss a marker from a transaction that started before the named
-  marker's transaction and wrote after #6339 issued the cursor. #6339 only
-  issued a cursor below the start of every open writer and below the stability
-  window, so that transaction ran for longer than the window: the long
-  transaction the 30-second window already missed before #6339. A `0270`
-  marker can also land there through its one-second backdate. Under the
-  reverted resolvers that costs nothing, because `syncClimbs` sends the climb's
-  new row anyway.
+Once every such cursor has advanced, the lookup is a no-op. It can stay; it
+costs one primary-key read per page.
 
-## Why the bootstrap tooling stays
+## Fresh databases still need the bootstrap
 
-`0272` refuses to run until the helper exists, is owned by
-`boardsesh_sync_cutoff_owner`, and matches its pinned body and privileges. The
-migration login cannot create it. So every database that replays the journal
-from zero still needs the admin bootstrap first:
+`0272` opens with a check that refuses to run until the helper exists, is owned
+by `boardsesh_sync_cutoff_owner`, and matches its pinned body and privileges.
+So a database that replays the journal from zero still needs the admin
+bootstrap before migrating, and keeps the unused helper and role afterwards:
 
 - `bootstrap-sync-deletions-cutoff-development.ts` (explicit development flag,
-  local host only). It runs in `scripts/dev-db-up.sh`, the dev-db image build,
+  local hosts only) runs in `scripts/dev-db-up.sh`, the dev-db image build,
   CI's full-journal replay, E2E, and the migration-renumber replay.
-- `bootstrap-sync-deletions-cutoff.ts` is the reviewed admin path, plan by
-  default and `--apply` with `SYNC_CUTOFF_ADMIN_DATABASE_URL`. Production
-  already has the helper; do not run it there again.
+- `bootstrap-sync-deletions-cutoff.ts` is the reviewed admin path: plan by
+  default, `--apply` with `SYNC_CUTOFF_ADMIN_DATABASE_URL`.
 
-`packages/db/scripts/migration-runtime-acl.ts` checks the helper's contract on
-every production migrate and leaves that one function out of the routine ACL
-sweep. The logical-replication restore and the migration audit scripts carry
-the same exception. Keep all of them until the cleanup migration has dropped
-`sync_deletions.stream_at`: the contract accepts a missing helper only once that
-column is gone.
+`packages/db/scripts/migration-runtime-acl.ts`, the logical-replication restore
+and the migration audit keep their exception for the helper. Each one accepts a
+database with no helper once `sync_deletions.stream_at` is gone, so they hold
+on a fresh database and on production after the teardown alike.
 
-## Order of the cleanup
+## Production teardown
 
-1. #6431's backend is live in production (`/health` reports its merge commit
-   or later).
-2. The cleanup PR merges. Its migration drops the triggers, both trigger
-   functions, both indexes and both columns.
-3. An administrator runs the teardown script, which drops the helper and the
-   role and refuses while `stream_at` or the stream trigger still exists.
+Run this once, after `0274` and `0275` are in production's ledger
+(`vp run db:verify-journal` lists them as recorded) and the backend that
+shipped with them is live.
 
-Do not drop the helper before step 2. Production migrate would fail its ACL
-preflight, because `stream_at` would still exist with no helper.
+1. `vp exec tsx packages/db/scripts/teardown-sync-deletions-cutoff.ts` prints
+   the plan without connecting.
+2. Set `SYNC_CUTOFF_ADMIN_DATABASE_URL` to a superuser URL and run it again. It
+   inspects the database in a read-only transaction and prints what it would
+   drop, or why it refuses.
+3. Add `--apply`. In one transaction it drops the helper, revokes
+   `pg_read_all_stats` from the role, drops the role, and checks the contract
+   the migration ACL preflight runs. A refusal or a failed check rolls back
+   everything.
+4. Run step 3 again. It prints "Nothing to remove".
 
-Do not roll the backend back to #6339's build (`549969d683`) at any point from
-here on. It calls the helper and reads `stream_at` and the flag, so it fails
-once step 2 lands, and before that it brings back the code the owner decided
-to revert.
+It refuses, without changing anything, while:
+
+- `stream_at`, `is_membership_withdrawal` or either #6339 trigger or trigger
+  function still exists. The migration ACL preflight accepts a missing helper
+  only once `stream_at` is gone, so tearing down first would fail the next
+  production migrate.
+- the helper differs from the reviewed body or owner.
+- anything depends on the helper, or another function's source names it.
+- the role owns or holds privileges on anything else, in any database on the
+  server (the role is cluster-wide).
+- the role has members, or is a member of anything but `pg_read_all_stats`.
+
+`SYNC_CUTOFF_RUNTIME_ROLE` defaults to `boardsesh_runtime`, the same as the
+bootstrap. The script never reads `DATABASE_URL`.
+
+## Rollback
+
+Never roll the backend back to #6339's build (`549969d683`). It calls the helper
+and pages on `stream_at`, and both are gone. Any build from #6431 on is a safe
+rollback target.
