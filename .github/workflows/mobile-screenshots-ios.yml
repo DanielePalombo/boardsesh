@@ -212,6 +212,10 @@ on:
         description: 'Verified Apple keyword ID mapping JSON: locale -> keyword -> ID.'
         type: string
         default: ''
+      cpp_record_run_id:
+        description: 'Candidate only: reuse all four successful en-US native record shards from this workflow run.'
+        type: string
+        default: ''
       cpp_scenario:
         description: 'Record only, one CPP: optional existing capture scenario; empty bootstraps real private demo data.'
         type: string
@@ -298,8 +302,24 @@ jobs:
           PUBLISH_BASELINE: ${{ inputs.publish_baseline || 'false' }}
           FIXTURE_SNAPSHOT: ${{ inputs.fixture_snapshot || '' }}
           CPP_SCENARIO: ${{ inputs.cpp_scenario || '' }}
+          CPP_RECORD_RUN_ID: ${{ inputs.cpp_record_run_id || '' }}
+          FLOW: ${{ inputs.flow || 'app-store' }}
+          GATE: ${{ inputs.gate || 'full' }}
+          RENDER_MODE: ${{ inputs.render_mode || '' }}
+          BOARDS: ${{ inputs.boards || '' }}
+          FROZEN_NOW: ${{ inputs.frozen_now || '' }}
         run: |
           set -euo pipefail
+          if [ -n "$CPP_RECORD_RUN_ID" ]; then
+            if ! [[ "$CPP_RECORD_RUN_ID" =~ ^[1-9][0-9]*$ ]] || [ "$EVENT_NAME" != workflow_dispatch ] ||
+              ! [[ "$CPP_TARGET" =~ ^(kilter|tension|moonboard|spray)$ ]] || [ "$CPP_ACTION" != capture ] ||
+              [ "$FIXTURES_MODE" != record ] || [ "$LOCALES" != en-US ] || [ "$FLOW" != app-store ] || [ "$GATE" != full ] ||
+              [ "$UPLOAD_DEFAULT" != false ] || [ "$PUBLISH_BASELINE" != false ] ||
+              [ -n "$RENDER_MODE$BOARDS$FROZEN_NOW$FIXTURE_SNAPSHOT$CPP_SCENARIO" ]; then
+              echo '::error::Retained CPP preparation requires one unchanged en-US record/capture target and no writes or overrides.'
+              exit 1
+            fi
+          fi
           case "$CPP_TARGET" in
             none)
               [ "$CPP_ACTION" != create ] || { echo '::error::CPP draft creation requires a target or all.'; exit 1; }
@@ -352,7 +372,7 @@ jobs:
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       # Replay needs no credentials. Live captures use the dedicated test account.
       - name: Require credentials for live recording
-        if: ${{ (inputs.fixtures || 'replay') != 'replay' }}
+        if: ${{ (inputs.fixtures || 'replay') != 'replay' && (inputs.cpp_record_run_id || '') == '' }}
         env:
           SCREENSHOT_USER_EMAIL: ${{ secrets.SCREENSHOT_USER_EMAIL }}
           SCREENSHOT_USER_PASSWORD: ${{ secrets.SCREENSHOT_USER_PASSWORD }}
@@ -539,7 +559,7 @@ jobs:
     needs: setup
     # Nothing shipped, nothing to photograph — and this is the expensive one to
     # skip: a cache miss here is a ~30-min native build.
-    if: needs.setup.outputs.shipped == 'true' && !((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'plan' || inputs.cpp_action == 'create'))
+    if: (inputs.cpp_record_run_id || '') == '' && needs.setup.outputs.shipped == 'true' && !((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'plan' || inputs.cpp_action == 'create'))
     runs-on: macos-26
     timeout-minutes: 60
     outputs:
@@ -977,8 +997,8 @@ jobs:
 
       # --- Upload to App Store Connect ---
       # Screenshots ONLY — no binary, no metadata, no review submission. Gated
-      # behind the `upload` input on a dispatch, and behind a complete capture on
-      # the automatic workflow_run trigger. Apple only accepts screenshot changes
+      # behind the `upload` input on a dispatch and a successful full capture on
+      # both manual and automatic runs. Apple only accepts screenshot changes
       # on a version in "Prepare for Submission", and the lane pre-flights that:
       # with no editable version it skips with a summary instead of failing, and
       # mobile-store-draft.yml attaches the published baseline once it creates
@@ -990,7 +1010,7 @@ jobs:
       # a prior failure without it. fastlane's screenshots lane is a pure network
       # upload (no Xcode), so it runs fine on ubuntu.
       - name: Set up Ruby + fastlane
-        if: ${{ success() && (env.MANUAL_UPLOAD_RUN == 'true' || (github.event_name == 'workflow_run' && env.FULL_SET_CAPTURED == 'true')) }}
+        if: ${{ success() && env.FULL_SET_CAPTURED == 'true' && (env.MANUAL_UPLOAD_RUN == 'true' || github.event_name == 'workflow_run') }}
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
@@ -998,7 +1018,7 @@ jobs:
           working-directory: fastlane
 
       - name: Decode App Store Connect API key
-        if: ${{ success() && (env.MANUAL_UPLOAD_RUN == 'true' || (github.event_name == 'workflow_run' && env.FULL_SET_CAPTURED == 'true')) }}
+        if: ${{ success() && env.FULL_SET_CAPTURED == 'true' && (env.MANUAL_UPLOAD_RUN == 'true' || github.event_name == 'workflow_run') }}
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
@@ -1013,7 +1033,7 @@ jobs:
           echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
       - name: Upload screenshots to App Store Connect
-        if: ${{ success() && (env.MANUAL_UPLOAD_RUN == 'true' || (github.event_name == 'workflow_run' && env.FULL_SET_CAPTURED == 'true')) }}
+        if: ${{ success() && env.FULL_SET_CAPTURED == 'true' && (env.MANUAL_UPLOAD_RUN == 'true' || github.event_name == 'workflow_run') }}
         working-directory: fastlane
         env:
           APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
@@ -1137,7 +1157,7 @@ jobs:
 
   cpp-bootstrap:
     needs: setup
-    if: ${{ needs.setup.result == 'success' && (inputs.cpp_target || 'none') != 'none' && inputs.cpp_action == 'capture' && inputs.fixtures == 'record' && (inputs.cpp_scenario || '') == '' }}
+    if: ${{ needs.setup.result == 'success' && (inputs.cpp_target || 'none') != 'none' && inputs.cpp_action == 'capture' && inputs.fixtures == 'record' && (inputs.cpp_scenario || '') == '' && (inputs.cpp_record_run_id || '') == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -1194,12 +1214,13 @@ jobs:
 
   cpp-capture:
     needs: [setup, ios-build, cpp-bootstrap]
-    if: ${{ !cancelled() && needs.setup.result == 'success' && needs.ios-build.result == 'success' && (needs.cpp-bootstrap.result == 'success' || needs.cpp-bootstrap.result == 'skipped') && (inputs.cpp_target || 'none') != 'none' && inputs.cpp_action != 'plan' && inputs.cpp_action != 'create' }}
+    if: ${{ !cancelled() && needs.setup.result == 'success' && needs.ios-build.result == 'success' && (needs.cpp-bootstrap.result == 'success' || needs.cpp-bootstrap.result == 'skipped') && (inputs.cpp_target || 'none') != 'none' && inputs.cpp_action != 'plan' && inputs.cpp_action != 'create' && (inputs.cpp_record_run_id || '') == '' }}
     runs-on: macos-26
     timeout-minutes: 65
     strategy:
       fail-fast: false
-      max-parallel: 8
+      # Recording shards share one owned session; avoid competing leader connections.
+      max-parallel: ${{ inputs.fixtures == 'record' && 1 || 8 }}
       matrix: ${{ fromJSON(needs.setup.outputs.cpp_matrix) }}
     env:
       EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: 401523882502-0f6d7te1vekvkpmg18t8di6l0ig560q7.apps.googleusercontent.com
@@ -1232,29 +1253,40 @@ jobs:
 
   cpp-prepare-record:
     needs: [setup, cpp-capture]
-    if: ${{ !cancelled() && needs.cpp-capture.result == 'success' && inputs.fixtures == 'record' && (inputs.cpp_target || 'none') != 'none' }}
+    if: ${{ !cancelled() && needs.setup.result == 'success' && (needs.cpp-capture.result == 'success' || (inputs.cpp_record_run_id || '') != '') && inputs.fixtures == 'record' && (inputs.cpp_target || 'none') != 'none' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: '22.x'
           cache: true
       - run: vp install --frozen-lockfile
+      - name: Verify and download retained native records before credentials
+        if: ${{ (inputs.cpp_record_run_id || '') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CPP_TARGET: ${{ inputs.cpp_target || 'none' }}
+          CPP_RECORD_RUN_ID: ${{ inputs.cpp_record_run_id || '' }}
+          SOURCE_SHA: ${{ needs.setup.outputs.source_sha }}
+        run: vp exec node --import tsx scripts/prepare-retained-cpp-record.ts --out "$RUNNER_TEMP/cpp-recordings" --receipt "$RUNNER_TEMP/cpp-retained-receipt.json"
       - name: Download real recorded CPP shards
+        if: ${{ (inputs.cpp_record_run_id || '') == '' }}
         uses: actions/download-artifact@v4
         with:
           pattern: screenshot-fixtures-cpp-capture-${{ inputs.cpp_target || 'none' }}-*
           path: ${{ runner.temp }}/cpp-recordings
-      - name: Merge and prepare immutable CPP candidate
+      - name: Merge immutable CPP recording shards
         env:
           CPP_TARGET: ${{ inputs.cpp_target || 'none' }}
           CPP_MATRIX: ${{ needs.setup.outputs.cpp_matrix }}
-          SCREENSHOT_USER_EMAIL: ${{ secrets.SCREENSHOT_USER_EMAIL }}
-          SCREENSHOT_USER_PASSWORD: ${{ secrets.SCREENSHOT_USER_PASSWORD }}
         run: |
           set -euo pipefail
           mapfile -d '' -t manifests < <(find "$RUNNER_TEMP/cpp-recordings" -type f -name manifest.json -print0 | LC_ALL=C sort -z)
@@ -1268,10 +1300,24 @@ jobs:
           # The signatures/timestamps differ naturally between genuine shards.
           # Keep the newest actual response and retain the merger's conflict log.
           vp run mobile:screenshot-fixtures-merge -- --out "$RUNNER_TEMP/cpp-merged" --on-conflict newest "${directories[@]}"
+      - name: Validate retained newest merged source before credentials
+        if: ${{ (inputs.cpp_record_run_id || '') != '' }}
+        run: vp exec node --import tsx scripts/prepare-retained-cpp-record.ts --merged "$RUNNER_TEMP/cpp-merged" --receipt "$RUNNER_TEMP/cpp-retained-receipt.json"
+      - name: Prepare immutable CPP candidate
+        env:
+          CPP_TARGET: ${{ inputs.cpp_target || 'none' }}
+          CPP_RECORD_RUN_ID: ${{ inputs.cpp_record_run_id || '' }}
+          SCREENSHOT_USER_EMAIL: ${{ secrets.SCREENSHOT_USER_EMAIL }}
+          SCREENSHOT_USER_PASSWORD: ${{ secrets.SCREENSHOT_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
           vp exec node --import tsx scripts/prepare-ios-campaign-fixtures.ts "$RUNNER_TEMP/cpp-merged" "$RUNNER_TEMP/cpp-prepared" --cpp --refresh-photo-urls
           vp run mobile:screenshot-fixtures-pseudonymise -- --dir "$RUNNER_TEMP/cpp-prepared" --check
           mkdir -p "$RUNNER_TEMP/cpp-candidate"
           vp exec node --import tsx scripts/screenshot-fixtures-publish.ts --archive "$RUNNER_TEMP/cpp-candidate/$CPP_TARGET.json.gz" "$RUNNER_TEMP/cpp-prepared" > "$RUNNER_TEMP/cpp-candidate/$CPP_TARGET.digest.json"
+          if [ -n "$CPP_RECORD_RUN_ID" ]; then
+            cp "$RUNNER_TEMP/cpp-retained-receipt.json" "$RUNNER_TEMP/cpp-candidate/$CPP_TARGET.provenance.json"
+          fi
           echo "CPP $CPP_TARGET candidate archived. No fixture pin or App Store resource was published." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload sanitized CPP fixture candidate
         uses: actions/upload-artifact@v4

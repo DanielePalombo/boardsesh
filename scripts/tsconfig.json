@@ -196,6 +196,8 @@
     "mobile-build-sim-app.ts",
     "mobile-dev-start.ts",
     "mobile-screenshots.ts",
+    "mobile-screenshot-maestro.ts",
+    "__tests__/mobile-screenshot-maestro.test.ts",
     "mobile-ios-shots.ts",
     "mobile-android-apk.ts",
     "mobile-android-dev-gate.ts",
@@ -207,12 +209,16 @@
     "__tests__/ios-profiling-tools.test.ts",
     "__tests__/mobile-ios-run.test.ts",
     "__tests__/mobile-screenshots.test.ts",
+    "__tests__/app-store-ipad-readiness.test.ts",
+    "__tests__/ios-campaign-primary.test.ts",
     "__tests__/ios-capture-diagnostics.test.ts",
     "lib/ios-capture-diagnostics.ts",
     "__tests__/mobile-profile-capture.test.ts",
     "__tests__/mobile-android-apk.test.ts",
     "__tests__/with-android-dev-menu-defaults.test.ts",
     "prepare-ios-campaign-fixtures.ts",
+    "prepare-retained-cpp-record.ts",
+    "__tests__/prepare-retained-cpp-record.test.ts",
     "lib/screenshot-fixture-assets.ts",
     "__tests__/screenshot-fixture-assets.test.ts",
     "lib/screenshot-campaign-session.ts",
@@ -229,6 +235,7 @@
     "__tests__/cpp-photo-refresh.test.ts",
     "__tests__/cpp-ws-recording.test.ts",
     "__tests__/cpp-grade-count.test.ts",
-    "__tests__/cpp-upstream-diagnostics.test.ts"
+    "__tests__/cpp-upstream-diagnostics.test.ts",
+    "__tests__/cpp-detail-coverage.test.ts"
   ]
 }

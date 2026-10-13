@@ -26,6 +26,65 @@ The default publisher writes `app-stores/screenshot-fixtures.json`; do not use
 its upload mode for CPPs. CPP archive export and target-reference installation
 leave both that shared pin and `app-stores/apple/campaign-fixtures.json` intact.
 
+CPP candidate preparation also records the native player's deferred detail reads.
+The screenshot flow stays above the fold, while a real scroll can mount Beta
+Videos and Community and request `GetBetaLinks`, `GetClimbProposals`, and
+`ClimbStatsHistory`. After every native recording shard succeeds,
+`cpp-prepare-record` authenticates the same screenshot account and fetches those
+exact documents and variables through the existing recording proxy on loopback.
+The source roster and search responses must prove each selected board and climb.
+The scope is six selected hero climbs, the optional distinct accessory, and the
+explicit manufacturer primary status/current scene: at most eight identities
+and 24 detail queries after deduplication. The genuine status/current climb can
+differ from the hero; it must match the recorded scene title, current JoinSession
+and FullSync item, and canonical primary-board search evidence. Hero provenance
+is checked separately. Unrelated queue items never expand this scope.
+Explicitly empty spray wall editor scenes are skipped.
+
+To prepare a retained CPP recording without repeating valid native captures,
+dispatch `cpp_record_run_id` with one target, `cpp_action=capture`,
+`fixtures=record`, `locales=en-US`, `flow=app-store`, and `gate=full`.
+Upload and baseline flags must be false; scenario, fixture, board, render and
+clock overrides must be empty. This skips bootstrap, build and capture and uses
+the existing preparation job. The producer must be a completed first attempt
+of this repository's screenshot workflow, from an ancestor of the preparer,
+with all four native devices successful. An overall failure qualifies only when
+the old preparation job rejected the owned primary queue after those captures.
+
+Before screenshot credentials, the job verifies original artifact IDs, archive
+digests and job timestamps, native PNG inventory and hashes, bootstrap scenario,
+owner and canonical source checks, then checks the newest merged source again.
+Each shard's exact grade count proof stays mandatory; scene identity follows
+the merger's normalization of the changing count and its proof metadata.
+It authenticates genuine reads through the existing preparer and archives a
+candidate. The candidate's provenance receipt retains separate producer and
+preparer SHAs and artifact hashes, without account or session metadata.
+The candidate digest remains in its separate digest JSON; merge conflicts stay
+in the preparation job log.
+Original native pixels remain attributed to the producer. This path publishes
+no fixture or store assets; candidate QA and a full replay still follow.
+
+CPP recording shards run one at a time because they join the same private
+session; replay keeps eight parallel shards. Before authenticating or preparing
+manufacturer detail coverage, the recorded primary queue must satisfy the
+existing strict owned leader predicate, including positive JoinSession and
+account-participant leadership. This check sends no wall-confirmation request.
+The newest genuine merged response must pass; older positive snapshots never
+repair a newer negative result. Empty spray editor scenes retain their explicit
+no-JoinSession behavior.
+
+The recorder extends a temporary copy, preserves the original fixture and static
+bytes, and advances `frozenNow` using actual response timestamps. Existing exact
+responses are retained; collisions, missing responses, malformed data, changed
+owners or upstreams, explicit credential fields in response bodies, and newly
+received live tokens block candidate output.
+Other climbers' beta handles and proposal names and avatars use the same
+pseudonymization rules as native recording. Manufacturer pages require this
+authenticated coverage check even when they have no private photos to refresh.
+This preparation creates no app content and leaves native captures, lazy-query
+behavior, fixture pins, and store resources unchanged. A full native replay must
+still verify the resulting candidate before its screenshots are staged.
+
 The Apple campaign archive and reference are hash-named assets on the existing
 `screenshots-baseline` GitHub prerelease. They leave its screenshot ZIPs and
 baseline manifest unchanged. Adding these fixture assets does not promote a
@@ -1214,6 +1273,25 @@ naming it; `--on-conflict newest` would keep the fresher copy, but the other
 un-re-recorded shards' overlapping keys are still frozen at a stale instant).
 
 ### Campaign native session transport
+
+Regular iPad captures first select the exact primary board from the verified
+GetMyBoards roster through the local screenshot command bridge. Its separate
+`EXPO_PUBLIC_SCREENSHOT_PRIMARY_BOARD_URL` and `COMMANDS` keys leave CPP's six-board
+mapping disabled, preserving the regular campaign's seven named boards. The
+orchestrator resets the command sequence before each device, and the native flow
+requires the exact route acknowledgement before sidebar navigation.
+
+Climbs must show the real recorded primary row inside the current climb list.
+The Wall kiosk must show that climb's title and the exact painted marker bound
+to its published owned-board UUID, climb UUID and actual panel geometry. The
+board renderer exposes that marker only after its current background and lit
+overlay have displayed. A selected sidebar destination alone cannot pass these
+gates: an empty picker or idle wall now fails before its screenshot is taken.
+Legacy live iPad App Store capture fails before building or launching; use the
+verified campaign replay. The normal workflow's App Store replay already resolves
+to that campaign automatically. Legacy phone flows retain their existing path.
+Primary seed validation matches the production default SearchClimbs input,
+document and fixture index hashes; it never manufactures a missing climb.
 
 The iOS campaign replay adapts only the pinned native JoinSession and QueueUpdates
 selection sets. It projects fields already present in the recorded crew snapshot;
