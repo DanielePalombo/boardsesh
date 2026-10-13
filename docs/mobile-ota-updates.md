@@ -983,7 +983,10 @@ state artifact is the authority. The current run is ignored, along with future q
 requested writes that have not started. A future completed or in-progress write run blocks this run;
 dispatch a new controller run so it can read that newer checkpoint. Read-only plans never replace state.
 Missing or unknown future-writer status also blocks recovery. An older unfinished write
-run still blocks recovery. A missing, expired, corrupt or stale latest earlier checkpoint blocks automation, including
+run still blocks recovery. A failed artifact-less first attempt may be skipped only when complete,
+trusted job evidence proves that every controller write step was explicitly skipped. A completed
+`startup_failure` with no jobs can also be skipped. Reruns, incomplete evidence, and any started
+controller write still require recovery. A missing, expired, corrupt or stale latest earlier checkpoint blocks automation, including
 after a failed or cancelled run. Do not substitute an older artifact, reset ownership or guess a baseline.
 Recovery requires the valid latest checkpoint: repair missing state from retained authoritative evidence
 and compare its producer and owned IDs with the live server before retrying. `abort` cannot reconstruct
@@ -1019,6 +1022,29 @@ only when the repository activation variable is true. Planning does not publish 
 Retry with a **new dispatch**, rather than GitHub's Re-run button: mutating run attempts other than one are
 refused so a previous attempt's artifact IDs and ownership evidence are never replaced. Dispatch a new
 `command=tick` to resume recorded work, or a new `command=abort` for explicit recovery.
+
+**Promote a pinned staging export immediately.** To ship approved main bytes at 100% on both
+platforms without waiting for the daily qualification window, select a successful main push
+deployment with its retained `mobile-ota-stage` artifact, then dispatch:
+
+```bash
+SOURCE_RUN_ID=38355151115 # Replace with the selected successful deployment run ID.
+gh workflow run mobile-ota-promote-staged.yml --ref main -f source_run_id="$SOURCE_RUN_ID"
+```
+
+The main-only workflow runs in `Production` and holds `mobile-ota-production` throughout.
+It verifies source-run provenance and receipt SHA, validates both archived exports and their
+fingerprints, and checks both immutable saved production baselines before any unlock. It checks
+the live backend schema against the archived SHA and OTA-server readiness against the controller
+commit, awaits the trusted main-only unlock, then publishes the archived bytes without exporting
+again. The existing promoter checks the saved baselines again after unlock; a changed baseline
+blocks publication rather than being regenerated. The daily cadence and activation switch remain unchanged.
+
+The final summary checks each platform independently for the archived bundle, assets and Expo config,
+including after a partial failure. A failed publication remains failed even if later probes find the
+bytes served. Workflow reruns are refused: inspect both production heads and retained source bytes
+before deciding recovery. A new dispatch still cannot bypass a changed saved baseline. Do not blindly
+retry a partial publication, replace the source receipt, reset controller state or recapture baselines.
 
 #### Promoting to another branch, or as a rollout
 
@@ -2142,13 +2168,13 @@ Run the gate in this order:
    stops the Tigris-copy workflow without writing.
 2. Freeze every OTA writer: disable `production-deploy.yml` first, then disable
    `mobile-ota-production.yml`, `mobile-ota-backport.yml`, `mobile-ota-preview.yml`,
-   `mobile-ota-preview-prompt.yml` and `mobile-ota-preview-sweep.yml`. The production deploy workflow can call the
+   `mobile-ota-preview-prompt.yml`, `mobile-ota-preview-sweep.yml` and `mobile-ota-promote-staged.yml`. The production deploy workflow can call the
    production OTA publisher through `workflow_call` and promote its staged update; GitHub records that run under
    the caller, so the callee's run list alone misses it. Disabling it also pauses web and backend production deploys
-   until it is re-enabled. Confirm all six are idle with
+   until it is re-enabled. Confirm all seven are idle with
    `gh run list --workflow <file> --status <status>` for `requested`, `waiting`, `pending`, `queued` and `in_progress`.
-   The migration workflow first verifies all six are `disabled_manually`, then refuses copy/verify while any has a
-   nonterminal run. Keep all six disabled through copy, final verification and Railway credential rotation; their
+   The migration workflow first verifies all seven are `disabled_manually`, then refuses copy/verify while any has a
+   nonterminal run. Keep all seven disabled through copy, final verification and Railway credential rotation; their
    normal concurrency groups do not exclude one another.
 3. Dispatch the same workflow with `mode=copy` and `ota_publishes_frozen=true`. It refuses destination-only keys
    before its first PUT. Existing same-key objects must match the source by full size, SHA-256 and portable metadata,
@@ -2164,14 +2190,14 @@ Run the gate in this order:
    `AWS_SECRET_ACCESS_KEY` together with the scoped R2 values. Do not change `S3_BUCKET_NAME`. This repository does
    not perform that credential rotation.
 6. Verify `/hc` and `/ready`, publish one test update, and install/download it from a production-configured client
-   before unfreezing OTA writers. Re-enable the five direct publisher files first, then re-enable
+   before unfreezing OTA writers. Re-enable the six direct publisher files first, then re-enable
    `production-deploy.yml` with `gh workflow enable <file>` so its caller resumes only after its OTA callee is
    enabled. Keep the Tigris bucket and its credentials intact as the rollback source. If the migration is abandoned
-   before rotation, re-enable the same five direct publishers, then `production-deploy.yml`; no reader or source
+   before rotation, re-enable the same six direct publishers, then `production-deploy.yml`; no reader or source
    object changed.
 
 **Rollback after new R2 publishes:** restoring the endpoint alone strands updates added to the shared database
-after cutover. Freeze and drain the same six workflows, manual publishers, server cleanup and lifecycle mutations.
+after cutover. Freeze and drain the same seven workflows, manual publishers, server cleanup and lifecycle mutations.
 Retain the previous Tigris credentials securely and supply `OTA_LEGACY_AWS_ENDPOINT_URL`,
 `OTA_LEGACY_AWS_ACCESS_KEY_ID`, `OTA_LEGACY_AWS_SECRET_ACCESS_KEY`, and optionally `OTA_LEGACY_AWS_REGION`
 and `OTA_LEGACY_S3_FORCE_PATH_STYLE`. Run `vp run storage:migrate-ota -- --reverse --apply`, then
