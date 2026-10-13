@@ -165,9 +165,13 @@ writing, even before native captures or fixture pins exist. It reports unresolve
 local inputs and the approved keyword text, eligible opaque IDs, and existing
 page assignments as structured `CPP_PLAN_JSON` log entries. Set
 `ASC_CPP_PLAN_OUTPUT` to also write this report to a local JSON artifact.
-Create makes missing named pages with one empty initial draft version, without
-requiring captures or eligible organic keywords. It verifies the returned app
-ownership, exact name, App Store URL and version state. Repeated calls reuse
+Create makes missing named pages with one blank initial draft version and one
+locale-only localization, without requiring captures or eligible organic keywords.
+The first configured target localization selects the first App Store locale in
+its manifest mapping. Every missing target's mapping is checked before any page
+is created. Read-back verifies app ownership, exact name, App Store URL, version
+state, and one matching version-owned localization with no promotional copy,
+screenshots, previews, or keyword assignments. Repeated calls reuse
 existing pages without changing their content or visibility, including approved
 pages; ambiguous names, unexpected ownership, or existing pages without a current
 version fail before any selected page is created. Replaced historical versions
@@ -175,9 +179,10 @@ do not qualify as current versions.
 It never assigns keywords, uploads screenshots, or submits review. Drafts are
 visible in App Store Connect; customers can use them after later content approval.
 Set `ASC_CPP_CREATE_OUTPUT` to save verified identities as JSON.
-The compound creation request links its empty version with Apple's
+The compound creation request links its initial version and locale-only localization with Apple's
 [request-local `${...}` identifier syntax](https://developer.apple.com/videos/play/wwdc2020/10004/),
-not a guessed persistent resource ID. A failed POST is never automatically retried.
+using the [documented inline localization relationship](https://developer.apple.com/documentation/appstoreconnectapi/post-v1-appcustomproductpages).
+It never copies an App Store version template. A failed POST is never automatically retried.
 
 For CI, dispatch `mobile-screenshots-ios.yml` from `main` with `cpp_target: all`
 and `cpp_action: create`, keeping the default replay settings and no capture

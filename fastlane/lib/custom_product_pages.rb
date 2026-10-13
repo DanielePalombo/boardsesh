@@ -222,9 +222,9 @@ module BoardseshCPP
       entry["page"], entry["version"] = final_page, final_version
     end
 
-    # Create only the named page and its empty initial draft in one documented
-    # compound request. This never copies a template or writes listing metadata,
-    # screenshots, localizations, keywords, visibility, or review submissions.
+    # Create the named page, blank initial draft, and one locale-only localization
+    # in one documented compound request. Never copy a template or write default
+    # listing metadata, promotional text, screenshots, keywords, visibility, or review.
     # Existing pages are read and returned unchanged, including live pages.
     def create_drafts(selected, targets)
       names = selected.map { |name| targets.fetch(name).fetch("referenceName") }
@@ -240,7 +240,7 @@ module BoardseshCPP
         if page && versions.none? { |version| version.dig("attributes", "state") != "REPLACED_WITH_NEW_VERSION" }
           raise Error, "CPP #{name} has no current version; inspect the page in App Store Connect before creation"
         end
-        { "target" => target, "name" => name, "page" => page, "versions" => versions }
+        { "target" => target, "name" => name, "page" => page, "versions" => versions, "locale" => page ? nil : initial_draft_locale(target, targets.fetch(target)) }
       end
       candidates.map do |candidate|
         created = candidate["page"].nil?
@@ -250,6 +250,7 @@ module BoardseshCPP
           # included resource must use the same placeholder within this POST.
           # https://developer.apple.com/videos/play/wwdc2020/10004/
           inline_version_id = '${new-cpp-version}'
+          inline_localization_id = '${new-cpp-localization}'
           response = @client.request("POST", "/v1/appCustomProductPages", {
             "data" => {
               "type" => "appCustomProductPages",
@@ -259,7 +260,17 @@ module BoardseshCPP
                 "appCustomProductPageVersions" => { "data" => [{ "type" => "appCustomProductPageVersions", "id" => inline_version_id }] }
               }
             },
-            "included" => [{ "type" => "appCustomProductPageVersions", "id" => inline_version_id, "relationships" => { "appCustomProductPage" => {} } }]
+            # Apple's endpoint example links a localization from the inline
+            # version. Only locale is required; omitted copy/assets stay blank.
+            # https://developer.apple.com/documentation/appstoreconnectapi/post-v1-appcustomproductpages
+            "included" => [
+              { "type" => "appCustomProductPageVersions", "id" => inline_version_id, "relationships" => {
+                "appCustomProductPage" => {},
+                "appCustomProductPageLocalizations" => { "data" => [{ "type" => "appCustomProductPageLocalizations", "id" => inline_localization_id }] }
+              } },
+              { "type" => "appCustomProductPageLocalizations", "id" => inline_localization_id,
+                "attributes" => { "locale" => candidate.fetch("locale") }, "relationships" => { "appCustomProductPageVersion" => {} } }
+            ]
           })
           page_id = response.fetch("data").fetch("id")
           candidate["page"] = verified_draft_page(page_id, candidate.fetch("name"))
@@ -267,6 +278,7 @@ module BoardseshCPP
           unless candidate.fetch("versions").length == 1 && candidate.fetch("versions").first.dig("attributes", "state") == "PREPARE_FOR_SUBMISSION"
             raise Error, "Created CPP #{candidate.fetch('name')} did not return one initial draft; inspect the page in App Store Connect before retrying"
           end
+          verified_initial_localization(candidate.fetch("versions").first, candidate.fetch("locale"), candidate.fetch("name"))
         end
         page = candidate.fetch("page")
         versions = candidate.fetch("versions")
@@ -277,9 +289,37 @@ module BoardseshCPP
           "url" => page.dig("attributes", "url"), "visible" => page.dig("attributes", "visible"),
           "versionId" => current && current["id"], "state" => current && current.dig("attributes", "state"),
           "versions" => versions.map { |version| { "id" => version.fetch("id"), "version" => version.dig("attributes", "version"), "state" => version.dig("attributes", "state") } },
-          "publication" => created ? "Empty draft: screenshots and organic keywords remain pending; no review was submitted." : "Existing page reused without edits; no review submission was created."
+          "publication" => created ? "Blank draft initialized with one locale; screenshots and organic keywords remain pending; no review was submitted." : "Existing page reused without edits; no review submission was created."
         }
       end
+    end
+
+    def initial_draft_locale(target, config)
+      configured = config["localizations"]
+      app_locale = configured.is_a?(Hash) && configured.keys.first
+      mapping = @manifest["locales"]
+      store_locales = mapping.is_a?(Hash) && mapping[app_locale]
+      locale = store_locales.is_a?(Array) && store_locales.first
+      unless locale.is_a?(String) && locale.match?(/\A[a-z]{2}-[A-Z]{2}\z/)
+        raise Error, "CPP #{target} needs a configured initial localization and valid App Store locale mapping before creation"
+      end
+      locale
+    end
+
+    def verified_initial_localization(version, expected_locale, name)
+      initial = @client.list("/v1/appCustomProductPageVersions/#{version.fetch('id')}/appCustomProductPageLocalizations?include=appCustomProductPageVersion&limit=200")
+      localization = initial.first
+      unless initial.length == 1 && localization.is_a?(Hash) && localization["type"] == "appCustomProductPageLocalizations" && localization["id"].is_a?(String) && !localization["id"].empty? && localization.dig("attributes", "locale") == expected_locale && [nil, ""].include?(localization.dig("attributes", "promotionalText")) && localization.dig("relationships", "appCustomProductPageVersion", "data", "type") == "appCustomProductPageVersions" && localization.dig("relationships", "appCustomProductPageVersion", "data", "id") == version.fetch("id")
+        raise Error, "Created CPP #{name} did not return one blank owned initial localization; inspect the page in App Store Connect before retrying"
+      end
+      locale_id = localization.fetch("id")
+      screenshots = @client.list("/v1/appCustomProductPageLocalizations/#{locale_id}/appScreenshotSets?limit=200")
+      previews = @client.list("/v1/appCustomProductPageLocalizations/#{locale_id}/appPreviewSets?limit=200")
+      keywords = @client.list("/v1/appCustomProductPageLocalizations/#{locale_id}/searchKeywords?limit=200")
+      unless screenshots.empty? && previews.empty? && keywords.empty?
+        raise Error, "Created CPP #{name} initial localization is not blank; no assets or keywords were changed"
+      end
+      localization
     end
 
     def verified_draft_page(page_id, expected_name)
