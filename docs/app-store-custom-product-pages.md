@@ -49,6 +49,17 @@ manufacturer affiliation or endorsement.
 
 ## Genuine capture data comes first
 
+The catalogue count can change after bootstrap. Recording derives the grade-filter
+count from the actual recorded response to the exact native query and variables,
+then waits for that literal localized count and the selected grade controls. Its
+response key, hashes, timestamp and count proof stay with the recording, raw
+capture and prepared candidate. Replay verifies that immutable proof and waits
+for its fixed count. A changed count for the same query within one recording
+fails capture; other queries retain the existing first-response rule. When
+shards disagree, `--on-conflict newest` derives only the count and its proof from
+the genuine winning response. Every other capture and provenance field must
+still agree.
+
 The current default-listing campaign fixture contains seven board families; it
 does not prove the three variants required by each CPP. No CPP fixture reference
 is pinned until its actual recorded data has been verified. Missing coverage
@@ -162,6 +173,13 @@ Generated flows retain a separate Maestro command document. All 64 combinations
 of target, app language, and device were validated with the pinned Maestro 2.6.1
 parser before the native capture rerun.
 
+CPP shard retries retain their failure evidence in separate
+`capture-debug/attempt-1/` and `capture-debug/attempt-2/` directories. Metro,
+backend, native-process diagnostics and partial captures belong to that attempt;
+the next invocation cannot overwrite them. CI uploads the existing diagnostic
+artifact for 14 days even when a later attempt succeeds. The capture result,
+two-attempt budget and content checks keep their existing behavior.
+
 The original real spray-wall photographs are committed at
 `app-stores/apple/cpp-source-photos/`: `lizfinal.JPG`, `cherry4.JPG`, and
 `bowlo.jpg`. The CPP manifest records each original filename, byte count, and
@@ -200,6 +218,18 @@ board's first ten results for the solo accessory preview. Its raw climb UUID,
 title, and displayed grade are recorded as `accessoryClimb`; the wall-status climb
 stays unchanged. Bootstrap stops if those results have no suitable different
 climb. Older scenarios without this field keep their existing capture behavior.
+On phones, the strict solo-head marker is attached to the existing visible
+accessory row: UIKit can omit its central Apple Zoom link from the accessibility
+tree. Only CPP captures group that row under its actual climb name; normal use
+keeps the controls' individual accessibility. The marker still rejects retained
+or shared-session content and requires the actual selected climb UUID.
+On tablets, joining returns to the Session tab. Capture reopens UIKit's sidebar
+when collapsed, waits for its open state, then selects the existing localized
+Climbs tab and verifies its selected state before issuing the queue command;
+the exact route, sequence, private-session and content gates still apply.
+Screenshot wall readers also use the actual published owned-board UUID as their
+scope. Switching capture boards starts a new local history from that board's
+recorded climbs, so previous families do not remain in the status or kiosk list.
 Bootstrap verifies the persisted owner, named board identity, configuration, private
 visibility, permanence, and durable lifecycle before joining; live presence alone
 does not determine whether a saved session is reusable. An account/backend-bound checkpoint whose durable lifecycle is ended may receive

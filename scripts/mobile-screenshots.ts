@@ -168,6 +168,7 @@ import {
 // same): resolving a dev-client APK is one behaviour with one cache, and the lib
 // layer can't own it because it shells out to gh/gradle.
 import { ensureAndroidApk } from './mobile-android-apk';
+import { assertCppGradeCountProof, readCppCountFixtures } from './lib/cpp-grade-count';
 
 const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE_DIR = resolve(ROOT_DIR, 'packages', 'mobile');
@@ -2098,6 +2099,7 @@ export function renderCppMaestroFlow(
   device: IosScreenshotDevice,
   coverage?: CppCaptureCoverage,
   locale: Locale = 'en-US',
+  recordGradeCount = false,
 ): string {
   if (!coverage || coverage.target !== target) throw new Error(`Missing CPP content gates for ${target}`);
   const page = readCppPage(target);
@@ -2194,6 +2196,14 @@ export function renderCppMaestroFlow(
         '- tapOn: ${SCREENSHOT_JOIN_LABEL}',
         '- waitForAnimationToEnd',
       );
+      if (ipad)
+        commands.push(
+          // Join returns to Session. Reopen UIKit's sidebar if the previous
+          // capture collapsed it, then select the native Climbs tab before
+          // the acknowledged queue command changes its capture parameters.
+          '- runFlow:\n    when:\n      notVisible:\n        text: ${SCREENSHOT_SIDEBAR_CLIMBS_LABEL}\n        selected: true\n    commands:\n      - runFlow:\n          when:\n            visible: ${SCREENSHOT_SIDEBAR_TOGGLE_LABEL}\n          commands:\n            - tapOn: ${SCREENSHOT_SIDEBAR_TOGGLE_LABEL}\n      - extendedWaitUntil:\n          visible: ${SCREENSHOT_SIDEBAR_HIDE_LABEL}\n          timeout: 15000\n      - tapOn:\n          text: ${SCREENSHOT_SIDEBAR_CLIMBS_LABEL}\n          selected: false',
+          '- extendedWaitUntil:\n    visible:\n      text: ${SCREENSHOT_SIDEBAR_CLIMBS_LABEL}\n      selected: true\n    timeout: 90000',
+        );
     }
     commands.push(
       `- evalScript: \${output.cppSequence = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/set?scene=${scene.command}').body).sequence}`,
@@ -2313,8 +2323,14 @@ export function renderCppMaestroFlow(
         commands.push(
           `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.maxSelected!, true))}\n    timeout: 90000`,
         );
+      if (recordGradeCount)
+        commands.push(
+          `- retry:\n    maxRetries: 3\n    commands:\n      - evalScript: \${output.cppGradeCount = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/grade-count?sequence=' + output.cppSequence + '&locale=${locale}').body)}\n      - assertTrue: \${output.cppGradeCount.sequence == output.cppSequence && output.cppGradeCount.locale == '${locale}' && output.cppGradeCount.proof.totalCount > 0}`,
+        );
       commands.push(
-        `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeSelectors.count)}\n    timeout: 90000`,
+        recordGradeCount
+          ? '- extendedWaitUntil:\n    visible: ${output.cppGradeCount.selector}\n    timeout: 90000'
+          : `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeSelectors.count)}\n    timeout: 90000`,
         '- waitForAnimationToEnd:\n    timeout: 30000',
       );
     }
@@ -2424,7 +2440,13 @@ function renderedFlowFileForIosDevice(
     source = source.replace('- runFlow: app-store.yaml', legacyCommands);
   }
   if (options.cpp && options.cpp !== 'all')
-    source = renderCppMaestroFlow(options.cpp, screenshotDevice, options.cppCoverage, locale);
+    source = renderCppMaestroFlow(
+      options.cpp,
+      screenshotDevice,
+      options.cppCoverage,
+      locale,
+      options.fixtures === 'record',
+    );
   writeFileSync(renderedFlowFile, renderMaestroFlowForIosDevice(source, screenshotDevice));
   return renderedFlowFile;
 }
@@ -2695,6 +2717,12 @@ function captureIosDevice(
 
     if (options.cpp && options.cpp !== 'all') {
       if (!backendSession) throw new Error('CPP captures require a record/replay fixture session');
+      if (options.cppCoverage?.scenes.search?.gradeFilter) {
+        const recorded = readScreenshotFixtureManifest(backendSession.fixturesDir);
+        if (!recorded) throw new Error('CPP grade count recording manifest is missing');
+        assertCppGradeCountProof(recorded, readCppCountFixtures(backendSession.fixturesDir, recorded));
+        options.cppCoverage = recorded.capture?.cpp;
+      }
       writeFileSync(
         join(captureDir, 'cpp-capture.json'),
         JSON.stringify({
@@ -3461,7 +3489,11 @@ function runIos(options: ScreenshotOptions): number {
   const screenshotDevices = resolveIosScreenshotDevices(options.devices, options.orientation);
   const localeTargets = resolveAppStoreLocaleTargets(options.appLocales);
 
-  const readinessServer = startReadinessServer();
+  const readinessServer = startReadinessServer(
+    options.cpp && options.fixtures === 'record'
+      ? resolveScreenshotBackendPort(process.env.BOARDSESH_SCREENSHOT_BACKEND_PORT)
+      : undefined,
+  );
   let backendSession: ScreenshotBackendSession | null = null;
   try {
     // Started once for the whole run (every locale, every device), so the
@@ -3495,6 +3527,8 @@ function runIos(options: ScreenshotOptions): number {
       };
       options.boards = selectors.join('|');
       options.cppRecordedBoards = readIosCampaignBoards(fixturesDir) as CppRecordedBoard[];
+      if (options.fixtures === 'replay' && manifest)
+        assertCppGradeCountProof(manifest, readCppCountFixtures(fixturesDir, manifest));
       if (options.fixtures === 'replay')
         assertCppCaptureReady(
           options.cpp,
