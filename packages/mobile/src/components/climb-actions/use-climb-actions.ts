@@ -1,5 +1,6 @@
-// Single source of truth for the climb long-press action list, rendered by the
-// `ClimbReactionMenu` overlay. Each item carries the display metadata (label, icon,
+// Single source of truth for the climb action list, rendered by the long-press
+// `ClimbReactionMenu` overlay and by the player's native ⋯ menu
+// (`PlayDrawerActionsMenu`). Each item carries the display metadata (label, icon,
 // colour) plus a `run()` that performs the action and then calls `onAfterAction` (the
 // reaction menu passes its animated dismiss).
 //
@@ -10,7 +11,7 @@
 // config, the two contextual flags (`currentUserId`, `isAuthenticated`), the required
 // inline playlist host (`onSelectPlaylist`), and the logbook-only `onEditEntry`.
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import type { OpaqueColorValue } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { randomUUID } from 'expo-crypto';
@@ -63,6 +64,25 @@ export type ClimbActionItem = {
   color: string | OpaqueColorValue;
   /** Performs the action, then calls `onAfterAction`. */
   run: () => void;
+};
+
+/**
+ * The surface the actions were opened from, reported as `source` on the events
+ * this hook tracks. Omitted, each event keeps the long-press menu's historical
+ * source (`climb_actions_menu`, `mobile_climb_actions`, `climb_actions`).
+ */
+export type ClimbActionsAnalyticsSource = 'play_drawer_menu';
+
+/**
+ * A favourite the caller already owns. The player's heart keeps an optimistic
+ * override over the server's answer; a menu row reading the server alone would
+ * show the opposite state for the second after a tap, and a tap there would
+ * leave the heart beside it stale.
+ */
+export type ClimbActionsFavoriteControl = {
+  isFavorited: boolean;
+  /** Runs instead of the hook's own mutation. The caller tracks the toggle. */
+  onToggle: () => void;
 };
 
 type UseClimbActionsArgs = {
@@ -140,6 +160,13 @@ type UseClimbActionsArgs = {
   dismissSourceSheet?: DismissSurfaceAndWait;
   /** `/play`-owned native-stack close waiter; absent for every inline surface. */
   dismissPlayerAndWait?: DismissSurfaceAndWait;
+  /** See {@link ClimbActionsAnalyticsSource}. */
+  analyticsSource?: ClimbActionsAnalyticsSource;
+  /**
+   * When provided, the favourite row reads and toggles the caller's state (see
+   * {@link ClimbActionsFavoriteControl}), and the hook skips its own favourite read.
+   */
+  favoriteControl?: ClimbActionsFavoriteControl;
 };
 
 // Mirrors web's constructClimbInfoUrl: Kilter no longer has a public app URL.
@@ -168,9 +195,23 @@ export function useClimbActions({
   onOpenViewOptions,
   dismissSourceSheet,
   dismissPlayerAndWait,
+  analyticsSource,
+  favoriteControl,
 }: UseClimbActionsArgs): ClimbActionItem[] {
   const { t } = useTranslation('climbs');
-  const { openRemix, openEdit } = useCreateClimbNavigation({ dismissSourceSheet, dismissPlayerAndWait });
+  const { openRemix, openEdit, resetActionGuard } = useCreateClimbNavigation({
+    dismissSourceSheet,
+    dismissPlayerAndWait,
+  });
+  // Edit and Remix claim one handoff at a time, and a handoff that throws keeps
+  // its claim. The long-press menu mounts per open, so that never outlives it;
+  // the player's ⋯ lives as long as the player, and would leave Edit and Remix
+  // dead for the rest of the session. Let go whenever another climb is shown,
+  // as the lost-hold banner does.
+  const climbUuid = climb?.uuid;
+  useEffect(() => {
+    resetActionGuard();
+  }, [climbUuid, resetActionGuard]);
   // An archived wall keeps its climbs readable, but the server refuses every
   // edit and new climb on it, so neither Edit nor Fork is offered there.
   const wallArchived = useSprayWallIsArchived(boardConfig?.boardName, boardConfig?.layoutId ?? null);
@@ -212,14 +253,17 @@ export function useClimbActions({
   // Server-truth favourite state, so the favorite row shows a filled heart when the
   // climb is already favourited. Only fetched while the menu is open (the hook is
   // mounted only then). useToggleFavorite invalidates this query, so it stays fresh.
-  const { data: isFavorited } = useFavoriteStatus(
+  // A caller that owns the favourite (the player) answers it instead.
+  const { data: serverFavorited } = useFavoriteStatus(
     boardConfig?.boardName ?? '',
     climb?.uuid ?? null,
     boardConfig?.angle ?? 0,
     {
-      enabled: !!climb && !!boardConfig,
+      enabled: !!climb && !!boardConfig && !favoriteControl,
     },
   );
+  const isFavorited = favoriteControl ? favoriteControl.isFavorited : serverFavorited;
+  const toggleFavoriteOverride = favoriteControl?.onToggle;
 
   const after = useCallback(() => onAfterAction?.(), [onAfterAction]);
 
@@ -322,16 +366,27 @@ export function useClimbActions({
 
     items.push({
       id: 'favorite',
-      title: t('mobile.climbRow.toggleFavorite'),
+      // A caller-owned favourite knows its state for certain, so the row can say
+      // which way it goes; the server read may still be loading here.
+      title: !toggleFavoriteOverride
+        ? t('mobile.climbRow.toggleFavorite')
+        : isFavorited
+          ? t('session:playView.actionBar.removeFavoriteAria')
+          : t('session:playView.actionBar.addFavoriteAria'),
       icon: isFavorited ? 'favorite.fill' : 'favorite',
       color: favoriteColor,
       run: () => {
+        if (toggleFavoriteOverride) {
+          toggleFavoriteOverride();
+          after();
+          return;
+        }
         track(SHARED_EVENTS.FavoriteToggle, {
           action: isFavorited ? 'removed' : 'added',
           climbUuid: climb.uuid,
           boardName,
           layoutId,
-          source: 'mobile_climb_actions',
+          source: analyticsSource ?? 'mobile_climb_actions',
         });
         // Pass the state the row just rendered from: it flips the heart in the
         // climb list optimistically, and it's what the offline local-first path
@@ -350,7 +405,11 @@ export function useClimbActions({
       icon: 'tick',
       color: successColor,
       run: () => {
-        track(SHARED_EVENTS.QuickTickOpened, { climbUuid: climb.uuid, layoutId, source: 'climb_actions' });
+        track(SHARED_EVENTS.QuickTickOpened, {
+          climbUuid: climb.uuid,
+          layoutId,
+          source: analyticsSource ?? 'climb_actions',
+        });
         // In-tree opener (play drawer) stacks the tick sheet above the `/play`
         // modal; the root sheet can't — presenting it dismisses `/play` and the
         // tick sheet closes immediately. Both take the climb/board snapshot so a
@@ -467,7 +526,7 @@ export function useClimbActions({
           after();
           track(SHARED_EVENTS.ClimbShared, {
             method: 'share',
-            source: 'climb_actions_menu',
+            source: analyticsSource ?? 'climb_actions_menu',
             climbUuid: climb.uuid,
             boardName,
             layoutId,
@@ -570,6 +629,8 @@ export function useClimbActions({
     playNext,
     toggleFavoriteMutate,
     isFavorited,
+    toggleFavoriteOverride,
+    analyticsSource,
     openPlayDrawer,
     openLogAscent,
     openAddBetaVideo,
