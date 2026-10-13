@@ -417,12 +417,31 @@ comparison initially shows one row before "Show all". Material keeps a neutral t
 collapsed rows. These are Boardsesh hierarchy choices, not an Apple-prescribed row count; expansion
 stays virtualized and the all-board total remains independent of progress filters.
 
-Profile's Logbook keeps its profile tabs, search/filter row, sort chips, and any expanded facet
-rail in one measured header. On Liquid Glass, the full-height results list uses the native title
-inset plus padding for these supplementary controls; Material places the results viewport below
-the entire opaque header. The filter button stays beside search, outside the horizontally scrolling
-chips. Public profiles keep their toolbar in the page's normal flow. This header is the one block
-that stays on a painted band on iOS 26 (`opaqueControls`): see "Controls pinned under the bar".
+The Profile Logbook puts the quick filter capsule row (see "Quick filter capsules") under the
+profile tabs: Filters · N, then the climber's pinned capsules, then at most one inline Grade or Angle
+rail and the removable tokens. There is no search field on the page: the climb-name search is the
+first row of the filter sheet, and a typed name shows as a token ("“crimp”") so a filtered list
+always says why. In the composed profile header the selected Logbook tab already names the page, so
+the row has no heading of its own. A public profile keeps its "Logbook" heading in the page's
+normal flow; its scope line says "All boards" until a board is picked, then names that board.
+
+The full-height native results list uses the UIKit title inset plus measured padding for these
+supplementary controls. Automatic row anchoring is disabled in this composed native header so
+FlashList does not cancel that padding when the controls are first measured or change height (an
+opening rail changes it too). Its controls use the shared scroll-driven backdrop and clear it when
+the list disappears. Material keeps its results viewport below the entire opaque header.
+
+The Logbook filter sheet is built from the shared filter-sheet parts and applies live, like the
+climbs sheet: X / "Filters" with the feed's own count / Reset. The count is entries, and only on
+the flat feeds: the date-ordered feed's total counts the server's (climb, day) groups, which the
+list regroups by local day, angle and mirror, so it would not match the rows. Its sections are Climb name (names and
+notes), Difficulty (the grade rail), Your ascents (a four-segment All · Sends · Flashes · Attempts
+control, a star minimum, and When presets with Custom From / To rows that can't cross each other or
+today), The climb (board and layout chips when there is a choice to make, the angle rail, the
+setter picker row, Only benchmark climbs) and Sort (Sort by chips and a Descending / Ascending
+order). On someone else's logbook the copy says "Their", never "Your", and the filters and sort last
+the visit: only your own logbook saves them. The setter row pushes a picker route and the sheet
+suspends around it (`useSheetSubRoute`).
 
 Neutral tiles in session summaries and Profile's period comparison use `systemColors.tertiaryFill`
 on Liquid Glass, leaving visual emphasis to the actual values and semantic highlights. Material
@@ -500,8 +519,9 @@ never reach this component and keep their own chrome.
 control and the grade row's `systemColors.fill` capsules have one. The filter tokens carry an
 opaque `systemColors.secondaryBackground` fill for this reason. The fill is on every path: on the
 Material band it is the band's own colour and does not show, and on the iOS band it shows as a
-quiet grey pill. Bare text does not survive a row scrolling behind it, which is why Profile's
-Logbook header (a text heading above its search and sort rows) opts out.
+quiet grey pill. Keep floating control labels on a control surface rather than adding a bare
+section heading above them. The native Profile Logbook's capsule row uses the selected tab as
+its heading.
 
 **It always swallows touches.** The block is `pointerEvents="auto"` whether it floats or not: a row
 the blur has smeared must not take a tap through the gap between two chips.
@@ -511,12 +531,69 @@ still reports the controls alone and the list's `paddingTop`, scroll-indicator i
 `useListTopOffset` are unchanged. The Climbs list also draws its pull-to-refresh spinner below the
 block (`progressViewOffset`).
 
+### Quick filter capsules
+
+The small filter row under a list's title is one component, `CapsuleRow`
+(`src/components/filter-capsules/`). A surface describes each capsule as a plain object and the row
+draws it natively: SwiftUI glass buttons and menus with `controlSize('small')` on iOS, 32dp M3
+`FilterChip`s on Android, Paper chips on the web. The row holds no filter state and no copy; the
+surface passes final, localised labels and bound handlers. Five kinds (`CapsuleRow.types.ts`):
+
+| Kind         | What a tap does                                          | Example              |
+| ------------ | -------------------------------------------------------- | -------------------- |
+| `sheet`      | Opens a sheet or picker the screen presents              | Filters · 2, Angle   |
+| `rail`       | Shows or hides an inline rail under the row              | Grade                |
+| `menu`       | Single-select menu; extra commands after a divider       | Popularity, Recent   |
+| `toggle`     | Flips an on/off filter                                   | Beta videos          |
+| `toggleMenu` | Flips a filter; iOS long-press opens extra commands      | Tall / Wide (lock)   |
+
+- **One active style.** An active capsule is filled with `primaryFill` and labelled in `onPrimary`
+  on every platform, the web included (Paper's selected chip would draw `secondaryContainer`).
+  Never the text brand colour: in dark mode it is a light lavender that white text can't sit on
+  (see "Brand colours").
+- **Glass only where it is real.** Below iOS 26 `@expo/ui` turns the glass styles into plain text
+  buttons, so the row draws `bordered` (resting, neutral) and `borderedProminent` (active) there,
+  picked by `useGlassCapability()` as `Button` does.
+- **The rail chevron is iOS-only.** It points up while the rail is shown. On regular-width iPad a
+  `rail` can carry a `popover` instead of the inline row.
+- **Android and the web are tap-only.** A Compose `FilterChip` eats the long-press (#3319, #3322),
+  so a `toggleMenu` draws a plain toggle there and its commands are unreachable. Keep anything a
+  climber needs on those platforms in the sheet.
+- **Order is the surface's call**, and it is fixed: a capsule never moves because it was pinned
+  later.
+
+**Pins.** Which capsules show is the climber's choice, saved per surface by a store from
+`createPinnedChipsStore({ storageKey, catalog, defaults, normalize?, toStored? })`
+(`src/lib/pinned-chips-store.ts`). Each store has its own key, state and listeners, and its hook
+returns `{ pinned, loaded, isPinned, togglePin }`. Climbs uses the key `pinnedFilterChips` and its
+catalog in `src/lib/pinnable-chips.ts`; `normalize` is where a retired kind migrates (a stored
+`shape` pin becomes Tall + Wide). An active filter whose capsule isn't pinned still shows as a
+removable token under the row, so a filtered list always says why.
+
+**The Logbook is the second surface.** Its catalog is `src/lib/logbook-pinnable-chips.ts` (Grade,
+Status, Stars, When, Board, Angle, Setter, Benchmarks, Sort; Grade, Status, When, Angle and Sort
+pinned on a fresh install), its store `logbookPinnedChipsStore` on the key `pinnedLogbookChips`, and
+its builder `src/components/you/logbook-capsules.ts` (`buildLogbookCapsules`, plus
+`buildLogbookFilterTokens` for the token row), locked by `logbook-capsules.test.ts`. Grade and Angle
+are `rail`s; Status, Stars, When, Board and Sort are `menu`s (When's "Custom…" command opens the
+sheet on the Custom window, scrolled to When; Board shows only with two or more logged boards); Setter is a `sheet`
+capsule that pushes the setter picker; Benchmarks is a `toggle`. The Sort menu switches the key, and
+each option names what it gives ("Latest", "Name A–Z", "Most tries"); the order itself is in the
+sheet. The Logbook's own climb-name search is never a capsule, only a token.
+
+**A new surface adds three things:** a catalog (the pinnable kinds, their order and the default
+pins), a store on its own storage key, and a pure builder that turns its filter state into
+`Capsule[]` (the climbs one is `src/components/search/climb-capsules.ts`, locked by
+`climb-capsules.test.ts`). It renders `<CapsuleRow capsules={…} />` with the builder's output in a
+`useMemo`, and never imports `@expo/ui` itself.
+
 ### Inline facet rows
 
 A filter control that lives in place is a plain row. The reference is the grade picker,
 `GradeRangeRail` (`src/components/grade/GradeRail.tsx`). On Climbs the Grade chip opens it as a row
-of the chrome under the filter chips. The Grade facet in the Logbook opens the same row, and the two
-filter sheets and the iPad popover show it too.
+of the chrome under the filter chips. The Logbook's Grade capsule opens the same row under its
+capsule row (and its Angle capsule an `AngleRangeRail`, one at a time). Both filter sheets and the iPad
+popover use the same picker.
 
 **No frame, no grab handle.** The row belongs to the surface that holds it; it is not a sheet. [HIG
 Sheets](https://developer.apple.com/design/human-interface-guidelines/sheets) keeps the grabber for
@@ -541,7 +618,7 @@ while a finger is on it.
 first chip rests under the first chip of the chip row (or under the section's label in a sheet).
 Both insets are props (`contentInsetLeft` / `contentInsetRight`, 16pt by default). On Climbs, in
 both filter sheets and in the popover the strip scrolls out to the container's edge. Under a chip
-row that is itself inset (the Material chrome, the Logbook toolbar) it clips on that row's line. No
+row that is itself inset (the Material chrome) it clips on that row's line. No
 gradient fade: the background differs per call site.
 
 **One chip per label.** Grades that read the same in the climber's format are one chip, a "stop"

@@ -436,6 +436,18 @@ single secondary subtitle in the existing `SheetTopBar`, not an action or a sepa
 The body starts with Climb name, without an introductory explanation block. No Search, Show or
 Done button is needed to commit the filters.
 
+**Filter sheet parts are shared.** The sheet is built from the parts in
+`src/components/filter-sheet/`: `FilterSheetSection` (headline group), `FilterLabelRow` (muted
+sub-label with an optional pin and description), `FilterChip` / `FilterChipGroup`, `FilterNameField`,
+`FilterTappableRow` and `filterSheetStyles` for the gaps between them. A second filter sheet
+uses the same parts, so the two read and space the same. Ranges use `RangeRail`
+(`src/components/grade/RangeRail.tsx`) through `GradeRangeRail` or `AngleRangeRail`. A filter
+sheet that pushes a picker route (setters, holds, zone) suspends and re-presents through
+`useSheetSubRoute` (`src/hooks/use-sheet-sub-route.ts`): call `suspend()` right before
+`router.push`, key the native host with `presentEpoch`, pass `open: !suspended` to the
+coordinator, and wire `scrollRef` / `onScroll` / `onContentSizeChange` to the scroll body so the
+offset comes back. A setter picker route renders `SetterPickerList` and feeds it its own query.
+
 - **Sheets.** Pass `<SheetTopBar>` (`src/components/SheetTopBar.tsx`) through the `header` prop of
   `ModalSheet` / `Sheet`. The header sits above the body and outside its scroll. Trailing is the
   confirm. Mark it `prominent` for the sheet's main action, `disabled` until the form is valid,
@@ -657,6 +669,13 @@ drafts.
   position and applies the picker selection live; the setters route's "Show N climbs" shortcut
   returns directly to results. Hold/zone are full-screen interactive boards → pushed routes
   (rule 3); setters is a searchable list route.
+- **Logbook setter picker** (`/users/[userId]/logbook-setters`) — the same suspend → push →
+  re-present round trip from the Logbook filter sheet, and a direct push from the Logbook's Setter
+  capsule. The Logbook lives on your own You tab and on anyone's profile in any tab, so the route
+  sits beside the public profile in the root stack and is mirrored into every tab's `users/[userId]`
+  folder; `useScopedRouter` resolves the push into the stack the Logbook is in. Its picks come back
+  through `logbook-setter-handoff.ts`, addressed by a per-Logbook `handoffId`, because two Logbooks
+  can be mounted at once. "Show climbs" hands them back with `apply` and the suspended sheet closes.
 - **Onboarding** (the walkthrough, replayed from Settings) — an immersive cover presented
   over the live tabs, so `transparentModal` + an opaque backing, like the player (rule 2). It was a
   `fullScreenModal` until #5654. Like the player it counts as a tabs-chrome route

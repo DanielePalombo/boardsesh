@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from 'react';
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LOGBOOK_FILTERS, DEFAULT_LOGBOOK_SORT } from '@boardsesh/logbook';
 
@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
         contentContainerStyle: { paddingTop: number };
         scrollIndicatorInsets: { top: number };
         contentInsetAdjustmentBehavior: string;
+        maintainVisibleContentPosition?: { disabled: boolean };
       }
     | undefined,
 }));
@@ -56,7 +57,7 @@ vi.mock('@shopify/flash-list', () => ({
     return createElement('div', { 'data-testid': 'results' });
   },
 }));
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en-US' } }) }));
 vi.mock('expo-router', () => ({ useRouter: () => ({}) }));
 vi.mock('../../../hooks/use-native-root-header', () => ({ useNativeRootHeader: () => state.native }));
 vi.mock('../../../providers/theme-provider', () => ({
@@ -116,10 +117,13 @@ vi.mock('../../Text', () => ({
 vi.mock('../../PressableSurface', () => ({
   PressableSurface: ({ children }: { children?: ReactNode }) => createElement('button', null, children),
 }));
-vi.mock('../../SearchHeader', () => ({ SearchHeader: () => createElement('div', { 'data-testid': 'search' }) }));
-vi.mock('../../search/FilterButton', () => ({
-  FILTER_FAB_SIZE: 48,
-  FilterButton: () => createElement('button', { 'data-testid': 'filters' }),
+vi.mock('../../search/FilterTokenRow', () => ({ FilterTokenRow: () => null }));
+vi.mock('../use-logbook-board-options', () => ({ useLogbookBoardOptions: () => [] }));
+vi.mock('../../../hooks/use-today', () => ({ useToday: () => new Date(2026, 5, 30) }));
+vi.mock('../../../hooks/use-grade-format', () => ({ useGradeFormat: () => ({ gradeFormat: 'v' }) }));
+vi.mock('../../../lib/routing/scoped-navigation', () => ({ useScopedRouter: () => ({ push: vi.fn() }) }));
+vi.mock('../../../lib/logbook-pinned-chips-store', () => ({
+  useLogbookPinnedChips: () => ({ pinned: [], loaded: true, isPinned: () => false, togglePin: vi.fn() }),
 }));
 vi.mock('../../ActivityIndicator', () => ({
   ActivityIndicator: () => createElement('div', { 'data-testid': 'loading' }),
@@ -130,12 +134,19 @@ vi.mock('../LogbookRow', () => ({ LogbookRow: () => null }));
 vi.mock('../LogbookDayDivider', () => ({ LogbookDayDivider: () => null, LogbookWallSubDivider: () => null }));
 vi.mock('../LogbookEditSheet', () => ({ LogbookEditSheet: () => null }));
 vi.mock('../LogbookEntryChooserSheet', () => ({ LogbookEntryChooserSheet: () => null }));
-vi.mock('../LogbookFilterSheet', () => ({ LogbookFilterSheet: () => null }));
+vi.mock('../LogbookFilterSheet', () => ({
+  LogbookFilterSheet: () => createElement('div', { 'data-testid': 'filter-sheet' }),
+}));
 vi.mock('../BoardLinkPrompt', () => ({ BoardLinkPrompt: () => null }));
-vi.mock('../LogbookChipRow', () => ({ LogbookChipRow: () => null }));
+// The capsule row, reduced to its Filters opener.
+vi.mock('../LogbookChipRow', () => ({
+  LogbookChipRow: ({ onOpenFilters }: { onOpenFilters: () => void }) =>
+    createElement('button', { 'data-testid': 'capsules', onClick: onOpenFilters }),
+}));
 vi.mock('../LogbookFacetRail', () => ({ LogbookFacetRail: () => null }));
 
 import { LogbookTab } from '../LogbookTab';
+import { createScrollEdgeBackdrop } from '../../../hooks/use-scroll-edge-backdrop';
 
 function renderHeader(controls: ReactNode, onHeightChange: (height: number) => void) {
   state.measure = onHeightChange;
@@ -157,6 +168,73 @@ afterEach(() => {
 });
 
 describe('Logbook composed profile header', () => {
+  it('puts the capsule row in the composed header without the duplicate heading', () => {
+    const { getByTestId, queryByText } = render(<LogbookTab userId="me" renderHeader={renderHeader} />);
+    expect(getByTestId('composed-header').contains(getByTestId('capsules'))).toBe(true);
+    expect(queryByText('tabs.logbook')).toBeNull();
+    expect(queryByText('mobile.filter.allBoards')).toBeNull();
+    fireEvent.click(getByTestId('capsules'));
+    expect(getByTestId('filter-sheet')).toBeTruthy();
+  });
+
+  it('drops the heading in any composed header: the selected tab names the page', () => {
+    const { getByTestId, queryByText } = render(
+      <LogbookTab userId="other" viewerIsOwner={false} renderHeader={renderHeader} />,
+    );
+    expect(queryByText('tabs.logbook')).toBeNull();
+    expect(getByTestId('capsules')).toBeTruthy();
+  });
+
+  it('reports list scrolling to the floating header and clears it on unmount', () => {
+    const scrollEdge = createScrollEdgeBackdrop();
+    const { unmount } = render(<LogbookTab userId="me" renderHeader={renderHeader} scrollEdge={scrollEdge} />);
+    for (const [listener, callback] of Object.entries(scrollEdge.listProps)) {
+      expect(state.listProps?.[listener as keyof NonNullable<typeof state.listProps>]).toBe(callback);
+    }
+    act(() =>
+      scrollEdge.listProps.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 400 } } } as Parameters<
+        typeof scrollEdge.listProps.onScroll
+      >[0]),
+    );
+    expect(scrollEdge.isScrolledUnder()).toBe(true);
+    unmount();
+    expect(scrollEdge.isScrolledUnder()).toBe(false);
+  });
+
+  it.each(['missing-user', 'loading', 'error', 'offline'] as const)(
+    'clears the floating backdrop when %s replaces the list',
+    (status) => {
+      const scrollEdge = createScrollEdgeBackdrop();
+      const { rerender, queryByTestId } = render(
+        <LogbookTab userId="me" renderHeader={renderHeader} scrollEdge={scrollEdge} />,
+      );
+      act(() =>
+        scrollEdge.listProps.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 400 } } } as Parameters<
+          typeof scrollEdge.listProps.onScroll
+        >[0]),
+      );
+      expect(scrollEdge.isScrolledUnder()).toBe(true);
+      state.pending = status === 'loading';
+      state.error = status === 'error';
+      state.offline = status === 'offline';
+      rerender(
+        <LogbookTab
+          userId={status === 'missing-user' ? undefined : 'me'}
+          renderHeader={renderHeader}
+          scrollEdge={scrollEdge}
+        />,
+      );
+      expect(queryByTestId('results')).toBeNull();
+      expect(scrollEdge.isScrolledUnder()).toBe(false);
+      state.pending = false;
+      state.error = false;
+      state.offline = false;
+      rerender(<LogbookTab userId="me" renderHeader={renderHeader} scrollEdge={scrollEdge} />);
+      expect(queryByTestId('results')).toBeTruthy();
+      expect(scrollEdge.isScrolledUnder()).toBe(false);
+    },
+  );
+
   it('keeps native results mounted invisibly until measurement and counts supplementary height once', () => {
     const { getByTestId } = render(<LogbookTab userId="me" renderHeader={renderHeader} />);
     const resultsFrame = getByTestId('results').parentElement!;
@@ -164,6 +242,7 @@ describe('Logbook composed profile header', () => {
     expect(resultsFrame.dataset.pointer).toBe('none');
     expect(resultsFrame.dataset.accessibilityHidden).toBe('true');
     expect(state.listProps?.contentInsetAdjustmentBehavior).toBe('automatic');
+    expect(state.listProps?.maintainVisibleContentPosition).toEqual({ disabled: true });
     expect(getByTestId('results').compareDocumentPosition(getByTestId('composed-header'))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -173,31 +252,46 @@ describe('Logbook composed profile header', () => {
     expect(resultsFrame.dataset.pointer).toBe('auto');
     expect(state.listProps?.contentContainerStyle.paddingTop).toBe(180);
     expect(state.listProps?.scrollIndicatorInsets.top).toBe(180);
+    expect(state.listProps?.maintainVisibleContentPosition).toEqual({ disabled: true });
     expect(resultsFrame.dataset.style).not.toContain('"paddingTop"');
 
     // An expanded facet rail contributes to the same measurement, not a second inset.
     act(() => state.measure?.(260));
     expect(state.listProps?.contentContainerStyle.paddingTop).toBe(260);
     expect(state.listProps?.scrollIndicatorInsets.top).toBe(260);
+    expect(state.listProps?.maintainVisibleContentPosition).toEqual({ disabled: true });
+
+    // Closing the rail must also leave the native offset free of row anchoring.
+    act(() => state.measure?.(180));
+    expect(state.listProps?.contentContainerStyle.paddingTop).toBe(180);
+    expect(state.listProps?.maintainVisibleContentPosition).toEqual({ disabled: true });
   });
 
   it('starts Material results below the entire opaque measured header', () => {
     state.native = false;
-    const { getByTestId } = render(<LogbookTab userId="me" renderHeader={renderHeader} />);
+    const { getByTestId, queryByText } = render(<LogbookTab userId="me" renderHeader={renderHeader} />);
+    expect(queryByText('tabs.logbook')).toBeNull();
+    expect(getByTestId('composed-header').contains(getByTestId('capsules'))).toBe(true);
     act(() => state.measure?.(280));
     expect(getByTestId('results').parentElement!.dataset.style).toContain('"paddingTop":280');
     expect(getByTestId('results').parentElement!.dataset.style).toContain('"overflow":"hidden"');
     expect(state.listProps?.contentContainerStyle.paddingTop).toBe(0);
     expect(state.listProps?.contentInsetAdjustmentBehavior).toBe('never');
+    expect(state.listProps?.maintainVisibleContentPosition).toBeUndefined();
   });
 
   it('leaves public profile controls in flow without adding supplementary padding', () => {
-    const { getByTestId, queryByTestId } = render(<LogbookTab userId="other" viewerIsOwner={false} topInset={24} />);
+    const { getByTestId, getByText, queryByTestId } = render(
+      <LogbookTab userId="other" viewerIsOwner={false} topInset={24} />,
+    );
     expect(queryByTestId('composed-header')).toBeNull();
-    expect(getByTestId('search').compareDocumentPosition(getByTestId('results'))).toBe(
+    expect(getByText('tabs.logbook')).toBeTruthy();
+    expect(getByText('mobile.filter.allBoards')).toBeTruthy();
+    expect(getByTestId('capsules').compareDocumentPosition(getByTestId('results'))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     expect(state.listProps?.contentContainerStyle.paddingTop).toBe(0);
+    expect(state.listProps?.maintainVisibleContentPosition).toBeUndefined();
     expect(getByTestId('results').parentElement!.dataset.pointer).toBe('auto');
   });
 
@@ -210,8 +304,7 @@ describe('Logbook composed profile header', () => {
       const { getByTestId, queryByTestId } = render(
         <LogbookTab userId={status === 'missing-user' ? undefined : 'me'} renderHeader={renderHeader} />,
       );
-      expect(getByTestId('composed-header').contains(getByTestId('search'))).toBe(true);
-      expect(getByTestId('composed-header').contains(getByTestId('filters'))).toBe(true);
+      expect(getByTestId('composed-header').contains(getByTestId('capsules'))).toBe(true);
       expect(queryByTestId('results')).toBeNull();
       act(() => state.measure?.(180));
       expect(getByTestId('composed-header')).toBeTruthy();
