@@ -123,12 +123,13 @@ module BoardseshCPP
     end
 
     def run(target: "all", action: "plan")
-      raise Error, "CPP action must be plan, create, upload, or submit" unless %w[plan create upload submit].include?(action)
+      raise Error, "CPP action must be plan, create, stage-assets, upload, or submit" unless %w[plan create stage-assets upload submit].include?(action)
       targets = @manifest.fetch("targets")
       selected = target == "all" ? targets.keys : [target]
       raise Error, "Unknown CPP target #{target}" unless selected.all? { |name| targets.key?(name) }
       return read_only_plan(selected, targets) if action == "plan"
       return create_drafts(selected, targets) if action == "create"
+      return stage_assets(selected, targets) if action == "stage-assets"
       # Validate every selected target and remote conflict before the first write.
       assets = selected.to_h { |name| [name, local_assets(name, targets.fetch(name))] }
       preflight = remote_preflight(selected, targets, assets, action)
@@ -138,6 +139,88 @@ module BoardseshCPP
     end
 
     private
+
+    # This explicit action stages only existing editable drafts. Keyword
+    # assignment, page/version creation, visibility, and review stay separate.
+    def stage_assets(selected, targets)
+      names = selected.map { |target| targets.fetch(target).fetch("referenceName") }
+      raise Error, "CPP reference names must be nonempty and unique" unless names.all? { |name| name.is_a?(String) && !name.strip.empty? } && names.uniq.length == names.length
+      assets = selected.to_h { |target| [target, local_assets(target, targets.fetch(target))] }
+      pages = @client.list("/v1/apps/#{@app_id}/appCustomProductPages?limit=200")
+      entries = selected.zip(names).map do |target, name|
+        matches = pages.select { |page| page.dig("attributes", "name") == name }
+        raise Error, "CPP #{name} needs exactly one existing page before asset staging" unless matches.length == 1
+        page = verified_draft_page(matches.first.fetch("id"), name)
+        version = staging_version(page)
+        remote = snapshot(version)
+        desired = assets.fetch(target)
+        raise Error, "CPP #{target} has conflicting draft assets; no assets were deleted" unless compatible?(version, desired, manage_keywords: false, remote_snapshot: remote)
+        {
+          "target" => target, "config" => targets.fetch(target), "assets" => desired, "page" => page,
+          "version" => version, "keywordMemberships" => keyword_memberships(remote), "originalVisible" => page.dig("attributes", "visible")
+        }
+      end
+      # Resolve every selected target before the first write, then recheck each
+      # current draft and its keyword memberships immediately before staging.
+      entries.each { |entry| stage_existing_assets(entry) }
+      entries.map do |entry|
+        summary(entry, entry.fetch("unchanged") ? "unchanged" : "stage-assets").merge(
+          "publication" => "Screenshots and promotional text staged; keyword assignments unchanged; no review submitted."
+        )
+      end
+    end
+
+    def staging_version(page, expected_id = nil)
+      current = verified_page_versions(page).reject { |version| version.dig("attributes", "state") == "REPLACED_WITH_NEW_VERSION" }.max_by { |version| version.dig("attributes", "version").to_s.split(".").map(&:to_i) }
+      unless current && EDITABLE.include?(current.dig("attributes", "state"))
+        raise Error, "CPP #{page.dig('attributes', 'name')} requires an existing current editable draft before asset staging"
+      end
+      raise Error, "CPP current draft changed before asset staging completed" if expected_id && current.fetch("id") != expected_id
+      current
+    end
+
+    def keyword_memberships(remote)
+      remote.to_h do |locale, existing|
+        [locale, { "localizationId" => existing.fetch("localization").fetch("id"), "keywordIds" => existing.fetch("keywords").sort }]
+      end
+    end
+
+    def keywords_preserved?(memberships, remote)
+      memberships.all? do |locale, membership|
+        existing = remote[locale]
+        existing && existing.fetch("localization").fetch("id") == membership.fetch("localizationId") && existing.fetch("keywords").sort == membership.fetch("keywordIds")
+      end && remote.all? { |locale, existing| memberships.key?(locale) || existing.fetch("keywords").empty? }
+    end
+
+    def stage_existing_assets(entry)
+      page = verified_draft_page(entry.fetch("page").fetch("id"), entry.fetch("config").fetch("referenceName"))
+      unless page.dig("attributes", "visible") == entry.fetch("originalVisible")
+        raise Error, "CPP #{entry.fetch('target')} visibility changed before asset staging; no page visibility was edited"
+      end
+      current = staging_version(page, entry.fetch("version").fetch("id"))
+      remote = snapshot(current)
+      unless keywords_preserved?(entry.fetch("keywordMemberships"), remote)
+        raise Error, "CPP #{entry.fetch('target')} keyword memberships changed before asset staging; no keywords were edited"
+      end
+      unless compatible?(current, entry.fetch("assets"), manage_keywords: false, remote_snapshot: remote)
+        raise Error, "CPP #{entry.fetch('target')} has conflicting draft assets; no assets were deleted"
+      end
+      entry["unchanged"] = identical?(current, entry.fetch("assets"), manage_keywords: false, remote_snapshot: remote)
+      reconcile_localized_assets(entry, current, remote, manage_keywords: false) unless entry.fetch("unchanged")
+      final_page = verified_draft_page(page.fetch("id"), entry.fetch("config").fetch("referenceName"))
+      final_version = staging_version(final_page, current.fetch("id"))
+      final_snapshot = snapshot(final_version)
+      unless keywords_preserved?(entry.fetch("keywordMemberships"), final_snapshot)
+        raise Error, "CPP #{entry.fetch('target')} keyword memberships changed during asset staging; no keywords were edited"
+      end
+      unless final_page.dig("attributes", "visible") == entry.fetch("originalVisible")
+        raise Error, "CPP #{entry.fetch('target')} visibility changed during asset staging; no page visibility was edited"
+      end
+      unless identical?(final_version, entry.fetch("assets"), manage_keywords: false, remote_snapshot: final_snapshot)
+        raise Error, "CPP #{entry.fetch('target')} verification failed after asset staging"
+      end
+      entry["page"], entry["version"] = final_page, final_version
+    end
 
     # Create only the named page and its empty initial draft in one documented
     # compound request. This never copies a template or writes listing metadata,
@@ -431,13 +514,13 @@ module BoardseshCPP
       remote.dig("attributes", "fileName") == local.fetch("fileName") && remote.dig("attributes", "fileSize") == local.fetch("fileSize") && remote.dig("attributes", "sourceFileChecksum") == local.fetch("checksum")
     end
 
-    def identical?(version, desired)
-      remote = snapshot(version)
+    def identical?(version, desired, manage_keywords: true, remote_snapshot: nil)
+      remote = remote_snapshot || snapshot(version)
       return false unless remote.keys.sort == desired.map { |localization| localization.fetch("locale") }.sort
       desired.all? do |localization|
         existing = remote.fetch(localization.fetch("locale"))
         existing.fetch("localization").dig("attributes", "promotionalText") == localization.fetch("promotionalText") &&
-          existing.fetch("keywords").sort == localization.fetch("keywordIds").sort &&
+          (!manage_keywords || existing.fetch("keywords").sort == localization.fetch("keywordIds").sort) &&
           existing.fetch("sets").keys.sort == localization.fetch("devices").keys.sort &&
           localization.fetch("devices").all? do |display_type, screenshots|
             uploaded = existing.fetch("sets").fetch(display_type).fetch("screenshots")
@@ -446,12 +529,12 @@ module BoardseshCPP
       end
     end
 
-    def compatible?(version, desired)
-      remote = snapshot(version)
+    def compatible?(version, desired, manage_keywords: true, remote_snapshot: nil)
+      remote = remote_snapshot || snapshot(version)
       expected = desired.to_h { |localization| [localization.fetch("locale"), localization] }
       remote.all? do |locale, existing|
         localized = expected[locale]
-        next false unless localized && (existing.fetch("keywords") - localized.fetch("keywordIds")).empty?
+        next false unless localized && (!manage_keywords || (existing.fetch("keywords") - localized.fetch("keywordIds")).empty?)
         existing.fetch("sets").all? do |display_type, set|
           desired_images = localized.fetch("devices")[display_type]
           next false unless desired_images && set.fetch("screenshots").length <= desired_images.length
@@ -490,13 +573,21 @@ module BoardseshCPP
       # A fresh version may inherit Apple's previous assets. Never erase them.
       raise Error, "CPP #{entry.fetch('target')} new version inherited conflicting assets; no assets were deleted" unless compatible?(current, entry.fetch("assets"))
       remote = snapshot(current)
+      reconcile_localized_assets(entry, current, remote, manage_keywords: true)
+      raise Error, "CPP #{entry.fetch('target')} verification failed after upload" unless identical?(current, entry.fetch("assets"))
+      entry
+    end
+
+    def reconcile_localized_assets(entry, current, remote, manage_keywords:)
       entry.fetch("assets").each do |desired|
         existing = remote[desired.fetch("locale")]
         localization = existing ? existing.fetch("localization") : create("appCustomProductPageLocalizations", { "locale" => desired.fetch("locale"), "promotionalText" => desired.fetch("promotionalText") }, { "appCustomProductPageVersion" => relationship("appCustomProductPageVersions", current) })
         patch("appCustomProductPageLocalizations", localization, { "promotionalText" => desired.fetch("promotionalText") }) if localization.dig("attributes", "promotionalText") != desired.fetch("promotionalText")
-        missing_keywords = desired.fetch("keywordIds") - (existing ? existing.fetch("keywords") : [])
-        unless missing_keywords.empty?
-          @client.request("POST", "/v1/appCustomProductPageLocalizations/#{localization.fetch('id')}/relationships/searchKeywords", { "data" => missing_keywords.map { |keyword_id| { "type" => "appKeywords", "id" => keyword_id } } })
+        if manage_keywords
+          missing_keywords = desired.fetch("keywordIds") - (existing ? existing.fetch("keywords") : [])
+          unless missing_keywords.empty?
+            @client.request("POST", "/v1/appCustomProductPageLocalizations/#{localization.fetch('id')}/relationships/searchKeywords", { "data" => missing_keywords.map { |keyword_id| { "type" => "appKeywords", "id" => keyword_id } } })
+          end
         end
         desired.fetch("devices").each do |display_type, screenshots|
           existing_set = existing && existing.fetch("sets")[display_type]
@@ -506,8 +597,6 @@ module BoardseshCPP
           @client.request("PATCH", "/v1/appScreenshotSets/#{set.fetch('id')}/relationships/appScreenshots", { "data" => ordered.map { |image| { "type" => "appScreenshots", "id" => image.fetch("id") } } })
         end
       end
-      raise Error, "CPP #{entry.fetch('target')} verification failed after upload" unless identical?(current, entry.fetch("assets"))
-      entry
     end
 
     def upload_screenshot(set, existing, local)

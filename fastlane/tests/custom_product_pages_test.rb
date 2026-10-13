@@ -24,10 +24,10 @@ class CustomProductPagesTest < Minitest::Test
   end
 
   class FakeApple
-    attr_reader :writes, :uploads, :resources
+    attr_reader :writes, :uploads, :resources, :reads
 
     def initialize
-      @writes, @uploads = [], []
+      @writes, @uploads, @reads = [], [], []
       @resources = Hash.new { |hash, key| hash[key] = {} }
       seed("appStoreVersions", "approved", { "platform" => "IOS", "appStoreState" => "READY_FOR_DISTRIBUTION", "createdDate" => "2026-10-01" }, "app" => link("apps", "app"))
       seed("appStoreVersionLocalizations", "approved-en", { "locale" => "en-US", "keywords" => "Kilter,Tension" }, "appStoreVersion" => link("appStoreVersions", "approved"))
@@ -43,6 +43,7 @@ class CustomProductPagesTest < Minitest::Test
     end
 
     def list(path)
+      @reads << path
       route = path.split("?").first.split("/").reject(&:empty?)
       _, owner_type, owner_id, related = route
       if related == "searchKeywords"
@@ -59,6 +60,7 @@ class CustomProductPagesTest < Minitest::Test
     end
 
     def request(method, path, body = nil)
+      @reads << path if method == "GET"
       _, type, id, *tail = path.split("?").first.split("/").reject(&:empty?)
       return { "data" => @resources.fetch(type).fetch(id) } if method == "GET"
       @writes << [method, path, body]
@@ -192,6 +194,213 @@ class CustomProductPagesTest < Minitest::Test
     ordered = @client.resources["appScreenshotSets"].values.first.fetch("orderedIds")
     filenames = ordered.map { |id| @client.resources["appScreenshots"].fetch(id).dig("attributes", "fileName") }
     assert_equal @manifest.dig("targets", "kilter", "recipes", "phone").map { |recipe| recipe.fetch("output") }, filenames
+  end
+
+  def seed_staging_draft(target = "kilter", state: "PREPARE_FOR_SUBMISSION", page_id: "#{target}-page", version_id: "#{target}-version")
+    @client.seed("appCustomProductPages", page_id, { "name" => @manifest.fetch("targets").fetch(target).fetch("referenceName"), "url" => "https://apps.apple.com/app/id1?ppid=#{page_id}", "visible" => false }, "app" => @client.link("apps", "app"))
+    @client.seed("appCustomProductPageVersions", version_id, { "version" => "1", "state" => state }, "appCustomProductPage" => @client.link("appCustomProductPages", page_id)) if state
+    { "page" => @client.resources["appCustomProductPages"][page_id], "version" => @client.resources["appCustomProductPageVersions"][version_id] }
+  end
+
+  def test_stage_assets_does_not_require_approved_keywords_or_write_listing_review_visibility_or_keywords
+    seed_staging_draft
+    @client.resources["appStoreVersions"].clear
+    @manifest.dig("targets", "kilter", "localizations", "en-US")["keywords"] = ["Not approved"]
+    result = runner(keyword_ids: {}).run(action: "stage-assets").first
+    assert_equal "stage-assets", result.fetch("action")
+    assert_includes result.fetch("publication"), "keyword assignments unchanged"
+    assert_equal 9, @client.uploads.length
+    assert_equal 1, @client.resources["appCustomProductPages"].length
+    assert_equal 1, @client.resources["appCustomProductPageVersions"].length
+    assert_equal false, @client.resources["appCustomProductPages"].values.first.dig("attributes", "visible")
+    assert_empty @client.resources["reviewSubmissions"]
+    assert @client.resources["appCustomProductPageLocalizations"].values.all? { |localization| localization.fetch("keywords", []).empty? }
+    assert @client.writes.all? { |method, path, _body| %w[POST PATCH].include?(method) && path.match?(%r{\A/v1/(?:appCustomProductPageLocalizations|appScreenshotSets|appScreenshots)(?:/|\z)}) && !path.include?("searchKeywords") }
+    refute @client.reads.any? { |path| path.include?("appStoreVersions") || path.include?("reviewSubmissions") }
+  end
+
+  def test_stage_assets_preserves_existing_keyword_membership_and_is_idempotent
+    seed_staging_draft
+    @client.seed("appCustomProductPageLocalizations", "existing-en", { "locale" => "en-US", "promotionalText" => "Old copy" }, "appCustomProductPageVersion" => @client.link("appCustomProductPageVersions", "kilter-version"))
+    @client.resources["appCustomProductPageLocalizations"]["existing-en"]["keywords"] = ["keep-this-opaque-keyword"]
+    instance = runner(keyword_ids: {})
+    instance.run(action: "stage-assets")
+    assert_equal ["keep-this-opaque-keyword"], @client.resources["appCustomProductPageLocalizations"]["existing-en"].fetch("keywords")
+    write_count = @client.writes.length
+    assert_equal "unchanged", instance.run(action: "stage-assets").first.fetch("action")
+    assert_equal write_count, @client.writes.length
+    filenames = @client.resources["appScreenshotSets"].values.first.fetch("orderedIds").map { |id| @client.resources["appScreenshots"].fetch(id).dig("attributes", "fileName") }
+    assert_equal @manifest.dig("targets", "kilter", "recipes", "phone").map { |recipe| recipe.fetch("output") }, filenames
+  end
+
+  def test_stage_assets_requires_one_verified_existing_page_and_current_editable_draft
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "exactly one existing page"
+    [nil, "APPROVED", "WAITING_FOR_REVIEW", "IN_REVIEW", "ACCEPTED", "REPLACED_WITH_NEW_VERSION", "UNKNOWN"].each do |state|
+      @client = FakeApple.new
+      seed_staging_draft(state: state)
+      error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+      assert_includes error.message, "existing current editable draft"
+      assert_empty @client.writes
+      assert_empty @client.uploads
+    end
+  end
+
+  def test_stage_assets_does_not_select_an_older_editable_version
+    seed_staging_draft
+    @client.seed("appCustomProductPageVersions", "newest", { "version" => "2", "state" => "APPROVED" }, "appCustomProductPage" => @client.link("appCustomProductPages", "kilter-page"))
+    assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_empty @client.writes
+  end
+
+  def test_stage_assets_rejects_ambiguous_names_and_wrong_page_ownership_before_writes
+    seed_staging_draft
+    seed_staging_draft(page_id: "duplicate", version_id: "duplicate-version")
+    assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_empty @client.writes
+    @client.resources["appCustomProductPages"].delete("duplicate")
+    original_request = @client.method(:request)
+    @client.define_singleton_method(:request) do |method, path, body = nil|
+      response = original_request.call(method, path, body)
+      response.fetch("data").fetch("relationships").fetch("app").fetch("data")["id"] = "another-app" if method == "GET" && path.start_with?("/v1/appCustomProductPages/")
+      response
+    end
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "unexpected identity or app ownership"
+    assert_empty @client.writes
+  end
+
+  def test_stage_assets_preflights_every_selected_target_before_any_write
+    config = JSON.parse(JSON.generate(@manifest.fetch("targets").fetch("kilter")))
+    config["referenceName"] = "Boardsesh Tension"
+    config["screenshotsRoot"] = "app-stores/apple/cpp/tension/screenshots"
+    @manifest.fetch("targets")["tension"] = config
+    FileUtils.mkdir_p(File.join(@root, "app-stores/apple/cpp/tension"))
+    FileUtils.cp_r(File.join(@root, "app-stores/apple/cpp/kilter/screenshots"), File.join(@root, config.fetch("screenshotsRoot")))
+    instance = runner
+    source_presentation = JSON.parse(File.read(File.join(@root, "app-stores/apple/cpp/kilter/screenshots/en-US/iphone-16-pro-max/presentation.json")))
+    source_presentation.fetch("cpp")["target"] = "tension"
+    File.write(File.join(@root, config.fetch("screenshotsRoot"), "en-US/iphone-16-pro-max/presentation.json"), JSON.generate(source_presentation))
+    seed_staging_draft
+    seed_staging_draft("tension", state: "IN_REVIEW")
+    assert_raises(BoardseshCPP::Error) { instance.run(target: "all", action: "stage-assets") }
+    assert_empty @client.writes
+    assert_empty @client.uploads
+  end
+
+  def test_stage_assets_preserves_conflicting_existing_screenshots_without_deletion
+    seed_staging_draft
+    instance = runner(keyword_ids: {})
+    instance.run(action: "stage-assets")
+    @client.resources["appScreenshots"].values.first.fetch("attributes")["sourceFileChecksum"] = "conflicting"
+    write_count = @client.writes.length
+    error = assert_raises(BoardseshCPP::Error) { instance.run(action: "stage-assets") }
+    assert_includes error.message, "no assets were deleted"
+    assert_equal write_count, @client.writes.length
+    assert_equal 9, @client.resources["appScreenshots"].length
+  end
+
+  def test_stage_assets_rejects_stale_fixture_provenance_and_bad_dimensions_before_writes
+    seed_staging_draft
+    File.write(File.join(@root, "fixtures.json"), JSON.generate("sha256" => "f" * 64))
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "stale target, manifest, or fixture provenance"
+    assert_empty @client.writes
+    File.write(File.join(@root, "fixtures.json"), JSON.generate("sha256" => "a" * 64))
+    screenshot = File.join(@root, "app-stores/apple/cpp/kilter/screenshots/en-US/iphone-16-pro-max/00-image.png")
+    File.binwrite(screenshot, "\x89PNG\r\n\x1a\n".b + [13].pack("N") + "IHDR" + [1, 1].pack("NN"))
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "invalid PNG dimensions"
+    assert_empty @client.writes
+  end
+
+  def test_stage_assets_rejects_keyword_membership_changes_before_its_first_write
+    seed_staging_draft
+    @client.seed("appCustomProductPageLocalizations", "existing-en", { "locale" => "en-US" }, "appCustomProductPageVersion" => @client.link("appCustomProductPageVersions", "kilter-version"))
+    @client.resources["appCustomProductPageLocalizations"]["existing-en"]["keywords"] = ["original-keyword"]
+    original_list = @client.method(:list)
+    keyword_reads = 0
+    @client.define_singleton_method(:list) do |path|
+      if path.include?("/searchKeywords?")
+        keyword_reads += 1
+        @resources["appCustomProductPageLocalizations"]["existing-en"]["keywords"] = ["changed-elsewhere"] if keyword_reads == 2
+      end
+      original_list.call(path)
+    end
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "keyword memberships changed before"
+    assert_empty @client.writes
+  end
+
+  def test_stage_assets_detects_keyword_membership_changes_during_upload_without_reverting_them
+    seed_staging_draft
+    @client.seed("appCustomProductPageLocalizations", "existing-en", { "locale" => "en-US" }, "appCustomProductPageVersion" => @client.link("appCustomProductPageVersions", "kilter-version"))
+    @client.resources["appCustomProductPageLocalizations"]["existing-en"]["keywords"] = ["original-keyword"]
+    @client.define_singleton_method(:upload) do |_operation, path|
+      @uploads << path
+      @resources["appCustomProductPageLocalizations"]["existing-en"]["keywords"] = ["changed-elsewhere"]
+    end
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "keyword memberships changed during"
+    assert_equal ["changed-elsewhere"], @client.resources["appCustomProductPageLocalizations"]["existing-en"].fetch("keywords")
+    refute @client.writes.any? { |_method, path, _body| path.include?("searchKeywords") }
+  end
+
+  def test_stage_assets_rejects_automatic_keyword_assignment_to_new_localizations
+    seed_staging_draft
+    original_request = @client.method(:request)
+    @client.define_singleton_method(:request) do |method, path, body = nil|
+      response = original_request.call(method, path, body)
+      response.fetch("data")["keywords"] = ["automatically-assigned"] if method == "POST" && path == "/v1/appCustomProductPageLocalizations"
+      response
+    end
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "keyword memberships changed during"
+    refute @client.writes.any? { |_method, path, _body| path.include?("searchKeywords") }
+    assert_equal ["automatically-assigned"], @client.resources["appCustomProductPageLocalizations"].values.first.fetch("keywords")
+  end
+
+  def test_stage_assets_rechecks_editability_and_preserves_visibility
+    seed_staging_draft
+    original_list = @client.method(:list)
+    version_reads = 0
+    @client.define_singleton_method(:list) do |path|
+      if path.include?("/appCustomProductPageVersions?")
+        version_reads += 1
+        @resources["appCustomProductPageVersions"]["kilter-version"].fetch("attributes")["state"] = "IN_REVIEW" if version_reads == 2
+      end
+      original_list.call(path)
+    end
+    assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_empty @client.writes
+    @client.define_singleton_method(:list) { |path| original_list.call(path) }
+    @client.resources["appCustomProductPageVersions"]["kilter-version"].fetch("attributes")["state"] = "PREPARE_FOR_SUBMISSION"
+    @client.define_singleton_method(:upload) do |_operation, path|
+      @uploads << path
+      @resources["appCustomProductPages"]["kilter-page"].fetch("attributes")["visible"] = true
+    end
+    error = assert_raises(BoardseshCPP::Error) { runner.run(action: "stage-assets") }
+    assert_includes error.message, "visibility changed during"
+    refute @client.writes.any? { |_method, path, _body| path.start_with?("/v1/appCustomProductPages/") }
+  end
+
+  def test_stage_assets_resumes_partial_reservations_without_touching_keywords
+    seed_staging_draft
+    upload_attempts = 0
+    @client.define_singleton_method(:upload) do |_operation, path|
+      upload_attempts += 1
+      raise BoardseshCPP::Error, "Interrupted upload" if upload_attempts == 4
+      @uploads << path
+    end
+    instance = runner(keyword_ids: {})
+    assert_raises(BoardseshCPP::Error) { instance.run(action: "stage-assets") }
+    instance.run(action: "stage-assets")
+    assert_equal 9, @client.resources["appScreenshots"].length
+    assert_equal 9, @client.uploads.length
+    refute @client.writes.any? { |_method, path, _body| path.include?("searchKeywords") }
+    write_count = @client.writes.length
+    assert_raises(BoardseshCPP::Error) { instance.run(action: "upload") }
+    assert_equal write_count, @client.writes.length
   end
 
   def test_submit_creates_cpp_only_review_and_repeated_submission_skips

@@ -154,6 +154,7 @@ cd ..
 vp run mobile:screenshots -- --cpp all --platform ios --fixtures replay --theme dark --devices common --locales all
 cd fastlane
 bundle exec fastlane ios cpp target:all action:plan
+bundle exec fastlane ios cpp target:all action:stage-assets
 bundle exec fastlane ios cpp target:all action:upload
 bundle exec fastlane ios cpp target:all action:submit
 ```
@@ -184,6 +185,19 @@ overrides. This Production job joins the existing store writer mutex, checks its
 source commit, skips native builds/captures, and retains the `cpp-create` artifact
 with page IDs, URLs, app ownership, and version states. Subsequent upload and
 submit still enforce the complete image and keyword gates below.
+
+Stage-assets fills existing current editable drafts with screenshots and
+localized promotional text so you can submit their content for review yourself.
+Dispatch from `main` with `cpp_action: stage-assets`, replay fixtures, empty
+locales, and default-listing upload/baseline flags off. It uses the full native
+capture matrix, source-SHA check, export validation, Production credentials,
+and the shared store writer mutex. Create the named drafts separately first;
+staging never creates a page or version, edits visibility, or submits review.
+Every selected draft is verified before the first write. Existing keyword
+memberships must remain unchanged, and new localizations remain unassigned.
+Missing approved terms or keyword ID mappings do not block this explicit action;
+Apple allows assigning eligible keywords later. The full upload and submit actions
+still enforce every keyword gate below.
 
 Upload reconciles separate CPP drafts and uploads screenshots and
 localized promotional copy. Submit also creates or resumes a CPP-only review

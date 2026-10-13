@@ -6,7 +6,7 @@ inputs:
     description: 'CPP target or all.'
   action:
     required: true
-    description: 'plan, create empty drafts, upload, or submit.'
+    description: 'plan, create empty drafts, stage-assets without keyword edits or review, upload, or submit.'
   keyword-ids:
     default: ''
     description: 'Verified locale -> keyword -> Apple resource ID JSON.'
@@ -45,7 +45,7 @@ runs:
       run: |
         set -euo pipefail
         case "$CPP_TARGET" in all|kilter|tension|moonboard|spray) ;; *) echo '::error::Invalid CPP target'; exit 1 ;; esac
-        case "$CPP_ACTION" in plan|create|upload|submit) ;; *) echo '::error::Invalid CPP action'; exit 1 ;; esac
+        case "$CPP_ACTION" in plan|create|stage-assets|upload|submit) ;; *) echo '::error::Invalid CPP action'; exit 1 ;; esac
         if [ -z "$ASC_CPP_KEYWORD_IDS_JSON" ]; then export ASC_CPP_KEYWORD_IDS_JSON='{}'; fi
         if [ "$CPP_ACTION" = plan ]; then export ASC_CPP_PLAN_OUTPUT="$RUNNER_TEMP/cpp-plan.json"; fi
         if [ "$CPP_ACTION" = create ]; then export ASC_CPP_CREATE_OUTPUT="$RUNNER_TEMP/cpp-create.json"; fi

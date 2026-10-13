@@ -589,7 +589,7 @@ describe('screenshot captures follow the native deploys', () => {
       const writeCondition =
         entry.platform === 'ios'
           ? 'inputs.upload == true || inputs.publish_baseline == true || ' +
-            "((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'create' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit' || inputs.fixtures == 'record'))"
+            "((inputs.cpp_target || 'none') != 'none' && (inputs.cpp_action == 'create' || inputs.cpp_action == 'stage-assets' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit' || inputs.fixtures == 'record'))"
           : 'inputs.commit_to_main == true';
       expect(concurrency?.group).toBe(
         `\${{ (github.event_name == 'workflow_run' || ${writeCondition}) && 'mobile-screenshots-${entry.platform}' || ` +
@@ -602,6 +602,7 @@ describe('screenshot captures follow the native deploys', () => {
         expect(concurrency?.group).toContain('inputs.upload == true');
         expect(concurrency?.group).toContain('inputs.publish_baseline == true');
         expect(concurrency?.group).toContain("inputs.cpp_action == 'create'");
+        expect(concurrency?.group).toContain("inputs.cpp_action == 'stage-assets'");
         expect(concurrency?.group).toContain("inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit'");
       } else {
         expect(concurrency?.group).toContain('inputs.commit_to_main == true');
@@ -684,12 +685,13 @@ describe('screenshot captures follow the native deploys', () => {
 describe('iOS CPP capture and publication isolation', () => {
   const workflow = parseWorkflow(IOS_WORKFLOW_PATH);
 
-  it('requires the complete replay matrix before CPP upload or submission', () => {
+  it('requires the complete replay matrix before CPP staging, upload or submission', () => {
     const selection = workflow.jobs.setup.steps?.find((step) => step.id === 'cpp');
     expect(workflow.jobs.setup.outputs?.cpp_matrix).toBe('${{ steps.cpp.outputs.matrix }}');
     expect(selection?.env?.CPP_TARGET).toBe("${{ inputs.cpp_target || 'none' }}");
     expect(selection?.run).toContain('CPP runs use cpp_action; default listing upload/baseline flags must be false.');
-    expect(selection?.run).toContain('CPP upload/submit requires replay and the full locale/device matrix.');
+    expect(selection?.run).toContain('CPP staging/upload/submit requires replay and the full locale/device matrix.');
+    expect(selection?.run).toContain('CPP asset staging requires a manual dispatch from main.');
     expect(selection?.run).toContain('A candidate snapshot or recording is scoped to one CPP.');
     expect(
       workflow.jobs['cpp-bootstrap'].steps?.some(
@@ -778,7 +780,7 @@ describe('iOS CPP capture and publication isolation', () => {
     const finalize = workflow.jobs['cpp-finalize'];
     expect(finalize.needs).toEqual(['setup', 'cpp-capture']);
     expect(flatten(finalize.if)).toBe(
-      "${{ needs.cpp-capture.result == 'success' && (inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit') }}",
+      "${{ needs.cpp-capture.result == 'success' && (inputs.cpp_action == 'stage-assets' || inputs.cpp_action == 'upload' || inputs.cpp_action == 'submit') }}",
     );
     const steps = finalize.steps ?? [];
     const validationIndex = steps.findIndex((step) => step.run?.includes('scripts/assert-cpp-screenshots.ts'));
