@@ -1,5 +1,19 @@
 import { Kind, parse, print, visit, type SelectionSetNode } from 'graphql';
-import { canonicalJson, type GraphqlFixtureFile } from './screenshot-fixtures';
+import { createHash } from 'node:crypto';
+import {
+  canonicalJson,
+  graphqlFixtureKey,
+  STATIC_KEY_LENGTH,
+  type GraphqlFixtureFile,
+  type ScreenshotFixtureManifest,
+} from './screenshot-fixtures';
+import { isCppAscentId, isCppClimbId, isCppTarget, readCppPage } from './screenshot-cpp';
+import { JOIN_SESSION } from '../../packages/shared/graphql/src/operations/queue-session';
+import {
+  GET_MY_BOARDS,
+  SEARCH_CLIMBS,
+  QUEUE_UPDATES_SUBSCRIPTION,
+} from '../../packages/mobile/src/lib/graphql/operations';
 
 export { NATIVE_IOS_QUEUE_UPDATES as NATIVE_CAMPAIGN_QUEUE_QUERY } from '../../packages/shared/graphql/src/operations/queue-session';
 import { NATIVE_IOS_QUEUE_UPDATES as NATIVE_CAMPAIGN_QUEUE_QUERY } from '../../packages/shared/graphql/src/operations/queue-session';
@@ -201,6 +215,220 @@ export function isCampaignWallConfirmation(
         item.climb.layoutId === Number(path[1]) &&
         (variables.queueItemUuid == null || variables.queueItemUuid === item.uuid),
     );
+  } catch {
+    return false;
+  }
+}
+
+/** Recognize only the CPP primary's recorded current climb; this authorizes a disabled error, never LEDs. */
+export function isCppWallConfirmation(
+  query: string,
+  variables: unknown,
+  manifest: ScreenshotFixtureManifest,
+  fixtures: readonly GraphqlFixtureFile[],
+): boolean {
+  try {
+    const coverage = manifest.capture?.cpp;
+    const sessionId = manifest.capture?.sharedSessionId;
+    if (
+      manifest.formatVersion !== 1 ||
+      manifest.flow !== 'app-store-cpp' ||
+      !coverage ||
+      !isCppTarget(coverage.target) ||
+      coverage.target === 'spray' ||
+      !isCppAscentId(sessionId) ||
+      !isCppAscentId(manifest.accountUserId)
+    )
+      return false;
+    const primary = readCppPage(coverage.target).primaryBoard;
+    const boardId = coverage.boardIds?.[primary.id];
+    const hero = coverage.heroClimbs?.[primary.id];
+    if (
+      !isCppAscentId(boardId) ||
+      !hero ||
+      hero.boardId !== boardId ||
+      !isCppClimbId(hero.climbId) ||
+      hero.statsAngle !== primary.angle ||
+      ['search', 'queue', 'status', 'island'].some((scene) => coverage.scenes[scene]?.boardId !== boardId) ||
+      coverage.scenes.queue.sessionId !== sessionId ||
+      coverage.scenes.status.climbId !== hero.climbId ||
+      !record(variables) ||
+      variables.climbUuid !== hero.climbId
+    )
+      return false;
+
+    const sourceDocuments = new Map([
+      ['GetMyBoards', GET_MY_BOARDS],
+      ['SearchClimbs', SEARCH_CLIMBS],
+      ['JoinSession', JOIN_SESSION],
+      ['QueueUpdates', QUEUE_UPDATES_SUBSCRIPTION],
+    ]);
+    const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+    const frozenTime = Date.parse(manifest.frozenNow);
+    if (!Number.isFinite(frozenTime)) return false;
+    const evidence = fixtures.filter((fixture) => sourceDocuments.has(fixture.operationName));
+    if (
+      new Set(evidence.map((fixture) => `${fixture.operationName}\n${fixture.variablesHash}`)).size !== evidence.length
+    )
+      return false;
+    if (
+      evidence.some((fixture) => {
+        const sourceQuery = sourceDocuments.get(fixture.operationName)!;
+        const key = graphqlFixtureKey(fixture, sha256);
+        const entries = manifest.graphql.filter(
+          (entry) => entry.operationName === fixture.operationName && entry.variablesHash === key.variablesHash,
+        );
+        return (
+          fixture.formatVersion !== 1 ||
+          fixture.status !== 200 ||
+          fixture.upstream !== manifest.upstream ||
+          !Number.isFinite(Date.parse(fixture.recordedAt)) ||
+          Date.parse(fixture.recordedAt) > frozenTime ||
+          !record(fixture.response) ||
+          fixture.response.errors !== undefined ||
+          fixture.documentHash !== key.documentHash ||
+          fixture.variablesHash !== key.variablesHash ||
+          canonicalCampaignDocument(fixture.query) !== canonicalCampaignDocument(sourceQuery) ||
+          entries.length !== 1 ||
+          entries[0].documentHash !== key.documentHash ||
+          entries[0].file !== `graphql/${key.operationName}/${key.variablesHash.slice(0, STATIC_KEY_LENGTH)}.json`
+        );
+      })
+    )
+      return false;
+
+    const setsMatch = (setIds: unknown): boolean => {
+      if (typeof setIds !== 'string' || !primary.setIds) return false;
+      const sets = setIds.split(',').map(Number);
+      return (
+        sets.every((setId) => Number.isSafeInteger(setId) && setId > 0) &&
+        new Set(sets).size === sets.length &&
+        canonicalJson(sets.sort((left, right) => left - right)) ===
+          canonicalJson([...primary.setIds].sort((left, right) => left - right))
+      );
+    };
+    const geometryMatches = (board: Record<string, unknown>, familyKey = 'boardType'): boolean =>
+      board[familyKey] === primary.boardType &&
+      board.layoutId === primary.layoutId &&
+      board.sizeId === primary.sizeId &&
+      board.angle === primary.angle &&
+      setsMatch(board.setIds);
+    const responseField = (fixture: GraphqlFixtureFile, field: string): Record<string, unknown> | null => {
+      if (!record(fixture.response) || !record(fixture.response.data)) return null;
+      const selected = fixture.response.data[field];
+      return record(selected) ? selected : null;
+    };
+    const ownedBoards: Record<string, unknown>[] = [];
+    for (const fixture of evidence.filter((fixture) => fixture.operationName === 'GetMyBoards')) {
+      const roster = responseField(fixture, 'myBoards');
+      if (!roster || !Array.isArray(roster.boards)) return false;
+      const matches = roster.boards.filter((board) => record(board) && board.uuid === boardId);
+      if (matches.length > 1) return false;
+      ownedBoards.push(...matches.filter(record));
+    }
+    if (
+      ownedBoards.length === 0 ||
+      ownedBoards.some(
+        (board) =>
+          board.ownerId !== manifest.accountUserId ||
+          board.isPublic !== false ||
+          board.canEdit !== true ||
+          !geometryMatches(board),
+      )
+    )
+      return false;
+
+    const crew = evidence.filter(
+      (fixture) =>
+        ['JoinSession', 'QueueUpdates'].includes(fixture.operationName) &&
+        record(fixture.variables) &&
+        fixture.variables.sessionId === sessionId,
+    );
+    const joins = crew.filter((fixture) => fixture.operationName === 'JoinSession');
+    const queues = crew.filter((fixture) => fixture.operationName === 'QueueUpdates');
+    if (joins.length !== 1 || queues.length !== 1) return false;
+    const joined = joins[0];
+    const queue = queues[0];
+    if (!isCampaignWallConfirmation(query, variables, queue, joined) || !record(joined.variables)) return false;
+    const path = typeof joined.variables.boardPath === 'string' ? joined.variables.boardPath.split('/') : [];
+    if (
+      path.length !== 5 ||
+      !geometryMatches({
+        boardType: path[0],
+        layoutId: Number(path[1]),
+        sizeId: Number(path[2]),
+        setIds: path[3],
+        angle: Number(path[4]),
+      })
+    )
+      return false;
+    const joinResponse = responseField(joined, 'joinSession');
+    const queueResponse = responseField(queue, 'queueUpdates');
+    if (
+      !joinResponse ||
+      joinResponse.id !== sessionId ||
+      joinResponse.boardPath !== joined.variables.boardPath ||
+      joinResponse.isPublic !== false ||
+      joinResponse.isLeader !== true ||
+      !Array.isArray(joinResponse.users) ||
+      !queueResponse ||
+      queueResponse.__typename !== 'FullSync'
+    )
+      return false;
+    const owners = joinResponse.users.filter(
+      (participant) => record(participant) && participant.userId === manifest.accountUserId,
+    );
+    if (owners.length !== 1 || !record(owners[0]) || owners[0].isLeader !== true) return false;
+    const sameClimb = (first: unknown, second: unknown): boolean =>
+      record(first) &&
+      record(second) &&
+      ['uuid', 'boardType', 'layoutId', 'angle', 'frames'].every((field) => first[field] === second[field]);
+    const currentItem = (state: unknown): Record<string, unknown> | null => {
+      if (!record(state) || !Array.isArray(state.queue) || !record(state.currentClimbQueueItem)) return null;
+      const current = state.currentClimbQueueItem;
+      if (!isCppAscentId(current.uuid) || !record(current.climb)) return null;
+      if (
+        state.queue.some(
+          (item) =>
+            !record(item) ||
+            !record(item.climb) ||
+            item.climb.boardType !== primary.boardType ||
+            item.climb.layoutId !== primary.layoutId ||
+            item.climb.angle !== primary.angle ||
+            typeof item.climb.frames !== 'string' ||
+            !item.climb.frames.trim(),
+        )
+      )
+        return null;
+      const entries = state.queue.filter((item) => record(item) && item.uuid === current.uuid);
+      return entries.length === 1 && record(entries[0]) && sameClimb(entries[0].climb, current.climb) ? current : null;
+    };
+    const joinedCurrent = currentItem(joinResponse.queueState);
+    const syncedCurrent = currentItem(queueResponse.state);
+    if (
+      !joinedCurrent ||
+      !syncedCurrent ||
+      joinedCurrent.uuid !== syncedCurrent.uuid ||
+      !record(syncedCurrent.climb) ||
+      syncedCurrent.climb.uuid !== hero.climbId ||
+      !sameClimb(joinedCurrent.climb, syncedCurrent.climb) ||
+      (variables.queueItemUuid != null && variables.queueItemUuid !== syncedCurrent.uuid)
+    )
+      return false;
+
+    const searchedClimbs: unknown[] = [];
+    for (const fixture of evidence.filter((fixture) => fixture.operationName === 'SearchClimbs')) {
+      if (
+        !record(fixture.variables) ||
+        !record(fixture.variables.input) ||
+        !geometryMatches(fixture.variables.input, 'boardName')
+      )
+        continue;
+      const search = responseField(fixture, 'searchClimbs');
+      if (!search || !Array.isArray(search.climbs)) return false;
+      searchedClimbs.push(...search.climbs.filter((climb) => record(climb) && climb.uuid === hero.climbId));
+    }
+    return searchedClimbs.length > 0 && searchedClimbs.every((climb) => sameClimb(climb, syncedCurrent.climb));
   } catch {
     return false;
   }

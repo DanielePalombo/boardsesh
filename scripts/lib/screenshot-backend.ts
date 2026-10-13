@@ -43,6 +43,7 @@ import { formatCppUpstreamDiagnostic } from './cpp-upstream-diagnostics';
 import {
   isCampaignPushRegistration,
   isCampaignWallConfirmation,
+  isCppWallConfirmation,
   replayCampaignSessionResponse,
 } from './screenshot-campaign-session';
 
@@ -1086,31 +1087,41 @@ export function createScreenshotBackend(options: ScreenshotBackendServerOptions)
       );
       return;
     }
-    if (manifest.flow === 'app-store-campaign' && operationName === 'ConfirmClimbOnWall') {
+    if (['app-store-campaign', 'app-store-cpp'].includes(manifest.flow) && operationName === 'ConfirmClimbOnWall') {
       try {
-        const crewFixtures = manifest.graphql
-          .filter((item) => ['JoinSession', 'QueueUpdates'].includes(item.operationName))
+        const fixtureOperations =
+          manifest.flow === 'app-store-cpp'
+            ? ['GetMyBoards', 'SearchClimbs', 'JoinSession', 'QueueUpdates']
+            : ['JoinSession', 'QueueUpdates'];
+        const recordedFixtures = manifest.graphql
+          .filter((item) => fixtureOperations.includes(item.operationName))
           .map((item) => {
             if (!isFixtureFileWithinDirectory(fixturesDir, item.file)) throw new Error('Invalid fixture path');
             return JSON.parse(readFileSync(join(fixturesDir, item.file), 'utf8')) as GraphqlFixtureFile;
-          })
-          .filter(
-            (fixture) =>
-              fixture.variables &&
-              typeof fixture.variables === 'object' &&
-              (fixture.variables as Record<string, unknown>).sessionId === manifest.capture?.sharedSessionId,
-          );
+          });
+        const crewFixtures = recordedFixtures.filter(
+          (fixture) =>
+            fixture.variables &&
+            typeof fixture.variables === 'object' &&
+            (fixture.variables as Record<string, unknown>).sessionId === manifest.capture?.sharedSessionId,
+        );
         const queue = crewFixtures.find((fixture) => fixture.operationName === 'QueueUpdates');
-        if (
-          queue &&
-          crewFixtures.some((fixture) => isCampaignWallConfirmation(query, parsedBody.variables, queue, fixture))
-        ) {
+        const recognizedConfirmation =
+          manifest.flow === 'app-store-cpp'
+            ? isCppWallConfirmation(query, parsedBody.variables, manifest, recordedFixtures)
+            : queue &&
+              crewFixtures.some((fixture) => isCampaignWallConfirmation(query, parsedBody.variables, queue, fixture));
+        if (recognizedConfirmation) {
           emit({ event: 'default', operationName, hash12 });
           sendResponse(
             JSON.stringify({
               errors: [{ message: 'Physical wall confirmation is disabled in local screenshot replay' }],
             }),
           );
+          return;
+        }
+        if (manifest.flow === 'app-store-cpp') {
+          missGraphql(operationName, 'no-fixture');
           return;
         }
       } catch {
