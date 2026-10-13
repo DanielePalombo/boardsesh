@@ -2297,10 +2297,29 @@ export function renderCppMaestroFlow(
     if (ipad && scene.variant && !scene.wallEditor) {
       const uuid = coverage.boardIds?.[scene.variant.id];
       if (!uuid?.trim()) throw new Error(`CPP ${scene.variant.id} lacks its genuine board UUID`);
+      const scrollSelectedHero =
+        target !== 'spray' &&
+        selectedHero !== undefined &&
+        (scene.command.startsWith('hero-') || scene.command.startsWith('other-'));
+      const listId = cppReadinessSelector(`cpp-climb-list-${uuid}`);
+      const listSelector = { id: scrollSelectedHero ? `^${listId}$` : listId };
+      const rowSelector = {
+        id: scrollSelectedHero ? '^climb-row$' : 'climb-row',
+        text: cppClimbRowReadinessSelector(scene.ready, locale),
+      };
       commands.push(
-        `- extendedWaitUntil:\n    visible:\n      id: ${JSON.stringify(cppReadinessSelector(`cpp-climb-list-${uuid}`))}\n    timeout: 90000`,
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify(listSelector)}\n    timeout: 90000`,
         `- extendedWaitUntil:\n    visible: ${JSON.stringify(cppBoardHeaderReadinessSelector(scene.variant, coverage))}\n    timeout: 90000`,
-        `- extendedWaitUntil:\n    visible:\n      id: climb-row\n      text: ${JSON.stringify(cppClimbRowReadinessSelector(scene.ready, locale))}\n    timeout: 90000`,
+      );
+      if (scrollSelectedHero)
+        // A genuine selected hero can be eighth in the first ten query rows,
+        // below the tablet viewport even after its detail has painted. Search
+        // only this owned board's FlashList and retain the final exact row gate.
+        commands.push(
+          `- repeat:\n    times: 3\n    while:\n      notVisible: ${JSON.stringify(rowSelector)}\n    commands:\n      - swipe:\n          from: ${JSON.stringify(listSelector)}\n          direction: UP\n          duration: 700\n      - waitForAnimationToEnd:\n          timeout: 30000`,
+        );
+      commands.push(
+        `- extendedWaitUntil:\n    visible: ${JSON.stringify(rowSelector)}\n    timeout: 90000`,
         '- extendedWaitUntil:\n    visible:\n      id: play-drawer-board-overlay\n    timeout: 60000',
         '- waitForAnimationToEnd:\n    timeout: 30000',
       );
@@ -2339,10 +2358,41 @@ export function renderCppMaestroFlow(
         commands.push(
           `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.maxSelected!, true))}\n    timeout: 90000`,
         );
-      if (recordGradeCount)
+      if (recordGradeCount) {
+        const proofCondition = `\${output.cppGradeCount.sequence == output.cppSequence && output.cppGradeCount.locale == '${locale}' && output.cppGradeCount.proof.totalCount > 0}`;
+        const recordedCountProof = `- retry:\n    maxRetries: 3\n    commands:\n      - evalScript: \${output.cppGradeCount = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/grade-count?sequence=' + output.cppSequence + '&locale=${locale}').body)}\n      - assertTrue: ${proofCondition}`;
+        const commandAck =
+          "- retry:\n    maxRetries: 3\n    commands:\n      - evalScript: ${output.cppAcknowledged = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/status?waitFor=' + output.cppSequence).body).acknowledged}\n      - assertTrue: ${output.cppAcknowledged == output.cppSequence}";
+        const remountFilters = [
+          `- tapOn: ${JSON.stringify({ id: '^sheet-top-bar-leading$', text: gradeSelectors.close, enabled: true })}`,
+          '- extendedWaitUntil:\n    notVisible:\n      id: climb-filter-column\n    timeout: 60000',
+          "- evalScript: ${output.cppSequence = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/set?scene=search-results').body).sequence}",
+          commandAck,
+          "- evalScript: ${output.cppSequence = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/set?scene=search-grade').body).sequence}",
+          commandAck,
+          '- extendedWaitUntil:\n    visible:\n      id: climb-filter-column\n    timeout: 90000',
+          `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.minSelected, true))}\n    timeout: 90000`,
+          ...(gradeFilter?.maxLabel && gradeFilter.maxLabel !== gradeFilter.minLabel
+            ? [
+                `- extendedWaitUntil:\n    visible: ${JSON.stringify(gradeControl(gradeSelectors.maxSelected!, true))}\n    timeout: 90000`,
+              ]
+            : []),
+          recordedCountProof,
+        ].join('\n');
+        // Recording can finish a genuine upstream count after the phone's
+        // request expires. Remount only a missing native count; a 30s wait
+        // lets an initially pending query expire before the next mount refetches.
+        // Recheck proof even when a later attempt skips the remount branch.
         commands.push(
-          `- retry:\n    maxRetries: 3\n    commands:\n      - evalScript: \${output.cppGradeCount = JSON.parse(http.get(SCREENSHOT_CPP_URL + '/grade-count?sequence=' + output.cppSequence + '&locale=${locale}').body)}\n      - assertTrue: \${output.cppGradeCount.sequence == output.cppSequence && output.cppGradeCount.locale == '${locale}' && output.cppGradeCount.proof.totalCount > 0}`,
+          recordedCountProof,
+          `- retry:\n    maxRetries: 2\n    commands:\n      - runFlow:\n          when:\n            notVisible: \${output.cppGradeCount.selector}\n          commands:\n${remountFilters
+            .split('\n')
+            .map((line) => `            ${line}`)
+            .join(
+              '\n',
+            )}\n      - assertTrue: ${proofCondition}\n      - extendedWaitUntil:\n          visible: \${output.cppGradeCount.selector}\n          timeout: 30000`,
         );
+      }
       commands.push(
         recordGradeCount
           ? '- extendedWaitUntil:\n    visible: ${output.cppGradeCount.selector}\n    timeout: 90000'
@@ -2420,14 +2470,16 @@ export function renderCppMaestroFlow(
       );
     }
   }
-  return readFileSync(join(MAESTRO_DIR, 'app-store-cpp.yaml'), 'utf8').replace(/^CPP_COMMANDS$/m, commands.join('\n'));
+  return readFileSync(join(MAESTRO_DIR, 'app-store-cpp.yaml'), 'utf8').replace(/^CPP_COMMANDS$/m, () =>
+    commands.join('\n'),
+  );
 }
 
 export function rotationDegreesForIosOrientation(orientation: IosDeviceOrientation): number | null {
   return orientation === 'LANDSCAPE_LEFT' ? -90 : null;
 }
 
-function renderedFlowFileForIosDevice(
+export function renderedFlowFileForIosDevice(
   options: ScreenshotOptions,
   screenshotDevice: IosScreenshotDevice,
   captureDir: string,
@@ -2441,7 +2493,9 @@ function renderedFlowFileForIosDevice(
     // Inline the existing ten-shot flow: Maestro resolves relative subflows from
     // this temporary directory, where the committed app-store.yaml does not live.
     const legacyCommands = readFileSync(join(MAESTRO_DIR, 'app-store.yaml'), 'utf8').split('\n---\n')[1];
-    source = source.replace('- runFlow: app-store.yaml', legacyCommands);
+    // A replacement string expands $' in single-quoted regex anchors into the
+    // campaign suffix. The callback inserts the legacy YAML bytes literally.
+    source = source.replace('- runFlow: app-store.yaml', () => legacyCommands);
   }
   if (options.cpp && options.cpp !== 'all')
     source = renderCppMaestroFlow(
