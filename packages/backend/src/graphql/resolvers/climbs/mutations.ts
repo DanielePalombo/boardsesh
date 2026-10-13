@@ -1239,6 +1239,39 @@ export const climbMutations = {
         }
       }
 
+      // A draft can already have stats rows (any send logged on it writes one, a
+      // draft sent to a session, say) and can carry Boardsesh grade rows. The
+      // board sync sends a draft's stats and grades only to its owner, so other
+      // devices walked both cursors past those rows. Nothing else moves them
+      // later: the stats cursor trigger (0144) fires only when a column the
+      // device stores changes (0195), and the grade jobs re-stamp `computed_at`
+      // only when a value moves. Re-stamp both on publish, so every device pulls
+      // them now. `DEFAULT` takes the next value of each table's sync_seq
+      // sequence, as an insert does. 0270's membership trigger re-stamps both
+      // today too, but it is left over from #6339's reverted design and is due
+      // to be dropped; this keeps publishing correct for stats and grades
+      // without it.
+      if (transitioningToPublished) {
+        await tx
+          .update(dbSchema.boardClimbStats)
+          .set({ updatedAt: sql`now()`, syncSeq: sql`DEFAULT` })
+          .where(
+            and(
+              eq(dbSchema.boardClimbStats.boardType, validated.boardType),
+              eq(dbSchema.boardClimbStats.climbUuid, validated.uuid),
+            ),
+          );
+        await tx
+          .update(dbSchema.boardClimbGrades)
+          .set({ computedAt: sql`now()`, syncSeq: sql`DEFAULT` })
+          .where(
+            and(
+              eq(dbSchema.boardClimbGrades.boardType, validated.boardType),
+              eq(dbSchema.boardClimbGrades.climbUuid, validated.uuid),
+            ),
+          );
+      }
+
       // The search hot path INNER JOINs board_climb_stats by (boardType, climbUuid, angle).
       // Make sure a row exists at the resolved angle whenever the climb is, or just became,
       // searchable. The old row at the previous angle is left in place — it's harmless

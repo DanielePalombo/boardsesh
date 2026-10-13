@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 import type { ConnectionContext } from '@boardsesh/shared-schema';
+import * as dbSchema from '@boardsesh/db/schema';
 import { climbMutations } from '../graphql/resolvers/climbs/mutations';
 
 const { mockDb, mockPublishSocialEvent, insertCalls, lockedClimb } = vi.hoisted(() => {
@@ -1503,7 +1504,13 @@ describe('climb mutations', () => {
       makeCtx(),
     );
 
-    expect(mockDb.update).toHaveBeenCalledTimes(1);
+    // The climb row, then the re-stamps that re-send the draft's existing stats
+    // and grade rows to other devices.
+    expect(mockDb.update.mock.calls.map(([table]) => table)).toEqual([
+      dbSchema.boardClimbs,
+      dbSchema.boardClimbStats,
+      dbSchema.boardClimbGrades,
+    ]);
     expect(mockPublishSocialEvent).toHaveBeenCalledTimes(1);
   });
 
