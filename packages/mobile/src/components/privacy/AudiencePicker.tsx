@@ -7,6 +7,7 @@ import { Icon } from '../Icon';
 import { PressableSurface } from '../PressableSurface';
 import { useTheme } from '../../providers/theme-provider';
 import { useConfirm } from '../../providers/dialog-provider';
+import { audienceConfirmation } from './privacy-settings-changes';
 
 export const SOCIAL_AUDIENCES = ['public', 'followers', 'only_me'] as const;
 export const SESSION_AUDIENCES = ['public', 'unlisted', 'followers', 'invite_only'] as const;
@@ -44,22 +45,8 @@ export function AudiencePicker<TAudience extends PrivacyResourceAudience>({
     invite_only: t('privacy.audiences.invited'),
   };
   const chooseAudience = async (next: TAudience) => {
-    if ((next === 'public' || next === 'unlisted') && (next !== audience || reconfirmPublic) && confirmPublic) {
-      if (
-        !(await confirm({
-          title: next === 'unlisted' ? t('privacy.publishLinkTitle') : t('privacy.publishPublicTitle'),
-          message:
-            next === 'unlisted'
-              ? t('privacy.publishLinkMessage')
-              : resource
-                ? t('privacy.publishResourceMessage')
-                : t('privacy.publishPublicMessage'),
-          confirmLabel: next === 'unlisted' ? t('privacy.publishLink') : t('privacy.publishPublic'),
-          cancelLabel: t('privacy.cancel'),
-        }))
-      )
-        return;
-    }
+    const confirmation = audienceConfirmation({ next, current: audience, confirmPublic, reconfirmPublic, resource, t });
+    if (confirmation && !(await confirm(confirmation))) return;
     onChange(next);
     setExpanded(false);
   };
@@ -80,21 +67,33 @@ export function AudiencePicker<TAudience extends PrivacyResourceAudience>({
         <Text>{labels[audience]}</Text>
       </PressableSurface>
       {expanded && !disabled
-        ? options.map((option) => (
-            <PressableSurface
-              key={option}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: option === audience }}
-              onPress={() => void chooseAudience(option)}
-              style={{
-                padding: spacing[3],
-                borderRadius: radii.button,
-                backgroundColor: systemColors.secondaryBackground,
-              }}
-            >
-              <Text color={option === audience ? brandColors.primary : systemColors.label}>{labels[option]}</Text>
-            </PressableSurface>
-          ))
+        ? options.map((option) => {
+            const selected = option === audience;
+            return (
+              <PressableSurface
+                key={option}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected }}
+                onPress={() => void chooseAudience(option)}
+                style={[
+                  styles.option,
+                  {
+                    padding: spacing[3],
+                    gap: spacing[2],
+                    borderRadius: radii.button,
+                    backgroundColor: systemColors.secondaryBackground,
+                  },
+                ]}
+              >
+                <Text color={selected ? brandColors.primary : systemColors.label} style={styles.optionLabel}>
+                  {labels[option]}
+                </Text>
+                {/* The checkmark carries the selection too, so it never rests on
+                    colour alone (WCAG 1.4.1). */}
+                {selected ? <Icon name="check.small" size={20} color={systemColors.accent} /> : null}
+              </PressableSurface>
+            );
+          })
         : null}
     </View>
   );
@@ -106,5 +105,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  optionLabel: {
+    flex: 1,
   },
 });

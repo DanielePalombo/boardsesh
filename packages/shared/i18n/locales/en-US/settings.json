@@ -44,7 +44,8 @@
     "exportSynced": "Export synced data",
     "waitForSync": "Wait for sync",
     "fileExpired": "This file has expired. Refresh to check for a new export.",
-    "formatUnavailable": "This format is not available for the current export."
+    "formatUnavailable": "This format is not available for the current export.",
+    "checking": "Checking this week's export…"
   },
   "metadata": {
     "settings": {
@@ -57,22 +58,21 @@
     "profileError": "Failed to load profile"
   },
   "profile": {
-    "subtitle": "Customize how you appear on Boardsesh",
-    "editAction": "Edit Profile",
+    "editAction": "Edit profile",
     "avatar": {
       "upload": "Upload",
       "change": "Change",
       "hintMobile": "Cropped square and compressed automatically."
     },
     "displayName": {
-      "label": "Display Name",
+      "label": "Display name",
       "placeholder": "Enter your display name"
     },
     "email": {
       "label": "Email",
       "help": "Email cannot be changed"
     },
-    "save": "Save Changes",
+    "save": "Save changes",
     "saved": "Settings saved successfully",
     "saveError": "Failed to save settings",
     "validation": {
@@ -87,8 +87,8 @@
     "cta": "Open the app"
   },
   "deleteAccount": {
-    "title": "Delete Account",
-    "button": "Delete Account",
+    "title": "Delete account",
+    "button": "Delete account",
     "dialog": {
       "warning": "This is permanent. Your profile, draft climbs, logbook entries, and all other data will be deleted and cannot be recovered.",
       "checking": "Checking your climbs...",
@@ -97,8 +97,7 @@
       "removeSetterName": "Remove my setter name from published climbs",
       "confirmInstruction": "Type <strong>DELETE</strong> to confirm.",
       "confirmPlaceholder": "DELETE",
-      "cancel": "Cancel",
-      "confirm": "Delete My Account"
+      "confirm": "Delete my account"
     },
     "error": "Failed to delete account. Please try again."
   },
@@ -183,7 +182,7 @@
     "deleteError": "Failed to delete controller"
   },
   "aurora": {
-    "title": "Board Accounts",
+    "title": "Board accounts",
     "card": {
       "boardSuffix": "Board",
       "username": "Username:",
@@ -402,8 +401,6 @@
     "bugPlaceholder": "What were you doing? What did you expect vs see?",
     "ratingPlaceholder": "What's on your mind?",
     "remainingChars": "{{count}} more characters to go",
-    "sessionRecordingLabel": "Turn on session recording",
-    "sessionRecordingDescription": "Help us fix your bug faster by turning on session recording and reproducing the bug. You can turn it off after.",
     "bluetoothBugLabel": "I'm having Bluetooth trouble",
     "bluetoothBugDescription": "Scans for nearby boards and sends us what they broadcast, so we can figure out why yours won't connect. No board is controlled — we just listen.",
     "contactConsentLabel": "Can we contact you about this?",
@@ -463,8 +460,8 @@
     "cancel": "Cancel",
     "connectBoard": "Connect Board",
     "relightBoard": "Re-light board",
+    "sectionTitle": "Bluetooth",
     "autoDisconnect": {
-      "title": "Auto-disconnect",
       "description": "Disconnect from the board after no climb has been displayed for the selected time.",
       "enabledLabel": "Auto-disconnect",
       "enabledDescription": "Let other climbers connect after the timer expires.",
@@ -553,25 +550,26 @@
       "connectFailed": "Couldn't connect to Strava",
       "disconnected": "Strava disconnected",
       "disconnectFailed": "Couldn't disconnect Strava. Try again."
+    },
+    "garmin": {
+      "title": "Garmin"
     }
   },
   "watchPairing": {
     "title": "Pair a Garmin watch",
-    "subtitle": "Run your session from your wrist",
     "description": "Start the Boardsesh activity on your Garmin, then type this code to link the watch to your account.",
     "generate": "Get a pairing code",
     "regenerate": "New code",
     "codeInstruction": "Enter this code on your watch",
-    "expiresIn": "Expires in {{seconds}}s",
+    "expiresInLabel": "Expires in",
+    "secondsLeft": "{{seconds}}s",
     "expired": "Code expired — get a new one",
     "generating": "Getting a code…",
     "error": "Couldn't get a code. Try again."
   },
   "privacy": {
     "title": "Privacy",
-    "intro": "Your ticks still help climb grades and board history. You decide who can see they came from you.",
     "accountAudience": "Who can see your activity?",
-    "publicAccount": "Public account",
     "privateAccount": "Private account",
     "privateExplanation": "Private accounts share activity with approved followers. This protects past activity too. Existing followers keep access until you remove them.",
     "sessionDefault": "New session audience",
@@ -582,15 +580,29 @@
     "offline": "Connect to save privacy changes. Your saved settings have not changed.",
     "saveFailed": "Could not save. Your saved settings have not changed. Connect and try again.",
     "saved": "Privacy settings saved",
-    "save": "Save privacy settings",
     "requests": "Follow requests",
     "followers": "Followers",
     "approve": "Approve",
     "decline": "Decline",
     "removeFollower": "Remove follower",
     "climber": "Climber",
-    "loadFailed": "Could not load your crew. Try again when connected.",
     "accountControlsLater": "Account visibility, session defaults and follow requests arrive in a later update.",
+    "loadingSettings": "Loading your privacy settings",
+    "loadSettingsFailed": "Couldn't load your privacy settings.",
+    "sessionDefaultFooter": "Applies to sessions you start from now on. Sessions you've already started keep their audience.",
+    "makeAccountPublicTitle": "Make your account public?",
+    "makeAccountPublicMessage": "Anyone will see your activity, including sends you've already logged.",
+    "makeAccountPublicSessionsNote": "New sessions will default to Public.",
+    "yourData": "Your data",
+    "policy": "Privacy policy",
+    "remove": "Remove",
+    "approveNamed": "Approve {{name}}",
+    "declineNamed": "Decline {{name}}",
+    "removeNamed": "Remove {{name}}",
+    "removeFollowerTitle": "Remove {{name}}?",
+    "removeFollowerMessage": "They'll stop seeing activity you share with approved followers.",
+    "noRequests": "No one's waiting to follow you. New requests show up here.",
+    "noFollowers": "No followers yet. Your crew shows up here once they follow you.",
     "cancel": "Cancel",
     "publishPublicTitle": "Make this public?",
     "publishPublicMessage": "Anyone can see this post and your name, even with a private account. The session or board audience still applies.",

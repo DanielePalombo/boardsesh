@@ -11,11 +11,28 @@
       "thisClimber": "ce grimpeur"
     },
     "a11y": {
-      "clearSearch": "Effacer la recherche"
+      "clearSearch": "Effacer la recherche",
+      "opensOutsideApp": "S’ouvre en dehors de Boardsesh"
     },
     "settings": {
       "title": "Paramètres",
-      "library": "Bibliothèque",
+      "pages": {
+        "general": {
+          "title": "Général"
+        },
+        "board": {
+          "title": "Board"
+        },
+        "climbs": {
+          "title": "Blocs et cotations"
+        },
+        "earlyAccess": {
+          "title": "Accès anticipé"
+        },
+        "developer": {
+          "title": "Développement"
+        }
+      },
       "development": "Développement",
       "dev": {
         "forceServerUnreachable": "Forcer le serveur injoignable",
@@ -25,7 +42,6 @@
       "metroServersSubtitle": "Basculer entre les bundlers Tailnet",
       "boardLook": {
         "title": "Look de la board",
-        "rowSubtitleShort": "Le rendu de ta board, plus les couleurs et les formes",
         "rendererUnavailable": {
           "title": "Mets à jour l'app",
           "body": "Cette version ne sait pas encore dessiner le rendu Aura. Mets à jour Boardsesh pour le débloquer — en attendant, ta board s'affiche en Classique."
@@ -141,6 +157,7 @@
         },
         "accessibility": {
           "title": "Accessibilité",
+          "pageTitle": "Couleurs et formes des prises",
           "classicOnlyNote": "La forme, l'épaisseur et la taille du marqueur ne s'appliquent qu'au rendu Classique. En Boardsesh, la silhouette de la prise allumée fait déjà office de forme — active les glyphes de rôle ci-dessous pour un repère basé sur la forme.",
           "roleGlyphs": {
             "label": "Glyphes de rôle",
@@ -283,7 +300,6 @@
       },
       "storage": {
         "title": "Stockage",
-        "rowLabel": "Gérer le stockage",
         "rowSubtitle": "Vois ce que prennent tes téléchargements et libère ce dont tu n'as pas besoin",
         "intro": "Les boards que tu télécharges prennent de la place sur ce téléphone. Libère celles sur lesquelles tu ne grimpes pas.",
         "offNote": "Les téléchargements hors ligne sont désactivés pour le moment. Tu peux quand même libérer ce qui est déjà sur ce téléphone.",
@@ -299,7 +315,7 @@
         "keptOffline": "Gardée hors ligne",
         "notKeptOffline": "Plus gardée hors ligne — prend toujours de la place",
         "estimateNote": "Les tailles sont approximatives. Deux tailles d'un même layout partagent leurs voies : le total ne correspond donc pas à leur somme.",
-        "remove": "Retirer",
+        "tapToRemove": "Touche une board pour la retirer de ce téléphone.",
         "removeAria": "Retirer {{name}} de ce téléphone",
         "cancel": "Annuler",
         "removeTitle": "Retirer {{name}} ?",
@@ -370,14 +386,8 @@
         "contributeSubtitle": "Les traductions sont maintenues par la communauté. Ouvrez les fichiers {{language}} sur GitHub pour corriger ou ajouter une phrase."
       },
       "diagnostics": {
-        "title": "Confidentialité",
-        "recording": "Aidez-nous à nous améliorer",
-        "recordingDescription": "Envoyez des enregistrements de session anonymes et masqués pour qu'on corrige les bugs plus vite. Ce que vous tapez et vos photos restent masqués. Désactivez quand vous voulez."
-      },
-      "integrations": {
-        "title": "Applications connectées",
-        "subtitle": "Apple Health et Strava",
-        "subtitleWithStrava": "Comptes de board, Apple Health, Strava"
+        "recording": "Partager les enregistrements de session",
+        "recordingDescription": "Enregistre ton écran dans l’app pour qu’on voie le bug se produire. Ce que tu tapes et tes photos restent masqués. Active-le pendant que tu reproduis un problème pour le support, puis désactive-le."
       },
       "syncIssues": {
         "title": "Problèmes de synchronisation",
@@ -423,8 +433,8 @@
         "leaveDeferred": "Retour impossible pour l'instant. Nouvel essai à la prochaine ouverture de l'app."
       },
       "climbDrawer": {
-        "title": "Vue du bloc",
         "description": "Choisis ce que tu vois sous le bloc.",
+        "settingsFooter": "Choisis ce que tu vois sous le bloc. Tu peux aussi le changer depuis le menu ⋯ d’un bloc, dans Options d’affichage.",
         "loading": "Chargement des options d’affichage…",
         "hideAll": "Tout masquer",
         "showAll": "Tout afficher",
@@ -449,7 +459,7 @@
         "actions": "Actions",
         "gradesTitle": "Cotations",
         "previewFooter": "Exemple. Les croix, favoris et étiquettes apparaissent sur les blocs qui en ont.",
-        "gradeFooter": "Choisis la cotation principale dans Réglages → Cotations.",
+        "gradeFooter": "Choisis la cotation principale dans Réglages → Blocs et cotations.",
         "personalFooter": "Les marques personnelles et listes nécessitent une connexion au compte et se chargent en ligne.",
         "presetsLabel": "Réglage rapide",
         "presets": {
@@ -537,7 +547,6 @@
     "onboarding": {
       "replaySection": "Tutoriel",
       "replayTitle": "Revoir le tutoriel",
-      "replaySubtitle": "Affiche à nouveau le tutoriel",
       "replayError": "Impossible de rouvrir le tutoriel. Réessaie.",
       "prompt": {
         "title": "Vois ce qui est allumé sur ton mur, en direct",
