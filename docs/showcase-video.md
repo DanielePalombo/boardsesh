@@ -33,6 +33,12 @@ the moment the app changes.
   all land on it; a full disk shows up as Postgres or Maestro failing, not as a
   clear error.
 
+For parallel recording jobs, set `SHOWCASE_SIMULATOR_NAME_SUFFIX=Remaining`
+to use `Boardsesh Showcase [Remaining]` and `Boardsesh Showcase 2 [Remaining]`.
+Each worktree owns its own device pair, and occupied Metro ports remain untouched.
+Coordinate account usage before recording live sessions: separate simulators do
+not isolate sessions on a shared account.
+
 ### Credentials
 
 The default backend is **prod**, for real content. Two accounts sign in:

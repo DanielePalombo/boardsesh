@@ -90,7 +90,7 @@ import {
   FLOW_START_MARK,
   REFERENCE_CHANNEL_TOLERANCE,
   SHOWCASE_DEFAULT_BOARDS,
-  SHOWCASE_DEVICES,
+  showcaseDevice,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -466,7 +466,7 @@ function screenshotOptions(args: ShowcaseRecordArgs, appPath: string | null): Sc
     platform: 'ios',
     flow: 'app-store',
     backend: args.backend,
-    devices: [SHOWCASE_DEVICES.primary.name],
+    devices: [showcaseDevice('primary', process.env.SHOWCASE_SIMULATOR_NAME_SUFFIX).name],
     androidDevice: 'Pixel 6',
     appLocales: [],
     variant: null,
@@ -595,7 +595,7 @@ async function preparePhone(
   env: NodeJS.ProcessEnv,
   signal: SignalServer,
 ): Promise<Phone> {
-  const spec = SHOWCASE_DEVICES[role];
+  const spec = showcaseDevice(role, process.env.SHOWCASE_SIMULATOR_NAME_SUFFIX);
   const device = findOrCreateIosDevice({ name: spec.name, typeId: spec.typeId, orientation: 'PORTRAIT' });
   console.log(`${LOG} ${role}: ${device.name} (${device.udid})`);
   bootDevice(device);
@@ -1696,9 +1696,12 @@ function printPlan(args: ShowcaseRecordArgs, takes: readonly ShowcaseTake[], env
   );
   console.log(`${LOG} env file: ${args.envFile} (${envFileFound ? 'found' : 'not found'})`);
   for (const key of ENV_FILE_KEYS) console.log(`${LOG}   ${key}: ${process.env[key] ? 'set' : 'unset'}`);
-  const primaryName = args.platform === 'android' ? SHOWCASE_ANDROID_DEVICE.avdName : SHOWCASE_DEVICES.primary.name;
+  const primaryName =
+    args.platform === 'android'
+      ? SHOWCASE_ANDROID_DEVICE.avdName
+      : showcaseDevice('primary', process.env.SHOWCASE_SIMULATOR_NAME_SUFFIX).name;
   console.log(
-    `${LOG} devices: ${primaryName}${takes.some((take) => take.secondary) ? `, ${SHOWCASE_DEVICES.secondary.name} (iOS)` : ''}`,
+    `${LOG} devices: ${primaryName}${takes.some((take) => take.secondary) ? `, ${showcaseDevice('secondary', process.env.SHOWCASE_SIMULATOR_NAME_SUFFIX).name} (iOS)` : ''}`,
   );
   for (const take of takes) {
     const flows = [

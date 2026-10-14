@@ -14,6 +14,8 @@ import {
   REFERENCE_MAX_DIFF_RATIO,
   SHOWCASE_DEFAULT_BOARDS,
   SHOWCASE_DEFAULT_ENV_FILE,
+  SHOWCASE_DEVICES,
+  showcaseDevice,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -62,6 +64,29 @@ import { requiredTakeSeconds } from '../lib/showcase-video/timeline';
 
 const anchorLine = (name: string, x: number): string =>
   ` LOG  [showcase-anchor] {"name":"${name}","x":${x},"y":118,"width":132,"height":32}`;
+
+describe('parallel recording simulator names', () => {
+  it('uses the existing device pair by default', () => {
+    expect(showcaseDevice('primary')).toBe(SHOWCASE_DEVICES.primary);
+    expect(showcaseDevice('secondary', '  ')).toBe(SHOWCASE_DEVICES.secondary);
+  });
+
+  it('isolates both roles while retaining native screen geometry and device type', () => {
+    for (const role of ['primary', 'secondary'] as const) {
+      expect(showcaseDevice(role, ' Remaining ')).toEqual({
+        ...SHOWCASE_DEVICES[role],
+        name: `${SHOWCASE_DEVICES[role].name} [Remaining]`,
+      });
+      expect(showcaseDevice(role, 'Remaining').name).not.toBe(SHOWCASE_DEVICES[role].name);
+    }
+    expect(SHOWCASE_DEVICES.primary.name).toBe('Boardsesh Showcase');
+    expect(showcaseDevice('primary', '2').name).not.toBe(SHOWCASE_DEVICES.secondary.name);
+  });
+
+  it.each(['bad/name', 'bad\nname', 'x'.repeat(61)])('rejects an invalid suffix %j', (suffix) => {
+    expect(() => showcaseDevice('primary', suffix)).toThrow('SHOWCASE_SIMULATOR_NAME_SUFFIX');
+  });
+});
 
 describe('parseRecordArgs', () => {
   it('defaults to every take against prod', () => {

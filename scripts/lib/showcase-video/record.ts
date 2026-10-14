@@ -56,6 +56,17 @@ export const SHOWCASE_DEVICES: Readonly<Record<'primary' | 'secondary', Showcase
   secondary: { name: 'Boardsesh Showcase 2', typeId: IPHONE_16_PRO_MAX, screen: { width: 440, height: 956 } },
 };
 
+/** A separate device pair for parallel recordings; never changes the default pair. */
+export function showcaseDevice(role: 'primary' | 'secondary', nameSuffix = ''): ShowcaseDevice {
+  const suffix = nameSuffix.trim();
+  if (!suffix) return SHOWCASE_DEVICES[role];
+  if (!/^[\p{L}\p{N} _-]{1,60}$/u.test(suffix))
+    throw new Error(
+      'SHOWCASE_SIMULATOR_NAME_SUFFIX must contain 1–60 letters, numbers, spaces, underscores or hyphens.',
+    );
+  return { ...SHOWCASE_DEVICES[role], name: `${SHOWCASE_DEVICES[role].name} [${suffix}]` };
+}
+
 /**
  * The seven walls the board takes sit on, in `SHOWCASE_BOARD_SLOTS` order
  * (kilter, tension, moonboard, woods, decoy, grasshopper, spray). Each entry
