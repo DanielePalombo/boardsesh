@@ -1,6 +1,385 @@
 {
-  "generatedAt": "2026-10-11T00:22:17.905Z",
+  "generatedAt": "2026-10-14T01:24:20.521Z",
   "entries": [
+    {
+      "prNumber": 6447,
+      "category": "improved",
+      "title": "More room for feedback titles on iPhone, with tick buttons and close controls.",
+      "mergedAt": "2026-10-14T00:50:10Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6447"
+    },
+    {
+      "prNumber": 6372,
+      "category": "fixed",
+      "title": "Choose climb ratings and open Advanced in logbook filters again on iOS.",
+      "mergedAt": "2026-10-14T00:49:59Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6372"
+    },
+    {
+      "prNumber": 6449,
+      "category": "fixed",
+      "title": "Scroll climbs with floating grey filters and compact glass grade buttons. The filter icon shows how many filters are active.",
+      "mergedAt": "2026-10-14T00:49:54Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6449"
+    },
+    {
+      "prNumber": 6432,
+      "category": "fixed",
+      "title": "Other climbers' offline downloads no longer include your drafts",
+      "mergedAt": "2026-10-13T08:15:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6432"
+    },
+    {
+      "prNumber": 6433,
+      "category": "fixed",
+      "title": "Open the grade picker without your climb list jumping.",
+      "mergedAt": "2026-10-13T06:09:23Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6433"
+    },
+    {
+      "prNumber": 6434,
+      "category": "improved",
+      "title": "Board images stay ready as you switch views.",
+      "mergedAt": "2026-10-13T06:06:21Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6434"
+    },
+    {
+      "prNumber": 6370,
+      "category": "fixed",
+      "title": "See your sends, attempts, and grades as you browse, even offline.",
+      "mergedAt": "2026-10-13T02:27:00Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6370"
+    },
+    {
+      "prNumber": 6363,
+      "category": "new",
+      "title": "Filter your Logbook with the same quick buttons as the climbs list, and pin the ones you use.",
+      "mergedAt": "2026-10-13T02:26:05Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6363",
+      "body": "Logbook filters now cover sort order, board, your stars, setter, angle range and dates like \"this month\".\nCollapsing your Progress board list brings the overview fully into view.\nFloating controls stay steady when you lift your finger."
+    },
+    {
+      "prNumber": 6425,
+      "category": "new",
+      "title": "The climb view's ••• menu now sits in the top corner and opens a proper native menu",
+      "mergedAt": "2026-10-13T01:49:16Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6425",
+      "body": "Your queue is one tap away next to the skip buttons; the heart moves to the row below\nView options now live in Settings → Climb view and the ••• menu"
+    },
+    {
+      "prNumber": 6339,
+      "category": "fixed",
+      "title": "Offline boards carry every published climb again, and drafts stay with whoever set them.",
+      "mergedAt": "2026-10-13T00:39:55Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6339"
+    },
+    {
+      "prNumber": 6344,
+      "category": "fixed",
+      "title": "Your new home board is public by default; your address stays hidden until you share it",
+      "mergedAt": "2026-10-12T23:23:44Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6344",
+      "body": "A board with a hidden address at a public gym shows the gym's location instead\nIf your own gym is public, the app warns you and links to its settings"
+    },
+    {
+      "prNumber": 6424,
+      "category": "new",
+      "title": "Long-press a climb for a much bigger look at the holds; scroll the menu for more actions.",
+      "mergedAt": "2026-10-12T22:30:15Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6424"
+    },
+    {
+      "prNumber": 5795,
+      "category": "fixed",
+      "title": "Pin, edit and delete on your own playlists are visible again on older iPhones and with Reduce Transparency on",
+      "mergedAt": "2026-10-12T21:48:26Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5795"
+    },
+    {
+      "prNumber": 5531,
+      "category": "fixed",
+      "title": "Bluetooth Quickstart remembers which matching board is yours.",
+      "mergedAt": "2026-10-12T21:47:28Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5531"
+    },
+    {
+      "prNumber": 6420,
+      "category": "fixed",
+      "title": "Shuffle pauses while your session starts.",
+      "mergedAt": "2026-10-12T21:44:46Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6420"
+    },
+    {
+      "prNumber": 6390,
+      "category": "new",
+      "title": "Share your board's link; friends tap Join for access, with no approval round trip",
+      "mergedAt": "2026-10-12T21:43:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6390",
+      "body": "Reset the link any time; people who already joined keep access"
+    },
+    {
+      "prNumber": 6422,
+      "category": "improved",
+      "title": "See who lit the current climb from the Climbs header.",
+      "mergedAt": "2026-10-12T21:41:53Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6422"
+    },
+    {
+      "prNumber": 6380,
+      "category": "new",
+      "title": "Workout previews now show how many climbs you'll get and at which grades",
+      "mergedAt": "2026-10-12T20:51:51Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6380",
+      "body": "If there aren't enough climbs to fill the plan, the preview tells you before you start\nShuffle a generated workout for new climbs at the same grades\nWarm-up, build-up, top grade and cool-down are labelled in the preview"
+    },
+    {
+      "prNumber": 6362,
+      "category": "new",
+      "title": "Stay anonymous on gym walls while your sends still count.",
+      "mergedAt": "2026-10-12T20:37:39Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6362",
+      "body": "Your approved private-board crew sees your name after your wall action."
+    },
+    {
+      "prNumber": 6411,
+      "category": "fixed",
+      "title": "Climbs open on the first tap after you reconnect",
+      "mergedAt": "2026-10-12T19:43:10Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6411",
+      "body": "Downloaded boards stay put when you come back online"
+    },
+    {
+      "prNumber": 6375,
+      "category": "fixed",
+      "title": "Friends can open your unlisted board link and see the wall.",
+      "mergedAt": "2026-10-12T12:35:14Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6375",
+      "body": "Your unlisted board stays out of search and public gym screens."
+    },
+    {
+      "prNumber": 6359,
+      "category": "fixed",
+      "title": "Delete your account and your analytics profile goes with it.",
+      "mergedAt": "2026-10-12T11:55:34Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6359",
+      "body": "Saying no to analytics no longer changes which features you see."
+    },
+    {
+      "prNumber": 6410,
+      "category": "fixed",
+      "title": "Comments and the staff list on a private gym stay with the people who can see the gym",
+      "mergedAt": "2026-10-12T10:55:53Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6410"
+    },
+    {
+      "prNumber": 6371,
+      "category": "improved",
+      "title": "Read session settings clearly, even with larger text.",
+      "mergedAt": "2026-10-12T09:55:32Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6371"
+    },
+    {
+      "prNumber": 6404,
+      "category": "fixed",
+      "title": "Comments on an unlisted board stay off other climbers' feeds; the link still opens the thread",
+      "mergedAt": "2026-10-12T09:14:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6404",
+      "body": "Session cards feature the clip you attached to the send"
+    },
+    {
+      "prNumber": 6401,
+      "category": "fixed",
+      "title": "The eye buttons are gone from the climb list and the climb view. Choose what shows in Settings, or from ••• → View options in the climb view.",
+      "mergedAt": "2026-10-12T08:57:41Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6401"
+    },
+    {
+      "prNumber": 6405,
+      "category": "fixed",
+      "title": "Open climbs reliably when your tap lingers a moment.",
+      "mergedAt": "2026-10-12T08:57:03Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6405"
+    },
+    {
+      "prNumber": 6356,
+      "category": "fixed",
+      "title": "You always see comments and likes on your own sends",
+      "mergedAt": "2026-10-12T08:10:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6356",
+      "body": "Grade proposals show their reasoning to everyone\nReplies stay readable after a climber deletes their account\nPrivacy lives in Settings, with no setup screen"
+    },
+    {
+      "prNumber": 6358,
+      "category": "improved",
+      "title": "Outside the selected privacy regions, the app opens without an analytics question.",
+      "mergedAt": "2026-10-12T08:09:57Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6358",
+      "body": "Privacy choices still lets you switch analytics off whenever you want.\nIn the selected regions, Allow and No thanks appear before analytics starts."
+    },
+    {
+      "prNumber": 6389,
+      "category": "fixed",
+      "title": "Your filters stay applied when you swipe back to your climbs. Matching counts sit beneath the Filters title, leaving more room to choose.",
+      "mergedAt": "2026-10-12T07:49:12Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6389"
+    },
+    {
+      "prNumber": 6399,
+      "category": "improved",
+      "title": "Open climbs reliably after account privacy updates.",
+      "mergedAt": "2026-10-12T07:46:28Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6399",
+      "body": "Keep browsing without notification retries draining your battery."
+    },
+    {
+      "prNumber": 6345,
+      "category": "fixed",
+      "title": "Your sends show up for your followers again, even on a friend's private board",
+      "mergedAt": "2026-10-12T06:40:15Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6345",
+      "body": "A private session link still works for the people you send it to\nFriends climbing live show in Climbing now even on a wall you can't see; the wall stays unnamed\nSessions get an \"Anyone with the link\" choice: off the live lists, but your link still works\nComments on a link-only session stay with your crew, out of the public comment feed"
+    },
+    {
+      "prNumber": 6383,
+      "category": "improved",
+      "title": "See climb artwork as the player opens after scrolling. Opening another climb while closing the player keeps your selection.",
+      "mergedAt": "2026-10-12T05:57:42Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6383"
+    },
+    {
+      "prNumber": 6342,
+      "category": "fixed",
+      "title": "Your analytics choice sticks: saying yes on one device no longer gets undone by an older no on another.",
+      "mergedAt": "2026-10-12T03:41:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6342",
+      "body": "Signing in on a shared phone asks for your own analytics choice instead of borrowing someone else's."
+    },
+    {
+      "prNumber": 6346,
+      "category": "fixed",
+      "title": "Following someone or renaming your board no longer makes everyone's app reload",
+      "mergedAt": "2026-10-12T03:33:50Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6346",
+      "body": "Your climb list stays on screen when the app reconnects"
+    },
+    {
+      "prNumber": 6369,
+      "category": "improved",
+      "title": "Choose what each climb in your list shows from the new Climb list screen.",
+      "mergedAt": "2026-10-12T02:23:36Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6369",
+      "body": "Hide the board picture to fit more climbs, or try quick setups for names, text or everything.\nSee your sends and tries on each climb with My progress."
+    },
+    {
+      "prNumber": 6357,
+      "category": "new",
+      "title": "Find community playlists at your grade: pick a grade range and see only the lists that sit inside it",
+      "mergedAt": "2026-10-11T21:01:17Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6357",
+      "body": "See playlists from the climbers you follow with the new Following filter\nEvery community playlist shows its grade range, like V3–V5"
+    },
+    {
+      "prNumber": 6353,
+      "category": "new",
+      "title": "See the grade range of a community playlist, like V3–V5, right on its card",
+      "mergedAt": "2026-10-11T21:00:45Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6353"
+    },
+    {
+      "prNumber": 6316,
+      "category": "fixed",
+      "title": "A board you keep offline that stopped updating now syncs again.",
+      "mergedAt": "2026-10-11T10:18:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6316"
+    },
+    {
+      "prNumber": 6361,
+      "category": "fixed",
+      "title": "Connect to your picked wall without waiting behind stale board choices.",
+      "mergedAt": "2026-10-11T09:58:17Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6361"
+    },
+    {
+      "prNumber": 6348,
+      "category": "improved",
+      "title": "Swiping between climbs is smoother: the next climb's holds are there as it slides in, and a quick swipe is no longer ignored while the last one finishes.",
+      "mergedAt": "2026-10-11T08:45:28Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6348"
+    },
+    {
+      "prNumber": 6338,
+      "category": "new",
+      "title": "The filter chips now float over the list as you scroll, instead of sitting on a solid band.",
+      "mergedAt": "2026-10-11T08:44:00Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6338"
+    },
+    {
+      "prNumber": 4597,
+      "category": "fixed",
+      "title": "Session invites keep the wall you chose if a join is delayed.",
+      "mergedAt": "2026-10-11T08:14:47Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4597"
+    },
+    {
+      "prNumber": 5627,
+      "category": "fixed",
+      "title": "Keep your ticks on the wall they belong to, even when you log from a mixed queue.",
+      "mergedAt": "2026-10-11T08:14:12Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5627",
+      "body": "Correct a tick's wall from your logbook, or choose None."
+    },
+    {
+      "prNumber": 4187,
+      "category": "fixed",
+      "title": "Connecting your phone to a board keeps you on the right wall instead of jumping to someone else's board",
+      "mergedAt": "2026-10-11T08:12:13Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4187",
+      "body": "Older sends in a wall's history show who lit them again, even for climbers who never set a name"
+    },
+    {
+      "prNumber": 6336,
+      "category": "new",
+      "title": "The grade picker is a clean row under the filters: tap Grade to open it and it stays open while you climb.",
+      "mergedAt": "2026-10-11T05:15:06Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6336",
+      "body": "Touch and hold a second grade to make a range without racing the double tap.\nV0 is one chip instead of three."
+    },
+    {
+      "prNumber": 6323,
+      "category": "improved",
+      "title": "Boards download faster for offline use, with about a quarter less to download",
+      "mergedAt": "2026-10-11T04:05:10Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6323"
+    },
+    {
+      "prNumber": 6327,
+      "category": "fixed",
+      "title": "After you change a filter, the list starts at the top result again instead of hiding it under the header.",
+      "mergedAt": "2026-10-11T02:27:06Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6327"
+    },
+    {
+      "prNumber": 6319,
+      "category": "new",
+      "title": "Your screen stays on while a board downloads, so it finishes without you babysitting it",
+      "mergedAt": "2026-10-11T01:45:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6319"
+    },
+    {
+      "prNumber": 6326,
+      "category": "fixed",
+      "title": "The grade picker on the climb list opens where you can tap it again.",
+      "mergedAt": "2026-10-11T01:45:26Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6326"
+    },
+    {
+      "prNumber": 6313,
+      "category": "improved",
+      "title": "The climb list on a downloaded board loads each page of climbs almost instantly, so fast scrolling no longer runs into a wait.",
+      "mergedAt": "2026-10-11T01:41:34Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6313",
+      "body": "Opening the app on a downloaded board shows your climbs sooner."
+    },
     {
       "prNumber": 6301,
       "category": "improved",
@@ -7114,13 +7493,26 @@
   "nativeReleases": [
     {
       "kind": "native-release",
-      "date": "2026-10-11T10:52:18+11:00",
-      "sha": "89a5b76cc465a77dc8f54cf652d132640e438a91",
+      "date": "2026-10-14T11:50:09+11:00",
+      "sha": "a988d35c03f29b46aba4bd090f7ced4d8af5f055",
       "platforms": [
         "android"
       ],
       "fingerprints": {
-        "android": "be84baa80af050ea766e1eed6f9752f3051c4c3b"
+        "android": "8733a10cad03453551ff474a116ef4858611f75b"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-11T10:52:18+11:00",
+      "sha": "89a5b76cc465a77dc8f54cf652d132640e438a91",
+      "platforms": [
+        "android",
+        "ios"
+      ],
+      "fingerprints": {
+        "android": "be84baa80af050ea766e1eed6f9752f3051c4c3b",
+        "ios": "567563d87132cf794e981fabd3787857863d972e"
       }
     },
     {

@@ -4,19 +4,147 @@ User-facing changes to Boardsesh, newest first. Auto-generated from the "Release
 Notes" section of merged pull requests — do not edit by hand (a CI check rejects
 manual changes). See docs/mobile-ota-updates.md.
 
+## 2026-10-14
+
+### App update
+
+A new version shipped to the Play Store.
+
+### Improved
+
+- More room for feedback titles on iPhone, with tick buttons and close controls. ([#6447](https://github.com/boardsesh/boardsesh/pull/6447))
+
+### Fixed
+
+- Choose climb ratings and open Advanced in logbook filters again on iOS. ([#6372](https://github.com/boardsesh/boardsesh/pull/6372))
+- Scroll climbs with floating grey filters and compact glass grade buttons. The filter icon shows how many filters are active. ([#6449](https://github.com/boardsesh/boardsesh/pull/6449))
+
+## 2026-10-13
+
+### New
+
+- Filter your Logbook with the same quick buttons as the climbs list, and pin the ones you use. ([#6363](https://github.com/boardsesh/boardsesh/pull/6363))
+  Logbook filters now cover sort order, board, your stars, setter, angle range and dates like "this month".
+  Collapsing your Progress board list brings the overview fully into view.
+  Floating controls stay steady when you lift your finger.
+- The climb view's ••• menu now sits in the top corner and opens a proper native menu ([#6425](https://github.com/boardsesh/boardsesh/pull/6425))
+  Your queue is one tap away next to the skip buttons; the heart moves to the row below
+  View options now live in Settings → Climb view and the ••• menu
+
+### Improved
+
+- Board images stay ready as you switch views. ([#6434](https://github.com/boardsesh/boardsesh/pull/6434))
+
+### Fixed
+
+- Other climbers' offline downloads no longer include your drafts ([#6432](https://github.com/boardsesh/boardsesh/pull/6432))
+- Open the grade picker without your climb list jumping. ([#6433](https://github.com/boardsesh/boardsesh/pull/6433))
+- See your sends, attempts, and grades as you browse, even offline. ([#6370](https://github.com/boardsesh/boardsesh/pull/6370))
+- Offline boards carry every published climb again, and drafts stay with whoever set them. ([#6339](https://github.com/boardsesh/boardsesh/pull/6339))
+
+## 2026-10-12
+
+### New
+
+- Long-press a climb for a much bigger look at the holds; scroll the menu for more actions. ([#6424](https://github.com/boardsesh/boardsesh/pull/6424))
+- Share your board's link; friends tap Join for access, with no approval round trip ([#6390](https://github.com/boardsesh/boardsesh/pull/6390))
+  Reset the link any time; people who already joined keep access
+- Workout previews now show how many climbs you'll get and at which grades ([#6380](https://github.com/boardsesh/boardsesh/pull/6380))
+  If there aren't enough climbs to fill the plan, the preview tells you before you start
+  Shuffle a generated workout for new climbs at the same grades
+  Warm-up, build-up, top grade and cool-down are labelled in the preview
+- Stay anonymous on gym walls while your sends still count. ([#6362](https://github.com/boardsesh/boardsesh/pull/6362))
+  Your approved private-board crew sees your name after your wall action.
+
+### Improved
+
+- See who lit the current climb from the Climbs header. ([#6422](https://github.com/boardsesh/boardsesh/pull/6422))
+- Read session settings clearly, even with larger text. ([#6371](https://github.com/boardsesh/boardsesh/pull/6371))
+- Outside the selected privacy regions, the app opens without an analytics question. ([#6358](https://github.com/boardsesh/boardsesh/pull/6358))
+  Privacy choices still lets you switch analytics off whenever you want.
+  In the selected regions, Allow and No thanks appear before analytics starts.
+- Open climbs reliably after account privacy updates. ([#6399](https://github.com/boardsesh/boardsesh/pull/6399))
+  Keep browsing without notification retries draining your battery.
+- See climb artwork as the player opens after scrolling. Opening another climb while closing the player keeps your selection. ([#6383](https://github.com/boardsesh/boardsesh/pull/6383))
+- Choose what each climb in your list shows from the new Climb list screen. ([#6369](https://github.com/boardsesh/boardsesh/pull/6369))
+  Hide the board picture to fit more climbs, or try quick setups for names, text or everything.
+  See your sends and tries on each climb with My progress.
+
+### Fixed
+
+- Your new home board is public by default; your address stays hidden until you share it ([#6344](https://github.com/boardsesh/boardsesh/pull/6344))
+  A board with a hidden address at a public gym shows the gym's location instead
+  If your own gym is public, the app warns you and links to its settings
+- Pin, edit and delete on your own playlists are visible again on older iPhones and with Reduce Transparency on ([#5795](https://github.com/boardsesh/boardsesh/pull/5795))
+- Bluetooth Quickstart remembers which matching board is yours. ([#5531](https://github.com/boardsesh/boardsesh/pull/5531))
+- Shuffle pauses while your session starts. ([#6420](https://github.com/boardsesh/boardsesh/pull/6420))
+- Climbs open on the first tap after you reconnect ([#6411](https://github.com/boardsesh/boardsesh/pull/6411))
+  Downloaded boards stay put when you come back online
+- Friends can open your unlisted board link and see the wall. ([#6375](https://github.com/boardsesh/boardsesh/pull/6375))
+  Your unlisted board stays out of search and public gym screens.
+- Delete your account and your analytics profile goes with it. ([#6359](https://github.com/boardsesh/boardsesh/pull/6359))
+  Saying no to analytics no longer changes which features you see.
+- Comments and the staff list on a private gym stay with the people who can see the gym ([#6410](https://github.com/boardsesh/boardsesh/pull/6410))
+- Comments on an unlisted board stay off other climbers' feeds; the link still opens the thread ([#6404](https://github.com/boardsesh/boardsesh/pull/6404))
+  Session cards feature the clip you attached to the send
+- The eye buttons are gone from the climb list and the climb view. Choose what shows in Settings, or from ••• → View options in the climb view. ([#6401](https://github.com/boardsesh/boardsesh/pull/6401))
+- Open climbs reliably when your tap lingers a moment. ([#6405](https://github.com/boardsesh/boardsesh/pull/6405))
+- You always see comments and likes on your own sends ([#6356](https://github.com/boardsesh/boardsesh/pull/6356))
+  Grade proposals show their reasoning to everyone
+  Replies stay readable after a climber deletes their account
+  Privacy lives in Settings, with no setup screen
+- Your filters stay applied when you swipe back to your climbs. Matching counts sit beneath the Filters title, leaving more room to choose. ([#6389](https://github.com/boardsesh/boardsesh/pull/6389))
+- Your sends show up for your followers again, even on a friend's private board ([#6345](https://github.com/boardsesh/boardsesh/pull/6345))
+  A private session link still works for the people you send it to
+  Friends climbing live show in Climbing now even on a wall you can't see; the wall stays unnamed
+  Sessions get an "Anyone with the link" choice: off the live lists, but your link still works
+  Comments on a link-only session stay with your crew, out of the public comment feed
+- Your analytics choice sticks: saying yes on one device no longer gets undone by an older no on another. ([#6342](https://github.com/boardsesh/boardsesh/pull/6342))
+  Signing in on a shared phone asks for your own analytics choice instead of borrowing someone else's.
+- Following someone or renaming your board no longer makes everyone's app reload ([#6346](https://github.com/boardsesh/boardsesh/pull/6346))
+  Your climb list stays on screen when the app reconnects
+
 ## 2026-10-11
 
 ### App update
 
 A new version shipped to the App Store and Play Store.
 
+### New
+
+- Find community playlists at your grade: pick a grade range and see only the lists that sit inside it ([#6357](https://github.com/boardsesh/boardsesh/pull/6357))
+  See playlists from the climbers you follow with the new Following filter
+  Every community playlist shows its grade range, like V3–V5
+- See the grade range of a community playlist, like V3–V5, right on its card ([#6353](https://github.com/boardsesh/boardsesh/pull/6353))
+- The filter chips now float over the list as you scroll, instead of sitting on a solid band. ([#6338](https://github.com/boardsesh/boardsesh/pull/6338))
+- The grade picker is a clean row under the filters: tap Grade to open it and it stays open while you climb. ([#6336](https://github.com/boardsesh/boardsesh/pull/6336))
+  Touch and hold a second grade to make a range without racing the double tap.
+  V0 is one chip instead of three.
+- Your screen stays on while a board downloads, so it finishes without you babysitting it ([#6319](https://github.com/boardsesh/boardsesh/pull/6319))
+
 ### Improved
 
+- Swiping between climbs is smoother: the next climb's holds are there as it slides in, and a quick swipe is no longer ignored while the last one finishes. ([#6348](https://github.com/boardsesh/boardsesh/pull/6348))
+- Boards download faster for offline use, with about a quarter less to download ([#6323](https://github.com/boardsesh/boardsesh/pull/6323))
+- The climb list on a downloaded board loads each page of climbs almost instantly, so fast scrolling no longer runs into a wait. ([#6313](https://github.com/boardsesh/boardsesh/pull/6313))
+  Opening the app on a downloaded board shows your climbs sooner.
 - Climb thumbnails show their holds straight away as you scroll ([#6301](https://github.com/boardsesh/boardsesh/pull/6301))
   The climb list keeps loading as you scroll, instead of stopping at the end
   Opening a climb shows the board and its holds together
 - The climb list stops reloading itself over and over after you open the app. ([#6309](https://github.com/boardsesh/boardsesh/pull/6309))
   Scrolling down right after launch keeps loading climbs.
+
+### Fixed
+
+- A board you keep offline that stopped updating now syncs again. ([#6316](https://github.com/boardsesh/boardsesh/pull/6316))
+- Connect to your picked wall without waiting behind stale board choices. ([#6361](https://github.com/boardsesh/boardsesh/pull/6361))
+- Session invites keep the wall you chose if a join is delayed. ([#4597](https://github.com/boardsesh/boardsesh/pull/4597))
+- Keep your ticks on the wall they belong to, even when you log from a mixed queue. ([#5627](https://github.com/boardsesh/boardsesh/pull/5627))
+  Correct a tick's wall from your logbook, or choose None.
+- Connecting your phone to a board keeps you on the right wall instead of jumping to someone else's board ([#4187](https://github.com/boardsesh/boardsesh/pull/4187))
+  Older sends in a wall's history show who lit them again, even for climbers who never set a name
+- After you change a filter, the list starts at the top result again instead of hiding it under the header. ([#6327](https://github.com/boardsesh/boardsesh/pull/6327))
+- The grade picker on the climb list opens where you can tap it again. ([#6326](https://github.com/boardsesh/boardsesh/pull/6326))
 
 ## 2026-10-10
 
