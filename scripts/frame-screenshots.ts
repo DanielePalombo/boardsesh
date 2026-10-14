@@ -511,19 +511,32 @@ export async function frameShowcaseComposition(
       },
     );
   } else if (layout === 'store-live-activity') {
-    // A reviewed native card, already cropped on the physical device. Its
-    // dimensions identify the source card, not this App Store canvas or a phone.
-    const cardWidth = Math.floor(Math.min(region.width, region.height / aspect));
-    const card = await sharp(sources[0]).resize(cardWidth).png().toBuffer({ resolveWithObject: true });
-    foreground.push({
-      input: card.data,
-      left: Math.round(region.left + (region.width - card.info.width) / 2),
-      top: Math.round(
-        wide
-          ? region.top + (region.height - card.info.height) / 2
-          : Math.min(copyTop + copyHeight + height * 0.1, height - margin - card.info.height),
-      ),
-    });
+    if (aspect > 1) {
+      // Preserve the entire native Lock Screen, including clock, wallpaper and
+      // controls. The panel adds only an exterior border; no fake camera UI.
+      const panelWidth = Math.min(region.width, region.height / aspect);
+      const panelHeight = panelWidth * aspect;
+      panels.push({
+        raw: sources[0],
+        left: region.left + (region.width - panelWidth) / 2,
+        top: region.top + (region.height - panelHeight) / 2,
+        width: panelWidth,
+      });
+    } else {
+      // A reviewed native card, already cropped on the physical device. Its
+      // dimensions identify the source card, not this App Store canvas or a phone.
+      const cardWidth = Math.floor(Math.min(region.width, region.height / aspect));
+      const card = await sharp(sources[0]).resize(cardWidth).png().toBuffer({ resolveWithObject: true });
+      foreground.push({
+        input: card.data,
+        left: Math.round(region.left + (region.width - card.info.width) / 2),
+        top: Math.round(
+          wide
+            ? region.top + (region.height - card.info.height) / 2
+            : Math.min(copyTop + copyHeight + height * 0.1, height - margin - card.info.height),
+        ),
+      });
+    }
   } else if (layout === 'store-island') {
     // Keep the actual native silhouette and contents; omit wallpaper and the
     // decorative screenshot border. Center the Island on the complete canvas.

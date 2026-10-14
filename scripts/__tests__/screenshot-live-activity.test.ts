@@ -85,7 +85,71 @@ async function importedFixture() {
   return { root, source, fixture };
 }
 
+function fullScreenProvenance(): LiveActivityFixture {
+  const original = provenance();
+  return {
+    ...original,
+    sha256: original.sourcePngSha256,
+    captureFraming: 'full-screen',
+    captureSurface: 'lock-screen',
+    cropRect: { x: 0, y: 0, ...original.nativePixels },
+    lockScreenContext: {
+      wallpaper: 'Unit-test photo wallpaper',
+      deviceLocked: true,
+      unrelatedNotificationsDismissed: true,
+      liveActivityRect: original.cropRect,
+    },
+  };
+}
+
 describe('reviewed native Live Activity fixtures', () => {
+  it('retains a reviewed complete Lock Screen byte-for-byte for CI framing', async () => {
+    const root = directory();
+    const source = await sharp({ create: { width: 1170, height: 2532, channels: 3, background: '#112233' } })
+      .png()
+      .toBuffer();
+    const input = join(root, 'private-source.png');
+    const metadata = join(root, 'private-provenance.json');
+    writeFileSync(input, source);
+    writeFileSync(metadata, JSON.stringify(fullScreenProvenance()));
+    const file = await importLiveActivityCapture(input, metadata, root);
+    expect(file).toBe(join(root, 'kilter-en-US-lock-screen.png'));
+    const loaded = loadLiveActivityFixture('kilter', 'en-US', root);
+    expect(loaded.pixels.equals(source)).toBe(true);
+    expect(loaded.provenance).toMatchObject({
+      captureFraming: 'full-screen',
+      captureSurface: 'lock-screen',
+      sourcePngSha256: nativeCaptureSha256(source),
+      sha256: nativeCaptureSha256(source),
+      lockScreenContext: { deviceLocked: true, unrelatedNotificationsDismissed: true },
+    });
+    expect(loaded.provenance.extraction).toBeUndefined();
+    const framed = await frameShowcaseComposition(
+      [loaded.pixels],
+      readCaptionCatalog('en-US').storeLiveActivity,
+      'store-live-activity',
+      { outputCanvas: { width: 1206, height: 2622 } },
+    );
+    expect(await sharp(framed).metadata()).toMatchObject({ width: 1206, height: 2622 });
+  });
+  it.each([
+    { captureSurface: 'notification-center' },
+    { cropRect: provenance().cropRect },
+    { sha256: 'c'.repeat(64) },
+    { lockScreenContext: { ...fullScreenProvenance().lockScreenContext, deviceLocked: false } },
+    { lockScreenContext: { ...fullScreenProvenance().lockScreenContext, unrelatedNotificationsDismissed: false } },
+    { lockScreenContext: { ...fullScreenProvenance().lockScreenContext, wallpaper: '' } },
+    {
+      lockScreenContext: {
+        ...fullScreenProvenance().lockScreenContext,
+        liveActivityRect: { x: 30, y: 2400, width: 1110, height: 435 },
+      },
+    },
+  ])('rejects cropped, repainted, unlocked or uncleared full-screen provenance %j', (override) => {
+    expect(() => validateLiveActivityFixture({ ...fullScreenProvenance(), ...override }, 'kilter', 'en-US')).toThrow(
+      'Invalid native',
+    );
+  });
   it('crops losslessly and keeps physical identity separate from an App Store canvas', async () => {
     const { root, source } = await importedFixture();
     const loaded = loadLiveActivityFixture('kilter', 'en-US', root);

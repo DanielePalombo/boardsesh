@@ -34,7 +34,7 @@ export async function importLiveActivityCapture(
   const locale = provenance.appLocale as (typeof CAPTION_LOCALES)[number];
   const source = readFileSync(input);
   const sourcePngSha256 = nativeCaptureSha256(source);
-  const file = `${boardFamily}-${locale}.png`;
+  const file = `${boardFamily}-${locale}${provenance.captureFraming === 'full-screen' ? '-lock-screen' : ''}.png`;
   const checked = validateLiveActivityFixture(
     { ...provenance, file, sha256: sourcePngSha256, sourcePngSha256 },
     boardFamily,
@@ -47,26 +47,34 @@ export async function importLiveActivityCapture(
     metadata.height !== checked.nativePixels.height
   )
     throw new Error('Source PNG dimensions do not match the physical capture provenance');
-  const pixels = await sharp(source)
-    .keepIccProfile()
-    .extract({
-      left: checked.cropRect.x,
-      top: checked.cropRect.y,
-      width: checked.cropRect.width,
-      height: checked.cropRect.height,
-    })
-    .png()
-    .toBuffer();
-  const extracted = await extractLiveActivityExterior(pixels);
-  const fixture = { ...checked, sha256: nativeCaptureSha256(extracted.pixels), extraction: extracted.extraction };
+  const pixels =
+    checked.captureFraming === 'full-screen'
+      ? source
+      : await sharp(source)
+          .keepIccProfile()
+          .extract({
+            left: checked.cropRect.x,
+            top: checked.cropRect.y,
+            width: checked.cropRect.width,
+            height: checked.cropRect.height,
+          })
+          .png()
+          .toBuffer();
+  const extracted = checked.captureFraming === 'full-screen' ? undefined : await extractLiveActivityExterior(pixels);
+  const fixturePixels = extracted?.pixels ?? pixels;
+  const fixture = {
+    ...checked,
+    sha256: nativeCaptureSha256(fixturePixels),
+    ...(extracted ? { extraction: extracted.extraction } : {}),
+  };
   const manifestPath = join(root, LIVE_ACTIVITY_MANIFEST);
   const manifest: LiveActivityFixtureManifest = existsSync(manifestPath)
     ? readLiveActivityManifest(root)
     : { version: 1, fixtures: {} };
   manifest.fixtures[`${boardFamily}/${locale}`] = fixture;
   mkdirSync(root, { recursive: true });
-  // Only the card enters the repository. The original full screenshot remains private.
-  writeFileSync(join(root, `${file}.pending`), extracted.pixels);
+  // Full screens must be reviewed and cleared of unrelated notifications first.
+  writeFileSync(join(root, `${file}.pending`), fixturePixels);
   renameSync(join(root, `${file}.pending`), join(root, file));
   writeFileSync(`${manifestPath}.pending`, `${JSON.stringify(manifest, null, 2)}\n`);
   renameSync(`${manifestPath}.pending`, manifestPath);

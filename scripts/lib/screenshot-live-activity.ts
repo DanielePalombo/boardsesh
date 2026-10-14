@@ -36,6 +36,14 @@ export interface LiveActivityFixture {
   nativePixels: NativeCaptureSize;
   screenPoints: NativeCaptureSize;
   cropRect: NativeCaptureRect;
+  /** Keep the complete native Lock Screen, including its real clock and wallpaper. */
+  captureFraming?: 'full-screen';
+  lockScreenContext?: {
+    wallpaper: string;
+    deviceLocked: true;
+    unrelatedNotificationsDismissed: true;
+    liveActivityRect: NativeCaptureRect;
+  };
   /** Only exterior wallpaper alpha changes; all native card RGB remains untouched. */
   extraction?: LiveActivityExterior;
   content: {
@@ -173,6 +181,32 @@ export function validateLiveActivityFixture(
   )
     throw invalid();
   const extraction = candidate.extraction;
+  const lockScreenContext = candidate.lockScreenContext;
+  if (candidate.captureFraming !== undefined) {
+    if (
+      candidate.captureFraming !== 'full-screen' ||
+      candidate.captureSurface !== 'lock-screen' ||
+      cropRect.x !== 0 ||
+      cropRect.y !== 0 ||
+      cropRect.width !== nativePixels.width ||
+      cropRect.height !== nativePixels.height ||
+      candidate.sha256 !== candidate.sourcePngSha256 ||
+      extraction !== undefined ||
+      !record(lockScreenContext) ||
+      !text(lockScreenContext.wallpaper) ||
+      lockScreenContext.deviceLocked !== true ||
+      lockScreenContext.unrelatedNotificationsDismissed !== true ||
+      !record(lockScreenContext.liveActivityRect) ||
+      !size(lockScreenContext.liveActivityRect) ||
+      !Number.isSafeInteger(lockScreenContext.liveActivityRect.x) ||
+      !Number.isSafeInteger(lockScreenContext.liveActivityRect.y) ||
+      Number(lockScreenContext.liveActivityRect.x) < 0 ||
+      Number(lockScreenContext.liveActivityRect.y) < 0 ||
+      Number(lockScreenContext.liveActivityRect.x) + lockScreenContext.liveActivityRect.width > nativePixels.width ||
+      Number(lockScreenContext.liveActivityRect.y) + lockScreenContext.liveActivityRect.height > nativePixels.height
+    )
+      throw invalid();
+  } else if (lockScreenContext !== undefined) throw invalid();
   if (
     extraction !== undefined &&
     (!record(extraction) ||
@@ -201,6 +235,24 @@ export function validateLiveActivityFixture(
     nativePixels: { width: nativePixels.width, height: nativePixels.height },
     screenPoints: { width: screenPoints.width, height: screenPoints.height },
     cropRect: { x: Number(cropRect.x), y: Number(cropRect.y), width: cropRect.width, height: cropRect.height },
+    ...(candidate.captureFraming === 'full-screen' &&
+    record(lockScreenContext) &&
+    record(lockScreenContext.liveActivityRect)
+      ? {
+          captureFraming: 'full-screen' as const,
+          lockScreenContext: {
+            wallpaper: String(lockScreenContext.wallpaper),
+            deviceLocked: true as const,
+            unrelatedNotificationsDismissed: true as const,
+            liveActivityRect: {
+              x: Number(lockScreenContext.liveActivityRect.x),
+              y: Number(lockScreenContext.liveActivityRect.y),
+              width: Number(lockScreenContext.liveActivityRect.width),
+              height: Number(lockScreenContext.liveActivityRect.height),
+            },
+          },
+        }
+      : {}),
     ...(record(extraction)
       ? {
           extraction: {
@@ -287,10 +339,12 @@ export function loadLiveActivityFixture(
     pixels.readUInt32BE(20) !== provenance.cropRect.height
   )
     throw new Error(`Native Live Activity crop dimensions mismatch: ${provenance.file}`);
-  if (!provenance.extraction)
+  if (provenance.captureFraming !== 'full-screen' && !provenance.extraction)
     throw new Error(`Native Live Activity fixture needs reviewed exterior alpha extraction: ${provenance.file}`);
-  if (pixels[24] !== 8 || pixels[25] !== 6)
+  if (provenance.captureFraming !== 'full-screen' && (pixels[24] !== 8 || pixels[25] !== 6))
     throw new Error(`Native Live Activity fixture is missing its reviewed exterior alpha: ${provenance.file}`);
+  if (provenance.captureFraming === 'full-screen' && (pixels[24] !== 8 || ![2, 6].includes(pixels[25])))
+    throw new Error(`Native Lock Screen fixture has an unsupported native PNG format: ${provenance.file}`);
   return {
     pixels,
     provenance,
