@@ -1,9 +1,5 @@
 import { requestPrivacyFollow, removePrivacyFollow } from '../privacy';
-import {
-  canViewUserActivity,
-  userActivityVisibilityCondition,
-  contentVisibilityCondition,
-} from '../../../services/privacy';
+import { canViewUserActivity, userActivityVisibilityCondition } from '../../../services/privacy';
 import { eq, and, count, sql, ilike, inArray } from 'drizzle-orm';
 import { isSizeScopedBoard, resolveRenderBoard } from '@boardsesh/board-config';
 import { type ConnectionContext, type Climb, type BoardName, SUPPORTED_BOARDS } from '@boardsesh/shared-schema';
@@ -38,10 +34,14 @@ const DEFAULT_ANGLE = 40;
  * `setterClimbsFull` listed them. None of these resolvers is authenticated
  * against the setter, so there is no "it's your own draft" case to preserve:
  * the caller is always someone else looking at someone else's work.
+ *
+ * A published, listed climb is public whoever set it, so a private account's
+ * climbs list here like anyone's. What a private account keeps from strangers
+ * is the link from the setter name to its Boardsesh identity (`linkedUser*` in
+ * `setterProfile`).
  */
 function visibleSetterClimbConditions(username: string, viewerUserId: string | null | undefined) {
   return [
-    contentVisibilityCondition('climb', dbSchema.boardClimbs.uuid, dbSchema.boardClimbs.userId, viewerUserId),
     eq(dbSchema.boardClimbs.setterUsername, username),
     eq(dbSchema.boardClimbs.isListed, true),
     eq(dbSchema.boardClimbs.isDraft, false),
@@ -560,7 +560,16 @@ export const setterFollowQueries = {
     const validatedInput = validateInput(UserClimbsInputSchema, input, 'input');
     const { userId, sortBy, limit, offset } = validatedInput;
 
-    if (!(await canViewUserActivity(ctx.userId, userId))) return { climbs: [], totalCount: 0, hasMore: false };
+    // A published, listed climb is public whoever set it, everywhere else: in
+    // search, on its page, on the setter page under its setter name. What a
+    // private account keeps is the link from those climbs to itself. This list
+    // IS that link (these climbs, under this account), so a viewer who may not
+    // see the account's activity gets an empty list, the same answer an account
+    // with no climbs gives. Followers and the owner get the full list.
+    const isSelf = !!ctx.userId && ctx.userId === userId;
+    if (!isSelf && !(await canViewUserActivity(ctx.userId, userId))) {
+      return { climbs: [], totalCount: 0, hasMore: false };
+    }
 
     // 1. Look up linked Aurora usernames
     const mappings = await db
@@ -593,17 +602,19 @@ export const setterFollowQueries = {
       ? sql`(${tables.climbs.userId} = ${userId} OR ${linkedOwnershipCondition})`
       : eq(tables.climbs.userId, userId);
 
-    // No is_hidden predicate, deliberately: this is the setter's own climbs list.
-    // Someone whose climb was hidden by the community has to be able to see that
-    // it happened — the row carries `is_hidden` so the UI can say so — rather than
-    // watching it vanish from their profile with no explanation.
+    // No is_hidden predicate for the setter themselves: this is their own climbs
+    // list. Someone whose climb was hidden by the community has to be able to see
+    // that it happened — the row carries `is_hidden` so the UI can say so — rather
+    // than watching it vanish from their profile with no explanation. For anyone
+    // else it is a browse surface, and moderation `hide` keeps hiding there.
     // Scoped to no board type at all, so a spray climb rides along with every
     // other board a climber has set on — including the layout id of their private
     // wall. The condition is a no-op on the other eight board types.
     const whereCondition = and(
       ownershipCondition,
-      contentVisibilityCondition('climb', tables.climbs.uuid, tables.climbs.userId, ctx.userId),
       eq(tables.climbs.isDraft, false),
+      isSelf ? undefined : eq(tables.climbs.isListed, true),
+      isSelf ? undefined : eq(tables.climbs.isHidden, false),
       sprayClimbVisibilityCondition(
         { boardType: tables.climbs.boardType, layoutId: tables.climbs.layoutId },
         ctx.userId,
@@ -686,7 +697,7 @@ export const setterFollowQueries = {
           c.created_at
         FROM board_climbs c
         WHERE ${ownershipSql} AND c.is_draft = false
-          AND ${contentVisibilityCondition('climb', sql`c.uuid`, sql`c.user_id`, ctx.userId)}
+          ${isSelf ? sql`` : sql`AND c.is_listed = true AND c.is_hidden = false`}
           -- The row list is built by this CTE, not by the drizzle whereCondition
           -- used for the count above — so the spray rule has to be stated here too
           -- or the count hides a private wall's climbs while the list returns them.

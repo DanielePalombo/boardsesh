@@ -92,8 +92,13 @@ describe('proposal privacy projection', () => {
       expect(result.proposerDisplayName).toBeUndefined();
       expect(result.proposerAvatarUrl).toBeUndefined();
       const queryText = predicates.map(sqlText).join('\n');
+      // The proposer and resolver identities keep their account privacy…
       expect(queryText).toContain('is_private');
-      expect(queryText).toContain('public_consent_revision');
+      // …while the climb is read by the listed rule alone (published and listed,
+      // or the viewer's own): a published climb is public whoever set it, so no
+      // item audience is consulted for it, and an unlisted one stays with its owner.
+      expect(queryText).toContain('( IS NOT TRUE AND  IS TRUE) OR COALESCE(');
+      expect(queryText).not.toContain('content_privacy');
     },
   );
 

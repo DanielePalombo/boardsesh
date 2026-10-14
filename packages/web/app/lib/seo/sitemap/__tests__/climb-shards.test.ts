@@ -155,7 +155,7 @@ describe('the paged climbs shard', () => {
     expect(climbs.buildCalls).toBe(0);
   });
 
-  it('serves a page as application/xml on the long climb cache window', async () => {
+  it('serves XML without caching privacy-filtered climb URLs', async () => {
     const response = await pagedShardRouteHandler('climbs', '1.xml');
 
     expect(response.status).toBe(200);

@@ -405,13 +405,18 @@ of silently withdrawing 53,000 URLs. A `live` source is a WARN rather than a FAI
 correct, complete, and paying the scan the store exists to retire.
 
 Since the privacy controls in #6254, climb and setter pages and the playlist
-shard recheck current publication consent before rendering their cached URL
-candidates. These responses use `private, no-store`: neither browsers nor shared
-CDNs may reuse XML after a climb, account, board or playlist becomes private.
-The materialised climb store still avoids the expensive grouped scan; response
-caching must not bypass the live visibility filter. The production smoke now
-requires both directives and rejects `public` and freshness caching directives,
-while retaining the XML, nonempty URL, status and source checks.
+shard recheck their cached URL candidates before rendering them. For climbs and
+setters the recheck keeps only listed, published, unhidden climbs that are not on
+a spray wall hidden from an anonymous reader: a published, listed climb is public
+whoever set it, so no account or item audience is consulted. These responses
+still use `private, no-store`, because unlisting a climb, a community hide or a
+spray wall going private can withdraw a URL, and neither browsers nor shared CDNs
+may reuse the XML after that. The playlist shard answers `private, no-store` too,
+because a playlist keeps its owner's audience. The materialised climb store still
+avoids the expensive grouped scan; response caching must not bypass the live
+visibility filter. The production smoke requires both directives and rejects
+`public` and freshness caching directives, while retaining the XML, nonempty URL,
+status and source checks.
 
 The index still uses `s-maxage=3600`, so its source and `X-Sitemap-Degraded`
 diagnostics can be up to an hour old when a CDN ignores the smoke's

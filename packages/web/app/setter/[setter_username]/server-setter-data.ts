@@ -1,12 +1,14 @@
-import {
-  contentVisibilityCondition,
-  sprayClimbVisibilityCondition,
-  userActivityVisibilityCondition,
-} from '@boardsesh/db/queries';
 import 'server-only';
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { getClimbStars, getGradeLabel, withSerialPlan, type SerialPlanDb } from '@boardsesh/db/queries';
+import {
+  getClimbStars,
+  getGradeLabel,
+  sprayClimbVisibilityCondition,
+  userActivityVisibilityCondition,
+  withSerialPlan,
+  type SerialPlanDb,
+} from '@boardsesh/db/queries';
 import { dbz, executeRows } from '@/app/lib/db/db';
 import { boardClimbs, boardClimbStats } from '@/app/lib/db/schema';
 import { publishableAngleWhere, publishedAngleOrderBy } from '@/app/lib/seo/sitemap/published-angle';
@@ -76,10 +78,14 @@ function visibleSetterClimbsWhere(username: string): SQL | undefined {
   // voted out of browse must not come back through a setter's front door — nor
   // count towards the number that decides the page exists at all. The setter's
   // own "My climbs" list is the surface that deliberately keeps showing it.
+  //
+  // No account privacy, item audience or follow relation: a published, listed
+  // climb is public to everyone, so a private account's published climbs list
+  // here too. The spray predicate is the wall's own rule, not the climb's. What
+  // a private account keeps is its identity — see `fetchSetterIdentity`.
   return and(
     eq(boardClimbs.setterUsername, username),
     eq(boardClimbs.isListed, true),
-    contentVisibilityCondition('climb', boardClimbs.uuid, boardClimbs.userId, null),
     sprayClimbVisibilityCondition({ boardType: boardClimbs.boardType, layoutId: boardClimbs.layoutId }, null),
     eq(boardClimbs.isDraft, false),
     eq(boardClimbs.isHidden, false),
@@ -202,6 +208,11 @@ type SetterIdentity = { displayName: string; avatarUrl: string | null; followerC
 /**
  * Display name, avatar and follower count for the hero.
  *
+ * The one part of the page a private account still withholds from strangers:
+ * its climbs list here like anyone's, but the name and avatar of the Boardsesh
+ * account behind the setter name only show when that account's activity is
+ * visible. Otherwise the hero falls back to the setter name on the climbs.
+ *
  * Raw `sql` rather than Drizzle builders because `user_board_mappings` →
  * `users` → `user_profiles` is a three-table lookup for at most one row and the
  * follower count is a scalar subquery; expressing it as a join chain buys
@@ -215,6 +226,8 @@ async function fetchSetterIdentity(username: string): Promise<SetterIdentity> {
     avatar_url: string | null;
     follower_count: number | string | null;
   }>(
+    // The primary: whether this account's identity may show is account
+    // privacy, and a lagging replica could restore a name just withdrawn.
     dbz,
     sql`
     SELECT
@@ -287,6 +300,11 @@ function toClimbRow(row: Awaited<ReturnType<typeof buildSetterClimbsQuery>>[numb
 export async function getSetterPageData(username: string, page: number): Promise<SetterPageData | null> {
   const offset = Math.max(0, page - 1) * SETTER_PAGE_SIZE;
 
+  // The primary, not the replica. The setter's climbs span every board type,
+  // spray walls included, and the spray predicate in `visibleSetterClimbsWhere`
+  // is a wall rule its owner (or an admin hide) can withdraw at any moment. A
+  // replica with no replay barrier could still see the wall as public and hand
+  // a stranger its climbs. Same rule as every other spray read: on the primary.
   const [boardTypeRows, climbRows] = await withSerialPlan(dbz, async (tx) => [
     await buildSetterProfileQuery(tx, username),
     await buildSetterClimbsQuery(tx, username, offset, SETTER_PAGE_SIZE),

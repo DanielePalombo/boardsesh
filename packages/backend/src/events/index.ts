@@ -16,6 +16,7 @@ import {
   resolveClimbCreatedSubscriptionRecipients,
 } from './recipient-resolution';
 import { isHideProposalEvent } from './notification-worker';
+import { canSeeActorOnEntity } from '../graphql/resolvers/shared/activity-privacy';
 import { resolveClimbNoMatch } from '../graphql/resolvers/shared/helpers';
 import { logger } from '../utils/logger';
 import { writeFollowRequestNotification } from './follow-request-notifications';
@@ -202,6 +203,7 @@ async function createInlineNotification(event: SocialEvent): Promise<void> {
             createdAt: dbSchema.boardClimbs.createdAt,
             isDraft: dbSchema.boardClimbs.isDraft,
             isListed: dbSchema.boardClimbs.isListed,
+            setterUsername: dbSchema.boardClimbs.setterUsername,
             setterDisplayName: dbSchema.userProfiles.displayName,
             setterAvatarUrl: dbSchema.userProfiles.avatarUrl,
             difficultyName: dbSchema.boardDifficultyGrades.boulderName,
@@ -253,11 +255,15 @@ async function createInlineNotification(event: SocialEvent): Promise<void> {
         const actor = actorRows[0];
 
         for (const recipient of recipients) {
+          // The same rule the notification worker applies: a recipient who may
+          // not see the setter's account still hears about the climb, under its
+          // setter name, with no account id or avatar.
+          const showSetter = await canSeeActorOnEntity('climb', event.entityId, event.actorId, recipient.recipientId);
           const uuid = crypto.randomUUID();
           await db.insert(dbSchema.notifications).values({
             uuid,
             recipientId: recipient.recipientId,
-            actorId: event.actorId,
+            actorId: showSetter ? event.actorId : null,
             type: recipient.notificationType,
             entityType: 'climb',
             entityId: event.entityId,
@@ -267,9 +273,11 @@ async function createInlineNotification(event: SocialEvent): Promise<void> {
             notification: {
               uuid,
               type: recipient.notificationType as NotificationType,
-              actorId: event.actorId,
-              actorDisplayName: actor?.displayName || actor?.name || undefined,
-              actorAvatarUrl: actor?.avatarUrl || actor?.image || undefined,
+              actorId: showSetter ? event.actorId : null,
+              actorDisplayName: showSetter
+                ? actor?.displayName || actor?.name || undefined
+                : (climb.setterUsername ?? undefined),
+              actorAvatarUrl: showSetter ? actor?.avatarUrl || actor?.image || undefined : undefined,
               entityType: 'climb',
               entityId: event.entityId,
               climbName: event.metadata.climbName || undefined,

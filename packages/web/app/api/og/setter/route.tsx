@@ -1,4 +1,8 @@
-import { contentVisibilityCondition, sprayClimbVisibilityCondition } from '@boardsesh/db/queries';
+import { sprayClimbVisibilityCondition } from '@boardsesh/db/queries';
+// Private, not the shared public OG headers: the card draws the linked
+// account's name and avatar under a version token that never changes, so a
+// public copy would keep showing them after that account went private. The
+// grade bars below are public climb data and do not need this on their own.
 import { createPrivateOgImageHeaders as createOgImageHeaders } from '@/app/lib/seo/private-og-headers';
 import React from 'react';
 import { ImageResponse } from '@vercel/og';
@@ -47,6 +51,9 @@ export async function GET(request: NextRequest) {
           difficulty: number;
           cnt: number;
         }>(
+          // The primary: the bars count sends on spray climbs too, and the spray
+          // predicate below is a wall rule its owner can withdraw. A lagging
+          // replica could still count a wall that just went private.
           dbz,
           sql`
           SELECT bt.difficulty, COUNT(*) as cnt
@@ -55,9 +62,12 @@ export async function GET(request: NextRequest) {
           WHERE bc.setter_username = ${username}
             -- The card counts ascents on the same climbs the page shows. Without
             -- this it draws grade bars from sends on climbs the setter unlisted.
+            -- Published, listed climbs are public whoever set them, so no account
+            -- privacy applies; the spray predicate is the wall's own rule.
             AND bc.is_listed = true
             AND bc.is_draft = false
-            AND ${contentVisibilityCondition('climb', sql`bc.uuid`, sql`bc.user_id`, null)}
+            -- …and not the ones the community hid, which the page leaves out too.
+            AND bc.is_hidden = false
             AND ${sprayClimbVisibilityCondition({ boardType: sql`bc.board_type`, layoutId: sql`bc.layout_id` }, null)}
             AND bt.status IN ('flash', 'send')
             AND bt.difficulty IS NOT NULL

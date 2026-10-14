@@ -131,6 +131,14 @@ describe('the paged setters shard', () => {
     expect(index.xml.match(/\/sitemaps\/setters\//g)).toHaveLength(3);
   });
 
+  it('keeps privacy-filtered setter pages out of shared caches', async () => {
+    // Unlisting, moderation or spray-wall changes can withdraw these URLs.
+    const response = await pagedShardRouteHandler('setters', '1.xml');
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
   it('404s the page past the end rather than serving an empty urlset', async () => {
     // An empty `<urlset>` on a page the index advertises tells Google the
     // surface was deleted; a 404 tells a crawler to stop asking.

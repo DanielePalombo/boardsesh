@@ -28,7 +28,8 @@ const resourceAudience = z.enum(['public', 'unlisted', 'followers', 'invite_only
 // public account follows auto-approve, so it would not restrict anything.
 const locationAudience = z.enum(['public', 'followers', 'members', 'only_me']).transform(normalizeLocationAudience);
 const contentAudience = z.enum(['public', 'followers', 'only_me']);
-const contentType = z.enum(['tick', 'session', 'comment', 'climb', 'playlist', 'beta']);
+// No climb: a published climb is public to everyone, so it has no audience.
+const contentType = z.enum(['tick', 'session', 'comment', 'playlist', 'beta']);
 const identifier = z.string().min(1).max(2048);
 const updateSettingsSchema = z
   .object({
@@ -268,15 +269,6 @@ async function contentOwner(
       .for('update');
     return row?.ownerId ?? notFound();
   }
-  if (entityType === 'climb') {
-    const [row] = await executor
-      .select({ ownerId: schema.boardClimbs.userId })
-      .from(schema.boardClimbs)
-      .where(eq(schema.boardClimbs.uuid, entityId))
-      .limit(1)
-      .for('update');
-    return row?.ownerId ?? notFound();
-  }
   if (entityType === 'playlist') {
     const rows = await executor
       .select({ ownerId: schema.playlistOwnership.userId })
@@ -403,9 +395,13 @@ export const privacyQueries = {
   },
   contentAudience: async (
     _: unknown,
-    { entityType, entityId }: { entityType: PrivacyContentType; entityId: string },
+    // `climb` is a retired enum value that installed app builds still ask for.
+    { entityType, entityId }: { entityType: PrivacyContentType | 'climb'; entityId: string },
     ctx: ConnectionContext,
   ) => {
+    // A published climb is public to everyone, so a climb has no audience to
+    // read or edit. The answer is the same for any uuid, so it discloses nothing.
+    if (entityType === 'climb') return { audience: 'public', isExplicit: false, canEdit: false };
     const viewerId = actor(ctx);
     const ownerId = await contentOwner(entityType, entityId, viewerId);
     if (viewerId !== ownerId && !(await canViewContent(viewerId, entityType, entityId, ownerId))) notFound();

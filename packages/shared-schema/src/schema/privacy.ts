@@ -25,7 +25,8 @@ export const privacyTypeDefs = /* GraphQL */ `
     tick
     session
     comment
-    climb
+    "Retired: climbs have no audience. contentAudience answers public; setContentAudience rejects it."
+    climb @deprecated(reason: "A published climb is public to everyone, so a climb has no audience.")
     playlist
     beta
   }

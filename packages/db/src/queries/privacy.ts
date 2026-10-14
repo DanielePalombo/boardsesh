@@ -316,16 +316,50 @@ export function resourceLocationCondition(boardUuid: SQLWrapper, viewerId: Viewe
 }
 
 /**
- * The draft rule: an unpublished climb is returned to its owner and to nobody
- * else, whatever the owner's account or item audience says. The owner is the
- * Boardsesh `user_id` on the climb, so a draft that has none (one imported from
- * a Kilter or Tension account) is returned to no one. The board sync applies it
- * to `board_climbs` and to the climb behind every stats and grades row; the
- * public snapshot exports have no viewer and keep `is_draft IS NOT TRUE`.
+ * Published and listed: a climb that is public to everyone, signed in or not,
+ * whoever set it. Parenthesized, so it can be negated or ANDed as it is.
  *
- * It narrows {@link contentVisibilityCondition} and never replaces it: that
- * condition has no draft term, and on its own it shows a public account's draft
- * to every viewer and an ownerless draft to everyone. AND the two.
+ * No account privacy, item audience, follow relation or deleted-account record
+ * is consulted. A list (search, setter pages, feeds, recommendations,
+ * playlists) that has no owner to serve filters on this alone.
+ *
+ * Both tests are two-valued on purpose. `is_draft` is nullable and NULL is not a
+ * draft; `is_listed` is nullable in the schema and only TRUE is listed. Written
+ * `IS NOT TRUE` / `IS TRUE` the predicate is never NULL, so `NOT` of it is its
+ * exact complement and every row is on one side or the other.
+ */
+export function publicClimbCondition(climb: { isDraft: SQLWrapper; isListed: SQLWrapper }): SQL {
+  return sql`(${climb.isDraft} IS NOT TRUE AND ${climb.isListed} IS TRUE)`;
+}
+
+/**
+ * A viewer-aware list: every published, listed climb
+ * ({@link publicClimbCondition}) plus the viewer's own drafts and
+ * unlisted climbs. The owner is the Boardsesh `user_id` on the row, so an
+ * ownerless draft or unlisted climb goes to no one, and an anonymous viewer
+ * gets the public set alone.
+ */
+export function ownedOrPublicClimbCondition(
+  climb: { isDraft: SQLWrapper; isListed: SQLWrapper; userId: SQLWrapper },
+  viewerId: ViewerId,
+): SQL {
+  return sql`(${publicClimbCondition(climb)} OR COALESCE(${climb.userId} = ${viewerId ?? null}, false))`;
+}
+
+/**
+ * The draft rule, which is the whole climb rule for a read by reference (a
+ * climb uuid in hand): a published climb is returned to everyone, and a draft
+ * to its owner and nobody else, whatever the owner's account or item audience
+ * says. The owner is the Boardsesh `user_id` on the climb, so a draft that has
+ * none (one imported from a Kilter or Tension account) is returned to no one.
+ * The board sync applies it to `board_climbs` and to the climb behind every
+ * stats and grades row; the public snapshot exports have no viewer and keep
+ * `is_draft IS NOT TRUE`.
+ *
+ * Unlisted is not tested on purpose: an unlisted climb stays out of lists,
+ * search, sync and export, but a direct link still resolves it, with its ticks
+ * and comments. A list filters on {@link publicClimbCondition} or
+ * {@link ownedOrPublicClimbCondition} instead.
  *
  * Both comparisons are NULL-safe. `is_draft` is nullable and NULL is not a
  * draft; `user_id = viewer` is NULL for an ownerless row or an anonymous
@@ -339,20 +373,38 @@ export function climbDraftVisibilityCondition(
   return sql`(${climb.isDraft} IS NOT TRUE OR COALESCE(${climb.userId} = ${viewerId ?? null}, false))`;
 }
 
-/** Applies the authored climb policy to its stats, grades and other reference rows. */
-export function climbReferenceVisibilityCondition(
+/**
+ * {@link climbDraftVisibilityCondition} for a row keyed by a climb reference
+ * (stats, grades, history, neighbours): readable when the climb it belongs to
+ * is published, or is the viewer's own draft. A reference to no climb at all is
+ * not readable.
+ */
+export function climbReferenceReadableCondition(
   reference: { boardType: SQLWrapper; climbUuid: SQLWrapper },
   viewerId: ViewerId,
 ): SQL {
   return sql`EXISTS (SELECT 1 FROM board_climbs privacy_reference_climb
     WHERE privacy_reference_climb.board_type = ${reference.boardType} AND privacy_reference_climb.uuid = ${reference.climbUuid}
-    AND ${contentVisibilityCondition('climb', sql`privacy_reference_climb.uuid`, sql`privacy_reference_climb.user_id`, viewerId)})`;
+    AND ${climbDraftVisibilityCondition({ userId: sql`privacy_reference_climb.user_id`, isDraft: sql`privacy_reference_climb.is_draft` }, viewerId)})`;
 }
 
-/** Public numeric aggregates retain private ticks; first-ascent names are a separate projection. */
-export function privateSafeFirstAscentName(
-  stats: { boardType: SQLWrapper; climbUuid: SQLWrapper; angle: SQLWrapper; username: SQLWrapper },
+type FirstAscentStats = {
+  boardType: SQLWrapper;
+  climbUuid: SQLWrapper;
+  angle: SQLWrapper;
+  /** The stored `fa_username`, or `fa_at`: what a manufacturer-authored climb shows. */
+  stored: SQLWrapper;
+};
+
+/**
+ * One half of the first-ascent projection. The name and the date are twin
+ * correlated subqueries with the same WHERE, ORDER BY and LIMIT, so both come
+ * from the SAME picked tick: the earliest send this viewer may read.
+ */
+function privateSafeFirstAscentField(
+  stats: FirstAscentStats,
   viewerId: ViewerId,
+  field: 'name' | 'at',
 ): SQL<string | null> {
   // Drizzle strips Column table qualifiers inside a single-table SELECT list.
   // These columns are correlated into nested queries, so keep their scope.
@@ -362,7 +414,7 @@ export function privateSafeFirstAscentName(
     boardType: qualify(stats.boardType),
     climbUuid: qualify(stats.climbUuid),
     angle: qualify(stats.angle),
-    username: qualify(stats.username),
+    stored: qualify(stats.stored),
   };
   // A first ascent is its author's activity: the session or wall it happened on
   // never hides the name, only the author's account and the tick's own audience.
@@ -372,22 +424,60 @@ export function privateSafeFirstAscentName(
     sql`privacy_fa_tick.user_id`,
     viewerId,
   );
-  // Never expose the stored Boardsesh FA string: it can outlive a deleted tick,
-  // account restriction or profile rename while asynchronous recomputation runs.
+  const picked =
+    field === 'name'
+      ? sql`COALESCE(privacy_fa_profile.display_name, privacy_fa_user.name)`
+      : sql`privacy_fa_tick.climbed_at`;
+  // Never expose the stored Boardsesh FA: it can outlive a deleted tick,
+  // account restriction or profile rename while asynchronous recomputation runs,
+  // and the stored date is the earliest send of ANY visibility, so pairing it
+  // with a fallback name would date a send the viewer cannot see.
+  // `is_boardsesh_authored` is kept for this test alone: account deletion
+  // stamps it before the author reference is cleared, so a climb whose author
+  // left still has its credit recomputed from ticks instead of trusting a
+  // stored name that may be the deleted account's.
   return sql<string | null>`CASE WHEN EXISTS (
     SELECT 1 FROM board_climbs privacy_fa_owned WHERE privacy_fa_owned.board_type = ${correlated.boardType}
       AND privacy_fa_owned.uuid = ${correlated.climbUuid}
       AND (privacy_fa_owned.user_id IS NOT NULL OR privacy_fa_owned.is_boardsesh_authored)
   ) THEN (
-    SELECT CASE WHEN ${tickVisible} THEN COALESCE(privacy_fa_profile.display_name, privacy_fa_user.name) ELSE NULL END
+    SELECT ${picked}
     FROM boardsesh_ticks privacy_fa_tick
     JOIN users privacy_fa_user ON privacy_fa_user.id = privacy_fa_tick.user_id
     LEFT JOIN user_profiles privacy_fa_profile ON privacy_fa_profile.user_id = privacy_fa_tick.user_id
     WHERE privacy_fa_tick.board_type = ${correlated.boardType} AND privacy_fa_tick.climb_uuid = ${correlated.climbUuid}
       AND privacy_fa_tick.angle = ${correlated.angle} AND privacy_fa_tick.status IN ('flash', 'send')
       AND privacy_fa_tick.kilter_detached_at IS NULL
+      AND ${tickVisible}
     ORDER BY privacy_fa_tick.climbed_at ASC, privacy_fa_tick.id ASC LIMIT 1
-  ) ELSE ${correlated.username} END`;
+  ) ELSE ${correlated.stored} END`;
+}
+
+/**
+ * First-ascent names are a tick projection, not a climb rule: public numeric
+ * aggregates keep private ticks, but a send is only credited by name to a
+ * viewer who may read that tick. The name is the earliest send THIS viewer may
+ * read, so a hidden first send passes the credit to the next visible one
+ * instead of leaving it blank. Pair it with {@link privateSafeFirstAscentAt},
+ * never with the stored `fa_at`.
+ */
+export function privateSafeFirstAscentName(
+  stats: { boardType: SQLWrapper; climbUuid: SQLWrapper; angle: SQLWrapper; username: SQLWrapper },
+  viewerId: ViewerId,
+): SQL<string | null> {
+  return privateSafeFirstAscentField({ ...stats, stored: stats.username }, viewerId, 'name');
+}
+
+/**
+ * The date of the send {@link privateSafeFirstAscentName} credits: the same
+ * picked tick, so the name and the date always describe one send. A
+ * manufacturer-authored climb keeps its stored `fa_at`, like its stored name.
+ */
+export function privateSafeFirstAscentAt(
+  stats: { boardType: SQLWrapper; climbUuid: SQLWrapper; angle: SQLWrapper; at: SQLWrapper },
+  viewerId: ViewerId,
+): SQL<string | null> {
+  return privateSafeFirstAscentField({ ...stats, stored: stats.at }, viewerId, 'at');
 }
 
 /** Owner/member grants survive account changes; only-me content is owner-only. */
