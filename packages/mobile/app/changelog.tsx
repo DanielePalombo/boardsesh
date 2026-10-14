@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stack } from 'expo-router';
 import { Alert, Platform, StyleSheet, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import * as Updates from 'expo-updates';
 import * as Application from 'expo-application';
 import { Button } from '../src/components/Button';
+import { AppUpdatesCard } from '../src/components/AppUpdatesCard';
 import { Icon } from '../src/components/Icon';
 import { PressableSurface } from '../src/components/PressableSurface';
 import { Text } from '../src/components/Text';
@@ -50,11 +51,11 @@ const CATEGORY_ICONS: Record<ChangelogCategory, IconName> = {
   fixed: 'success',
 };
 
-// Header chip showing which build the user is running. On an OTA-updated build,
+// Quiet detail showing which build the user is running. On an OTA-updated build,
 // `Updates.createdAt` is the publish time of the JS bundle; on an embedded launch
 // (no OTA applied yet) fall back to the native app version. Kept tiny + memoized
 // so it never re-renders with the list.
-const CurrentBuildChip = memo(function CurrentBuildChip() {
+const CurrentBuildDetails = memo(function CurrentBuildDetails() {
   const { t } = useTranslation('common');
   const { systemColors } = useTheme();
 
@@ -71,12 +72,9 @@ const CurrentBuildChip = memo(function CurrentBuildChip() {
 
   if (!buildLabel) return null;
   return (
-    <View style={[styles.buildChip, { backgroundColor: systemColors.fill }]}>
-      <Icon name="info" size={14} color={systemColors.secondaryLabel} />
-      <Text variant="footnote" color={systemColors.secondaryLabel} numberOfLines={1}>
-        {buildLabel}
-      </Text>
-    </View>
+    <Text variant="footnote" color={systemColors.secondaryLabel}>
+      {buildLabel}
+    </Text>
   );
 });
 
@@ -177,12 +175,22 @@ type UpdateStatus = 'idle' | 'checking' | 'downloading';
 // Pull an OTA on demand: check → download → "restart now?" → reload. Mirrors the
 // BranchSwitcherScreen flow. Hidden when Updates.isEnabled is false (dev / Expo Go),
 // where checkForUpdateAsync throws.
-const CheckForUpdatesButton = memo(function CheckForUpdatesButton() {
+const CheckForUpdatesButton = memo(function CheckForUpdatesButton({
+  disabled,
+  onBusyChange,
+}: {
+  disabled: boolean;
+  onBusyChange: (busy: boolean) => void;
+}) {
   const { t } = useTranslation('common');
   const confirm = useConfirm();
   const [status, setStatus] = useState<UpdateStatus>('idle');
+  const inFlight = useRef(false);
 
   const handlePress = useCallback(async () => {
+    if (disabled || inFlight.current) return;
+    inFlight.current = true;
+    onBusyChange(true);
     setStatus('checking');
     const { result, error } = await performChangelogUpdate(
       {
@@ -204,6 +212,8 @@ const CheckForUpdatesButton = memo(function CheckForUpdatesButton() {
       },
       { onPhase: setStatus },
     );
+    inFlight.current = false;
+    onBusyChange(false);
     if (result === 'up-to-date') {
       Alert.alert(t('mobile.changelog.upToDate.title'), t('mobile.changelog.upToDate.message'));
     } else if (result === 'failed' || result === 'stale') {
@@ -213,7 +223,7 @@ const CheckForUpdatesButton = memo(function CheckForUpdatesButton() {
       // receipt while the restart confirmation was open.
       Alert.alert(t('mobile.changelog.checkError.title'), t('mobile.changelog.checkError.message'));
     }
-  }, [confirm, t]);
+  }, [confirm, disabled, onBusyChange, t]);
 
   if (!Updates.isEnabled) return null;
 
@@ -232,7 +242,7 @@ const CheckForUpdatesButton = memo(function CheckForUpdatesButton() {
       size="small"
       icon="refresh"
       loading={status !== 'idle'}
-      disabled={status !== 'idle'}
+      disabled={disabled || status !== 'idle'}
       style={styles.checkButton}
     />
   );
@@ -277,45 +287,40 @@ export default function ChangelogScreen() {
           glass contentStyle is transparent and this screen is pushed over the
           user-drawer's transparentModal, so an unpainted scene shows the scrim. */}
       <View style={[styles.flex, { backgroundColor: systemColors.groupedBackground }]}>
-        {timeline.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <CurrentBuildChip />
-            <CheckForUpdatesButton />
+        <FlashList
+          data={timeline}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{
+            paddingHorizontal: spacing[4],
+            paddingTop: spacing[4],
+            paddingBottom: bottomChrome.scrollBottomPadding + spacing[6],
+          }}
+          ListHeaderComponent={
+            <View style={styles.listHeader}>
+              <AppUpdatesCard
+                buildDetails={<CurrentBuildDetails />}
+                checkForUpdates={(disabled, onBusyChange) => (
+                  <CheckForUpdatesButton disabled={disabled} onBusyChange={onBusyChange} />
+                )}
+              />
+              <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.intro}>
+                {t('mobile.changelog.intro')}
+              </Text>
+              {/* Pinned above the generated timeline — see OfflineSpotlightCard
+                    for why it isn't a changelog entry. Renders itself away once
+                    the user has a board offline. */}
+              <OfflineSpotlightCard style={styles.spotlight} />
+            </View>
+          }
+          ListEmptyComponent={
             <Text variant="body" color={systemColors.secondaryLabel} style={styles.emptyText}>
               {t('mobile.changelog.empty')}
             </Text>
-          </View>
-        ) : (
-          // FlashList v2 self-measures rows — `estimatedItemSize` was removed and
-          // no longer typechecks (see licenses.tsx for the same note).
-          <FlashList
-            data={timeline}
-            renderItem={renderItem}
-            keyExtractor={keyExtractor}
-            contentInsetAdjustmentBehavior="automatic"
-            contentContainerStyle={{
-              paddingHorizontal: spacing[4],
-              paddingTop: spacing[4],
-              paddingBottom: bottomChrome.scrollBottomPadding + spacing[6],
-            }}
-            ListHeaderComponent={
-              <View style={styles.listHeader}>
-                <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.intro}>
-                  {t('mobile.changelog.intro')}
-                </Text>
-                {/* Pinned above the generated timeline — see OfflineSpotlightCard
-                    for why it isn't a changelog entry. Renders itself away once
-                    the user has a board offline. */}
-                <OfflineSpotlightCard style={styles.spotlight} />
-                <View style={styles.headerMeta}>
-                  <CurrentBuildChip />
-                  <CheckForUpdatesButton />
-                </View>
-              </View>
-            }
-            ItemSeparatorComponent={Separator}
-          />
-        )}
+          }
+          ItemSeparatorComponent={Separator}
+        />
       </View>
     </>
   );
@@ -336,26 +341,12 @@ const styles = StyleSheet.create({
     gap: spacing[3],
     marginBottom: spacing[4],
   },
-  headerMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing[3],
-  },
   checkButton: {
     alignSelf: 'flex-start',
   },
   intro: {
+    fontWeight: '600',
     lineHeight: 20,
-  },
-  buildChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: spacing[2],
-    paddingHorizontal: spacing[3],
-    paddingVertical: spacing[2],
-    borderRadius: borderRadius.full,
   },
   separator: {
     height: spacing[3],
@@ -410,13 +401,6 @@ const styles = StyleSheet.create({
   nativeDate: {
     flex: 1,
     textAlign: 'right',
-  },
-  emptyWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing[4],
-    paddingHorizontal: spacing[6],
   },
   emptyText: {
     textAlign: 'center',
