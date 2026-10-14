@@ -783,7 +783,8 @@ function paintSearchScene(entry, frame, loopFrame = null) {
         });
     setVars(phone.rig, { cx: pose.cx, cy: pose.cy, s: pose.scale, rx: 0, ry: 0, rz: 0 });
     setVars(phone.shadow, { cx: -1000, cy: -1000 });
-    const footage = footageAt(take.segments, Math.max(0, local), take.frameCount);
+    const segments = take.segmentsByCaption?.[scene.caption] ?? take.segments;
+    const footage = footageAt(segments, Math.max(0, local), take.frameCount);
     phone.img.src = frameUrl(take, footage);
     visible.push(phone.img);
   });

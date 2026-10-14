@@ -1514,6 +1514,8 @@ export type StageTake = Readonly<{
   frameCount: number;
   /** Footage ranges the take's scene plays (`takeSegments`). */
   segments: readonly FootageRange[];
+  /** Store-search repeated takes select a separate real source range per caption. */
+  segmentsByCaption?: Readonly<Record<string, readonly FootageRange[]>>;
   screen: Readonly<{ width: number; height: number }>;
   presentation?: 'live-activity-card';
   editorialStartSeconds?: number;

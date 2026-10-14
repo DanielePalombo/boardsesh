@@ -752,3 +752,35 @@ How the rendered files reach the homepage (`packages/web/app/components/home/hom
 **Analytics.** `Showcase Video Progress` fires once per quartile per page view with `{ quartile: 25 | 50 | 75 | 100, placement: 'hero', cut: '9x16-lite', autoplayed }`. `autoplayed` is false when the reader pressed play. Quartile 100 fires at 97% of the duration, because a looping video may never report its exact end.
 
 **SEO.** `page.tsx` renders `VideoObject` JSON-LD next to the site JSON-LD, English only. Its `duration` (`PT54.8S`) must equal `SHOWCASE_TOTAL_FRAMES / SHOWCASE_FPS`. It is a literal in `packages/web/app/lib/showcase-video.ts` because the timeline module pulls in Node imports a client bundle can't take; `scripts/__tests__/showcase-video-web-duration.test.ts` fails when they drift. After changing the timeline, update the literal and bump `/` in the sitemap static entries.
+
+### Native endings in Apple search cuts
+
+Kilter keeps its five three-second beats ending on the reviewed native Live
+Activity. The default cut has four five-second beats: boards, spray wall, crew,
+and that genuine Kilter card. Only the default `lock-screen` take may retain
+`kind: kilter`, `boardKind: kilter` and `presentation: live-activity-card`; the
+locale and validation must still match. Supply that unchanged reviewed take in
+the default review bundle (a symlink is sufficient). All other default takes
+must retain `kind: default`. Crew footage must report the actual family: Kilter
+for default/Kilter cuts, Tension for Tension. Global All boards calendar footage
+keeps its global scope. No Kilter recording is relabeled as another family.
+
+Spray uses five three-second beats. The opening and photo beats hold an actual
+settled Black Pearl frame before the first Next. Its finale reserves the actual
+second Next, Teal Heel → Sunny Side, starting two seconds before `next-2` and
+continuing through the native result. Both ordered marks and at least 0.8 seconds
+of genuine settled footage after the second mark are required. The stage stores
+source ranges by caption, so repeating a take cannot overwrite its earlier edit.
+
+MoonBoard uses 90 frames of its native board, 90 of the real CSV entry, 120 of
+loaded grade controls, then 150 of its actual hold map. CSV entry is captioned
+“Have your CSV? / Start here.”; it claims no completed import, result count or
+hardware control. A missing or unvalidated CSV/filter take stops the render;
+these beats cannot silently disappear. The ending has no crew dependency.
+Tension uses 105 frames of its native board, 150 of its actual logbook, 105 of
+a freshly validated crew and 90 of the matched native Tension hold map. The
+ending uses the same generic “See the climb. / Every hold.” caption as MoonBoard.
+There is no outside-app or controller claim; a Kilter card cannot replace this
+matched-family source. A reviewed Tension Live Activity can be considered later
+only after genuine device capture and navigation proof. All header/showcase cuts
+remain unchanged.

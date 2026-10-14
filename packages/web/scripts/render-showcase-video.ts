@@ -4,6 +4,8 @@ import {
   storeSearchCopyProblems,
   storeSearchRecordingProblems,
   storeSearchTakeIds,
+  storeSearchRequiredFootageProblems,
+  storeSearchTakeSegments,
   type StoreSearchCopy,
 } from '../../../scripts/lib/showcase-video/store-search';
 import { loadLiveActivityFixture } from '../../../scripts/lib/screenshot-live-activity';
@@ -593,16 +595,9 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     };
   }
   const available = new Set(Object.keys(takes) as ShowcaseTakeId[]);
-  for (const step of target.scenes) {
-    if (step.optional || (step.id === 'lock-screen' && step.optional !== false) || step.id === 'outro') continue;
-    const required = step.takes ?? [step.id as ShowcaseTakeId];
-    if (step.id === 'boards' && required.length > 1 && required.some((takeId) => available.has(takeId))) continue;
-    const missing = required.filter((takeId) => !available.has(takeId));
-    if (missing.length)
-      throw new Error(
-        `No native ${search.locale}/${search.variant} footage for ${missing.join(', ')}. Re-record; no locale or board fallback is allowed.`,
-      );
-  }
+  const missing = storeSearchRequiredFootageProblems(search.variant, available);
+  if (missing.length)
+    throw new Error(`${search.locale}/${search.variant}: ${missing.join('; ')}. Re-record; no fallback allowed.`);
   return {
     source,
     copy: shared,
@@ -651,29 +646,18 @@ function prepareCut(footage: Footage, target: ShowcaseTarget, donationLine: bool
         const take = takes[takeId];
         if (!take) continue;
         const marks = readMarks(takeId, footage.source.dirs);
-        let mark: string | undefined;
-        if (takeId === 'log')
-          mark =
-            search.variant === 'kilter'
-              ? 'filter-kilter'
-              : search.variant === 'tension'
-                ? 'filter-tension'
-                : 'scrolled';
-        if (takeId === 'lock-screen')
-          mark = take.presentation === 'live-activity-card' ? 'activity-ready' : 'island-expanded';
-        if (takeId === 'crew') mark = 'row-landed';
-        if (takeId === 'spray') mark = 'next-1';
-        if (takeId === 'moonboard-import') mark = 'csv-import-entry';
-        if (takeId === 'moonboard-filter') mark = 'grade-filter-shown';
-        if (mark && typeof marks?.[mark] !== 'number')
-          throw new Error(`${takeId}: missing ${mark}; re-record ${search.variant}/${search.locale}`);
-        const from =
-          take.presentation === 'live-activity-card' && take.editorialStartSeconds !== undefined
-            ? Math.round(take.editorialStartSeconds * SHOWCASE_FPS)
-            : mark && marks
-              ? Math.max(0, Math.round((marks[mark] - 0.4) * SHOWCASE_FPS))
-              : SHOWCASE_FPS;
-        takes[takeId] = { ...take, segments: [[from, take.frameCount]] };
+        const segments = storeSearchTakeSegments(
+          search.variant,
+          scene.caption,
+          takeId,
+          scene.endFrame - scene.startFrame,
+          take,
+          marks ?? {},
+        );
+        takes[takeId] = {
+          ...take,
+          segmentsByCaption: { ...take.segmentsByCaption, [scene.caption]: segments },
+        };
       }
     }
     assertTargetLength(target, timeline.totalFrames);
