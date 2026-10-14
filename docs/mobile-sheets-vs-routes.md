@@ -154,6 +154,15 @@ Android bounds it natively and keeps `flex: 1`. A raw-`BottomSheet` surface with
 single flex child by going through `Sheet` / `ModalSheet` (the picker sheets do). `LogAscentSheet` is a `ModalSheet` now
 and gets it from the wrapper.
 
+**iOS sheet touch ownership (#6340).** SwiftUI can briefly mount two `RNHostView`
+owners for the same React Native child during sheet presentation. The Expo UI patch
+shares the child's `RCTSurfaceTouchHandler` through ownership leases: acquiring an
+existing owned handler adds a lease, and cleanup detaches it only after the last
+owner releases it. Without this, the retiring owner removes the sole recognizer and
+React Native controls ignore taps, including filter stars and Logbook Advanced.
+Keep `BottomSheetScrollView` and the bounded column; changing the scroll adapter
+cannot restore a missing touch handler. This patch requires a new native build.
+
 **Android sizing — only two real states.** `@expo/ui`'s Android sheet is a plain Material 3
 `ModalBottomSheet`: it never reads the requested `%` snap-point _values_, only the detent count
 and which index is requested — it has a fixed ~50% "partial" state and a content-fitting
