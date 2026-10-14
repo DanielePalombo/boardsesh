@@ -797,3 +797,11 @@ There is no outside-app or controller claim; a Kilter card cannot replace this
 matched-family source. A reviewed Tension Live Activity can be considered later
 only after genuine device capture and navigation proof. All header/showcase cuts
 remain unchanged.
+
+The MoonBoard filter take checks the actual localized title, name, difficulty,
+grade-range label and a genuine grade-rail accessibility control. It retains an
+already complete presentation. An incomplete sheet gets one real Close → settled
+Climbs list → Filters reopen; the complete controls must then become visible
+before `grade-filter-shown`. If reopening stays blank, the flow fails and the
+take remains unvalidated. The recorder reads labels from all four real catalogs;
+it supplies no grade endpoints, synthetic result count or app-code overlay.

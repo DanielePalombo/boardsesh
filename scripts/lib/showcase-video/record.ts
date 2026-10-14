@@ -72,6 +72,46 @@ export function showcaseCalendarPattern(heading: string): string {
   return heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Only the catalog fields used to identify a genuine native filter presentation. */
+export type ShowcaseFilterCatalog = {
+  mobile: {
+    filter: { title: string; close: string; gradeRange: string; section: { name: string; difficulty: string } };
+    search: { filters: string; filterCountAria: string; chips: { filtersWithCount: string } };
+    gradeRail: { setFilterAria: string; selectedFilterAria: string; rangeFilterAria: string };
+  };
+};
+
+/** Match real localized controls; never supply a grade range, count or result. */
+export function showcaseFilterPatterns(catalog: ShowcaseFilterCatalog): Record<string, string> {
+  const escapeLiteral = (label: string) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const template = (label: string, placeholder: string, actualControl: string): string => {
+    const fragments = label.split(`{{${placeholder}}}`);
+    if (fragments.length !== 2) throw new Error(`Filter label must contain one {{${placeholder}}} placeholder`);
+    return `${escapeLiteral(fragments[0])}${actualControl}${escapeLiteral(fragments[1])}`;
+  };
+  const { filter, search, gradeRail } = catalog.mobile;
+  return {
+    SHOWCASE_FILTER_CLOSE: `^${escapeLiteral(filter.close)}$`,
+    SHOWCASE_FILTER_TITLE: `^${escapeLiteral(filter.title)}$`,
+    SHOWCASE_FILTER_NAME: `^${escapeLiteral(filter.section.name)}$`,
+    SHOWCASE_FILTER_DIFFICULTY: `^${escapeLiteral(filter.section.difficulty)}$`,
+    SHOWCASE_FILTER_GRADE_RANGE: `^${escapeLiteral(filter.gradeRange)}$`,
+    SHOWCASE_FILTER_BUTTON: `^(?:${[
+      escapeLiteral(filter.title),
+      escapeLiteral(search.filters),
+      template(search.filterCountAria, 'count', '[0-9]+'),
+      template(search.chips.filtersWithCount, 'count', '[0-9]+'),
+    ].join('|')})$`,
+    SHOWCASE_FILTER_GRADE_CONTROL: `^(?:${[
+      gradeRail.setFilterAria,
+      gradeRail.selectedFilterAria,
+      gradeRail.rangeFilterAria,
+    ]
+      .map((label) => template(label, 'grade', '[^\\r\\n]+'))
+      .join('|')})$`,
+  };
+}
+
 /**
  * The seven walls the board takes sit on, in `SHOWCASE_BOARD_SLOTS` order
  * (kilter, tension, moonboard, woods, decoy, grasshopper, spray). Each entry

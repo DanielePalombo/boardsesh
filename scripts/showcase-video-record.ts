@@ -92,6 +92,8 @@ import {
   SHOWCASE_DEFAULT_BOARDS,
   showcaseDevice,
   showcaseCalendarPattern,
+  showcaseFilterPatterns,
+  type ShowcaseFilterCatalog,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -1230,6 +1232,13 @@ function showcaseProgressLabels(locale: ShowcaseRecordArgs['locales'][number]): 
   };
 }
 
+function showcaseFilterLabels(locale: ShowcaseRecordArgs['locales'][number]): Record<string, string> {
+  const catalog = JSON.parse(
+    readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'climbs.json'), 'utf8'),
+  ) as ShowcaseFilterCatalog;
+  return showcaseFilterPatterns(catalog);
+}
+
 function showcasePeerQueueRowLabel(locale: ShowcaseRecordArgs['locales'][number]): string {
   const catalog = JSON.parse(
     readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'session.json'), 'utf8'),
@@ -1264,6 +1273,7 @@ async function runFlow(context: RunContext, flow: string, label: string): Promis
       SHOWCASE_LOG_BOARD_LABEL: formatBoardDisplayName(context.args.kind),
       SHOWCASE_ALL_BOARDS_LABEL: progressLabels.allBoards,
       SHOWCASE_CALENDAR_LABEL: progressLabels.calendar,
+      ...(flow === 'moonboard-filter.yaml' ? showcaseFilterLabels(context.args.locales[0]) : {}),
     },
   });
 }

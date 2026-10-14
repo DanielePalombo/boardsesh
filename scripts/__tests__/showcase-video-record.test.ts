@@ -17,6 +17,8 @@ import {
   SHOWCASE_DEVICES,
   showcaseDevice,
   showcaseCalendarPattern,
+  showcaseFilterPatterns,
+  type ShowcaseFilterCatalog,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -1070,5 +1072,150 @@ describe('warm capture cleanup notification shade', () => {
     expect(() =>
       collapseCaptureNotificationShade('android', 'emulator-primary', () => ({ status: 2, stderr: '' })),
     ).toThrow('adb exit 2');
+  });
+});
+
+describe('native MoonBoard filter recovery', () => {
+  const catalogFor = (locale: string): ShowcaseFilterCatalog =>
+    JSON.parse(
+      readFileSync(new URL(`../../packages/shared/i18n/locales/${locale}/climbs.json`, import.meta.url), 'utf8'),
+    ) as ShowcaseFilterCatalog;
+
+  it.each(SHOWCASE_LOCALES)('identifies complete real %s filter controls without supplying results', (locale) => {
+    const catalog = catalogFor(locale);
+    const patterns = showcaseFilterPatterns(catalog);
+    const { filter, search, gradeRail } = catalog.mobile;
+    for (const [key, label] of Object.entries({
+      SHOWCASE_FILTER_CLOSE: filter.close,
+      SHOWCASE_FILTER_TITLE: filter.title,
+      SHOWCASE_FILTER_NAME: filter.section.name,
+      SHOWCASE_FILTER_DIFFICULTY: filter.section.difficulty,
+      SHOWCASE_FILTER_GRADE_RANGE: filter.gradeRange,
+    })) {
+      expect(new RegExp(patterns[key]).test(label)).toBe(true);
+      expect(new RegExp(patterns[key]).test(`${label} unrelated`)).toBe(false);
+    }
+    const button = new RegExp(patterns.SHOWCASE_FILTER_BUTTON);
+    expect(button.test(filter.title)).toBe(true);
+    expect(button.test(search.filterCountAria.replace('{{count}}', '2'))).toBe(true);
+    expect(button.test(search.chips.filtersWithCount.replace('{{count}}', '3'))).toBe(true);
+    const grade = new RegExp(patterns.SHOWCASE_FILTER_GRADE_CONTROL);
+    for (const label of [gradeRail.setFilterAria, gradeRail.selectedFilterAria, gradeRail.rangeFilterAria]) {
+      expect(grade.test(label.replace('{{grade}}', 'V8+'))).toBe(true);
+      expect(grade.test(label.replace('{{grade}}', '7B+ / V8'))).toBe(true);
+      expect(grade.test(label.replace('{{grade}}', ''))).toBe(false);
+      expect(grade.test(label.replace('{{grade}}', '\n'))).toBe(false);
+    }
+    expect(grade.test(filter.gradeRange)).toBe(false);
+    expect(grade.test('94236 climbs')).toBe(false);
+    expect(grade.test('moonboard')).toBe(false);
+  });
+
+  it('escapes literal catalog punctuation and refuses malformed grade templates', () => {
+    const catalog = catalogFor('en-US');
+    catalog.mobile.filter.title = 'Filters (board) [ready].';
+    catalog.mobile.gradeRail.setFilterAria = 'Filter (grade) [{{grade}}].';
+    const patterns = showcaseFilterPatterns(catalog);
+    expect(new RegExp(patterns.SHOWCASE_FILTER_TITLE).test('Filters (board) [ready].')).toBe(true);
+    expect(new RegExp(patterns.SHOWCASE_FILTER_TITLE).test('Filters board readyX')).toBe(false);
+    expect(new RegExp(patterns.SHOWCASE_FILTER_GRADE_CONTROL).test('Filter (grade) [V8].')).toBe(true);
+    expect(new RegExp(patterns.SHOWCASE_FILTER_GRADE_CONTROL).test('Filter grade V8X')).toBe(false);
+    for (const malformed of ['No grade', '{{grade}} {{grade}}']) {
+      catalog.mobile.gradeRail.setFilterAria = malformed;
+      expect(() => showcaseFilterPatterns(catalog)).toThrow('one {{grade}}');
+    }
+  });
+
+  type Selector = string | { id: string };
+  type NativeStep = {
+    evalScript?: string;
+    tapOn?: Selector;
+    assertVisible?: Selector;
+    extendedWaitUntil?: { visible?: Selector; notVisible?: Selector; optional?: boolean };
+    runFlow?: { when: { notVisible?: Selector; true?: string }; commands: NativeStep[] };
+  };
+  // Interpret only the native visibility/actions this flow uses. No app/process,
+  // recording-server calls or content generation are performed by this test.
+  const simulate = (initiallyComplete: boolean, missingAfterReopen?: string, missingInitially?: string) => {
+    const catalog = catalogFor('es');
+    const patterns = showcaseFilterPatterns(catalog);
+    const full = new Set([
+      'id:climb-filter-column',
+      catalog.mobile.filter.close,
+      catalog.mobile.filter.title,
+      catalog.mobile.filter.section.name,
+      catalog.mobile.filter.section.difficulty,
+      catalog.mobile.filter.gradeRange,
+      catalog.mobile.gradeRail.setFilterAria.replace('{{grade}}', 'V8'),
+    ]);
+    let visible = initiallyComplete ? new Set(full) : new Set([catalog.mobile.filter.close]);
+    if (missingInitially) visible.delete(missingInitially);
+    let recovery = false;
+    let ready = false;
+    const actions: string[] = [];
+    const exists = (selector: Selector): boolean => {
+      if (typeof selector !== 'string') return visible.has(`id:${selector.id}`);
+      const key = selector.match(/^\$\{([^}]+)\}$/)?.[1];
+      const pattern = new RegExp(key ? patterns[key] : selector);
+      return [...visible].some((label) => !label.startsWith('id:') && pattern.test(label));
+    };
+    const execute = (steps: NativeStep[]) => {
+      for (const step of steps) {
+        if (step.runFlow) {
+          const condition = step.runFlow.when;
+          if (condition.notVisible ? !exists(condition.notVisible) : recovery) execute(step.runFlow.commands);
+        }
+        if (step.evalScript?.includes('moonboardFilterRecovery = false')) recovery = false;
+        if (step.evalScript?.includes('moonboardFilterRecovery = true')) recovery = true;
+        if (step.tapOn) {
+          if (!exists(step.tapOn)) throw new Error('native tap target absent');
+          if (step.tapOn === '${SHOWCASE_FILTER_CLOSE}') {
+            actions.push('close');
+            visible = new Set(['id:climbs-screen', catalog.mobile.filter.title]);
+          } else if (step.tapOn === '${SHOWCASE_FILTER_BUTTON}') {
+            actions.push('reopen');
+            visible = new Set(full);
+            if (missingAfterReopen) visible.delete(missingAfterReopen);
+          } else throw new Error('unexpected native action');
+        }
+        const wait = step.extendedWaitUntil;
+        if (
+          wait &&
+          !wait.optional &&
+          (wait.visible ? !exists(wait.visible) : wait.notVisible && exists(wait.notVisible))
+        )
+          throw new Error('native readiness failed');
+        if (step.assertVisible && !exists(step.assertVisible)) throw new Error('native assertion failed');
+        if (step.evalScript?.includes('/mark/grade-filter-shown')) ready = true;
+      }
+    };
+    const documents = parseAllDocuments(readFileSync(showcaseFlowPath('moonboard-filter.yaml'), 'utf8'));
+    expect(documents.every((document) => document.errors.length === 0)).toBe(true);
+    try {
+      execute(documents[1].toJSON() as NativeStep[]);
+    } catch {
+      return { ready, actions, failed: true };
+    }
+    return { ready, actions, failed: false };
+  };
+
+  it('preserves an already complete native sheet without closing or reopening', () => {
+    expect(simulate(true)).toEqual({ ready: true, actions: [], failed: false });
+  });
+  it('recovers a collapsed native host exactly once before declaring readiness', () => {
+    expect(simulate(false)).toEqual({ ready: true, actions: ['close', 'reopen'], failed: false });
+  });
+  it('requires each body field and the real grade control, not just generic sheet chrome', () => {
+    const catalog = catalogFor('es');
+    for (const missing of [
+      catalog.mobile.filter.title,
+      catalog.mobile.filter.section.name,
+      catalog.mobile.filter.section.difficulty,
+      catalog.mobile.filter.gradeRange,
+      catalog.mobile.gradeRail.setFilterAria.replace('{{grade}}', 'V8'),
+    ]) {
+      expect(simulate(true, undefined, missing)).toEqual({ ready: true, actions: ['close', 'reopen'], failed: false });
+      expect(simulate(false, missing)).toEqual({ ready: false, actions: ['close', 'reopen'], failed: true });
+    }
   });
 });
