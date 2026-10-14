@@ -818,6 +818,11 @@ svg.layer {
   transform: none;
   opacity: 1;
 }
+.search-live-activity > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 #stage[data-format='3x2'] .search-caption .line {
   display: block;
   white-space: nowrap;

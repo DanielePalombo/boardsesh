@@ -384,55 +384,9 @@ name: multiboard App Store campaign sources
 - waitForAnimationToEnd
 - takeScreenshot: 15-crew-queue
 
-# Existing simulator BLE adapter supplies local connected state. The replay
-# fixture must contain the session registration responses; the native client must
-# carry screenshot-sim.entitlements. No fabricated island is accepted: require
-# the actual SpringBoard Next control before capturing it.
-# Close the queue sheet, then the player when present. Keep the loaded native
-# client connected to Metro while moving between the capture's app screens.
-- repeat:
-    times: 2
-    commands:
-      - runFlow:
-          when:
-            visible: ${SCREENSHOT_CLOSE_LABEL}
-          commands:
-            - tapOn: ${SCREENSHOT_CLOSE_LABEL}
-            - waitForAnimationToEnd
-- extendedWaitUntil:
-    notVisible:
-      id: 'play-drawer-board-overlay'
-    timeout: 60000
-- openLink: com.boardsesh.app://home
-- tapOn:
-    text: 'Open'
-    optional: true
-- extendedWaitUntil:
-    visible:
-      id: 'home-screen'
-    timeout: 90000
-- extendedWaitUntil:
-    notVisible:
-      id: 'play-drawer-board-overlay'
-    timeout: 60000
-- openLink: com.boardsesh.app://climbs
-- tapOn:
-    text: 'Open'
-    optional: true
-- tapOn: '.*Lightest Pair of Shorts.*'
-- extendedWaitUntil:
-    visible:
-      id: 'play-drawer-board-overlay'
-    timeout: 60000
-# Existing showcase lightbulb position, proportional on both phone sizes.
-- tapOn:
-    point: '87%,84%'
-- waitForAnimationToEnd
-- pressKey: home
-- longPressOn:
-    point: '50%,3%'
-- extendedWaitUntil:
-    visible: 'Next climb'
-    timeout: 15000
-- waitForAnimationToEnd
-- takeScreenshot: 17-dynamic-island
+# The Live Activity screenshot is supplied at composition time from the reviewed
+# physical iPhone capture in app-stores/apple/live-activity-captures/. CI cannot
+# reliably start or capture ActivityKit with the simulator replay client. Keep
+# that native card separate from these full-screen app captures; it is never a
+# fabricated widget or a relabeled simulator screenshot. Local regeneration is
+# documented in docs/live-activity-creative-captures.md with its provenance.

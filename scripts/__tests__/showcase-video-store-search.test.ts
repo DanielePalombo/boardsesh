@@ -106,6 +106,31 @@ describe('Apple search video', () => {
     }
   });
 
+  it('requires a reviewed Kilter Live Activity ending instead of an empty outro', () => {
+    const ending = storeSearchPlan('kilter').at(-1);
+    expect(ending).toMatchObject({ id: 'lock-screen', frames: 90, optional: false });
+    expect(storeSearchPlan('kilter').some((scene) => scene.id === 'outro')).toBe(false);
+    const metadata = {
+      takeId: 'lock-screen',
+      locale: 'en-US',
+      kind: 'kilter',
+      platform: 'ios',
+      recordedAt: '2026-10-14T00:00:00Z',
+      validated: true,
+      presentation: 'live-activity-card',
+      boardKind: 'kilter',
+    };
+    expect(storeSearchRecordingProblems(metadata, 'lock-screen', 'en-US', 'kilter')).toEqual([]);
+    expect(
+      storeSearchRecordingProblems({ ...metadata, presentation: undefined }, 'lock-screen', 'en-US', 'kilter'),
+    ).toContain('Kilter ending requires a native Live Activity card crop');
+    expect(
+      storeSearchRecordingProblems({ ...metadata, boardKind: 'tension' }, 'lock-screen', 'en-US', 'kilter'),
+    ).toContain('Live Activity must show the actual Kilter board');
+    const timeline = resolveTimeline(new Set(['boards-kilter', 'log', 'crew']), storeSearchPlan('kilter'));
+    expect(timeline.skipped).not.toContain('lock-screen');
+  });
+
   it('keeps localized captions brief and manufacturer names out of generic captions', () => {
     const expectedKeys = Object.keys(
       JSON.parse(readFileSync(storeSearchCopyPath('en-US'), 'utf8')) as StoreSearchCopy,
@@ -178,7 +203,7 @@ describe('store search crew framing', () => {
     expect(searchPhonePose('boards-kilter', 1, defaultPose, crewPose)).toBe(defaultPose);
     expect(searchPhonePose('crew', 2, defaultPose, crewPose)).toBe(defaultPose);
     expect(searchPhonePose('crew', 1, defaultPose, undefined)).toBe(defaultPose);
-    expect(timeline).toContain('const slot = searchPhonePose(');
+    expect(timeline).toContain('searchPhonePose(');
     expect(timeline).toContain('paintSearchScene(opening, 0, frame)');
     expect(timeline).toContain("cy: single ? (scene.id === 'lock-screen' ? 925 : 910) : 820");
     expect(timeline).toContain('scale: single ? 1.6 : index === Math.floor(count / 2) ? 1.12 : 0.92');

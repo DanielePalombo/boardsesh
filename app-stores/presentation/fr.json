@@ -197,5 +197,15 @@
   "cppTensionSearch": {
     "headline": "Direct à\nta cotation",
     "description": "Puis masque les blocs déjà enchaînés."
+  },
+  "storeLiveActivity": {
+    "headline": "Bloc suivant.\nHors de l’app.",
+    "description": "Change de bloc sans ouvrir l’appli.",
+    "emphasis": "Hors de l’app."
+  },
+  "cppLiveActivity": {
+    "headline": "Bloc suivant.\nHors de l’app.",
+    "description": "Change de bloc sans ouvrir l’appli.",
+    "emphasis": "Hors de l’app."
   }
 }

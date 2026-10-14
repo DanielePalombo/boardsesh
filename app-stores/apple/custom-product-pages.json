@@ -148,10 +148,13 @@
             "sources": ["05-queue.png"]
           },
           {
-            "output": "05-island.png",
-            "caption": "cppIsland",
-            "layout": "store-island",
-            "sources": ["08-island.png"]
+            "output": "05-live-activity.png",
+            "caption": "cppLiveActivity",
+            "layout": "store-live-activity",
+            "sources": [],
+            "liveActivity": {
+              "boardFamily": "kilter"
+            }
           },
           {
             "output": "06-search.png",

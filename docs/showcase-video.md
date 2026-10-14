@@ -147,6 +147,15 @@ takes, including its named log flow. Kilter and spray also record the mixed
 board pile; Tension and MoonBoard keep their own opening board. Feature takes
 selected with `--only wall,crew,workouts` activate the named screenshot slot
 and verify the actual resolved board type.
+Spray's progress take shows the genuine **All boards** activity calendar: the
+current app includes spray ticks in global totals but does not offer a Spray row
+in its progress filter. The localized All boards control and calendar must be
+visible, and `scrolled` marks the settled calendar. Its capture provenance must
+name that global scope rather than claiming a Spray-only filter.
+The optional MoonBoard grade take opens the existing native filter scene with
+`screenshotCppScene=search-grade` and `screenshotOpenFilters=1`. It supplies no
+grade range or invented results; loaded controls must be visible before its
+`grade-filter-shown` mark is accepted.
 The session prime opens a real climb on that board before navigating to Record.
 Variant footage lives in `work/boards/<kind>/<locale>/{raw,footage,anchors,marks}`;
 Android adds `/android` before those directories. Marks record `takeId`,
@@ -400,6 +409,28 @@ target it renders and leaves out `homepage`, whose files always keep it (with a
 warning; asking for `--target homepage` with it fails instead).
 
 ## Targets
+
+### Native Live Activity ending for Kilter search
+
+The Kilter `store-search` cut ends with **Next climb. Outside the app.** instead
+of an empty end card. Its required `lock-screen` take is a genuine cropped
+physical-device Live Activity, identified by `presentation: "live-activity-card"`
+and `boardKind: "kilter"`. The renderer verifies the exact variant and app locale,
+requires reviewed fixture dimensions, and uses the committed fixture's exterior
+alpha to keep native video pixels while removing wallpaper outside the card.
+The card uses the hero's spring entrance and exit without a decorative phone.
+
+`editorialStartSeconds` selects a point in the original capture timeline; it is
+an edit boundary, not a native event. Preserve the observed Next change and a
+readable hold afterwards. Record source timestamps, rejected partial redraws,
+and any clean-frame holds when converting device MJPEG samples to 30 fps.
+The physical TestFlight build has independent provenance from simulator app
+footage; never label it as current `main` when its source commit is unknown.
+
+See [Native Live Activity capture fixtures](live-activity-creative-captures.md)
+for the committed card pixels, CI screenshot reuse, and local regeneration.
+These requirements apply to the Kilter search ending; other targets retain
+their existing source contracts.
 
 `vp run video:render -- --target <name>` renders one target from the same
 recorded takes; `--target all` renders every one, and `--target` repeats or

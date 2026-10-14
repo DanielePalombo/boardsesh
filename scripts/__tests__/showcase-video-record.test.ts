@@ -16,6 +16,7 @@ import {
   SHOWCASE_DEFAULT_ENV_FILE,
   SHOWCASE_DEVICES,
   showcaseDevice,
+  showcaseCalendarPattern,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -85,6 +86,23 @@ describe('parallel recording simulator names', () => {
 
   it.each(['bad/name', 'bad\nname', 'x'.repeat(61)])('rejects an invalid suffix %j', (suffix) => {
     expect(() => showcaseDevice('primary', suffix)).toThrow('SHOWCASE_SIMULATOR_NAME_SUFFIX');
+  });
+});
+
+describe('native all-board progress calendar labels', () => {
+  it.each(SHOWCASE_LOCALES)('matches the genuine %s calendar section heading', (locale) => {
+    const catalog = JSON.parse(
+      readFileSync(new URL(`../../packages/shared/i18n/locales/${locale}/profile.json`, import.meta.url), 'utf8'),
+    ) as { stats: { calendar: string } };
+    const pattern = new RegExp(`^${showcaseCalendarPattern(catalog.stats.calendar)}$`);
+    expect(pattern.test(catalog.stats.calendar)).toBe(true);
+    expect(pattern.test(`${catalog.stats.calendar} unrelated`)).toBe(false);
+  });
+
+  it('treats translated punctuation literally', () => {
+    const pattern = new RegExp(`^${showcaseCalendarPattern('Calendar (all boards) [climbs].')}$`);
+    expect(pattern.test('Calendar (all boards) [climbs].')).toBe(true);
+    expect(pattern.test('Calendar all boards climbsX')).toBe(false);
   });
 });
 
@@ -241,6 +259,17 @@ describe('native locale and board recordings', () => {
       /cannot record/,
     );
     expect(() => parseRecordArgs(['--kind', '../kilter'])).toThrow(/--kind/);
+  });
+
+  it('activates the native MoonBoard filter scene without inventing a selected grade range', () => {
+    const [take] = recordingTakes(parseRecordArgs(['--kind', 'moonboard', '--only', 'moonboard-filter']));
+    const route = new URL(`com.boardsesh.app://${take.primeLinks.at(-1)}`);
+    expect(take.board).toEqual({ slot: 2, kind: 'moonboard' });
+    expect(route.searchParams.get('screenshotBoardIndex')).toBe('2');
+    expect(route.searchParams.get('screenshotOpenFilters')).toBe('1');
+    expect(route.searchParams.get('screenshotCppScene')).toBe('search-grade');
+    expect(route.searchParams.has('screenshotMinGrade')).toBe(false);
+    expect(route.searchParams.has('screenshotMaxGrade')).toBe(false);
   });
 });
 

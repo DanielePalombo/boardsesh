@@ -91,6 +91,7 @@ import {
   REFERENCE_CHANNEL_TOLERANCE,
   SHOWCASE_DEFAULT_BOARDS,
   showcaseDevice,
+  showcaseCalendarPattern,
   anchorArrivalsFromChunk,
   anchorTapValues,
   buildAnchorsFile,
@@ -1213,6 +1214,22 @@ function showcaseCloseLabel(locale: ShowcaseRecordArgs['locales'][number]): stri
   return catalog.ariaLabels.close;
 }
 
+function showcaseProgressLabels(locale: ShowcaseRecordArgs['locales'][number]): {
+  allBoards: string;
+  calendar: string;
+} {
+  const profileCatalog = JSON.parse(
+    readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'profile.json'), 'utf8'),
+  ) as { stats: { calendar: string } };
+  const youCatalog = JSON.parse(
+    readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'you.json'), 'utf8'),
+  ) as { mobile: { filter: { allBoards: string } } };
+  return {
+    allBoards: youCatalog.mobile.filter.allBoards,
+    calendar: showcaseCalendarPattern(profileCatalog.stats.calendar),
+  };
+}
+
 function showcasePeerQueueRowLabel(locale: ShowcaseRecordArgs['locales'][number]): string {
   const catalog = JSON.parse(
     readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'session.json'), 'utf8'),
@@ -1224,6 +1241,7 @@ function showcasePeerQueueRowLabel(locale: ShowcaseRecordArgs['locales'][number]
 }
 
 async function runFlow(context: RunContext, flow: string, label: string): Promise<number> {
+  const progressLabels = showcaseProgressLabels(context.args.locales[0]);
   return runMaestro({
     udid: context.primary.device.udid,
     flowFile: showcaseFlowPathFor(flow, context.primary.platform),
@@ -1244,6 +1262,8 @@ async function runFlow(context: RunContext, flow: string, label: string): Promis
       ),
       SHOWCASE_CLOSE_LABEL: showcaseCloseLabel(context.args.locales[0]),
       SHOWCASE_LOG_BOARD_LABEL: formatBoardDisplayName(context.args.kind),
+      SHOWCASE_ALL_BOARDS_LABEL: progressLabels.allBoards,
+      SHOWCASE_CALENDAR_LABEL: progressLabels.calendar,
     },
   });
 }

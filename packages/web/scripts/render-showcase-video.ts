@@ -6,6 +6,7 @@ import {
   storeSearchTakeIds,
   type StoreSearchCopy,
 } from '../../../scripts/lib/showcase-video/store-search';
+import { loadLiveActivityFixture } from '../../../scripts/lib/screenshot-live-activity';
 /**
  * Renders the homepage showcase video from the stage in marketing/showcase-video/.
  *
@@ -563,17 +564,37 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     if (problems.length) throw new Error(`${takeId}: ${problems.join('; ')}. Re-record this locale and board.`);
     const { width, height } = await sharp(resolve(directory, '00001.jpg')).metadata();
     if (!width || !height) throw new Error(`${takeId}: unreadable first native frame`);
+    if (
+      marks.editorialStartSeconds !== undefined &&
+      (!Number.isFinite(marks.editorialStartSeconds) ||
+        marks.editorialStartSeconds < 0 ||
+        marks.editorialStartSeconds >= frameCount / SHOWCASE_FPS)
+    )
+      throw new Error(`${takeId}: editorial selection is outside the native capture`);
+    const nativeFixture =
+      marks.presentation === 'live-activity-card' &&
+      (marks.boardKind === 'kilter' || marks.boardKind === 'tension' || marks.boardKind === 'moonboard')
+        ? loadLiveActivityFixture(marks.boardKind, search.locale)
+        : undefined;
+    if (
+      nativeFixture &&
+      (width !== nativeFixture.provenance.cropRect.width || height !== nativeFixture.provenance.cropRect.height)
+    )
+      throw new Error(`${takeId}: native footage does not match the reviewed card mask dimensions`);
     takes[takeId] = {
       frameUrlBase: `${pathToFileURL(directory).href}/`,
       frameCount,
       segments: [[SHOWCASE_FPS, frameCount]],
       screen: { width, height },
+      ...(marks.presentation ? { presentation: marks.presentation } : {}),
+      ...(marks.editorialStartSeconds !== undefined ? { editorialStartSeconds: marks.editorialStartSeconds } : {}),
+      ...(nativeFixture ? { nativeMaskUrl: pathToFileURL(nativeFixture.maskPath).href } : {}),
       anchors: {},
     };
   }
   const available = new Set(Object.keys(takes) as ShowcaseTakeId[]);
   for (const step of target.scenes) {
-    if (step.optional || step.id === 'lock-screen' || step.id === 'outro') continue;
+    if (step.optional || (step.id === 'lock-screen' && step.optional !== false) || step.id === 'outro') continue;
     const required = step.takes ?? [step.id as ShowcaseTakeId];
     if (step.id === 'boards' && required.length > 1 && required.some((takeId) => available.has(takeId))) continue;
     const missing = required.filter((takeId) => !available.has(takeId));
@@ -585,7 +606,13 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
   return {
     source,
     copy: shared,
-    phone: showcasePhone('ios', await footageAspect([...available], source.dirs)),
+    phone: showcasePhone(
+      'ios',
+      await footageAspect(
+        [...available].filter((takeId) => takes[takeId]?.presentation !== 'live-activity-card'),
+        source.dirs,
+      ),
+    ),
     takes,
     anchors: {},
   };
@@ -632,14 +659,20 @@ function prepareCut(footage: Footage, target: ShowcaseTarget, donationLine: bool
               : search.variant === 'tension'
                 ? 'filter-tension'
                 : 'scrolled';
-        if (takeId === 'lock-screen') mark = 'island-expanded';
+        if (takeId === 'lock-screen')
+          mark = take.presentation === 'live-activity-card' ? 'activity-ready' : 'island-expanded';
         if (takeId === 'crew') mark = 'row-landed';
         if (takeId === 'spray') mark = 'next-1';
         if (takeId === 'moonboard-import') mark = 'csv-import-entry';
         if (takeId === 'moonboard-filter') mark = 'grade-filter-shown';
         if (mark && typeof marks?.[mark] !== 'number')
           throw new Error(`${takeId}: missing ${mark}; re-record ${search.variant}/${search.locale}`);
-        const from = mark && marks ? Math.max(0, Math.round((marks[mark] - 0.4) * SHOWCASE_FPS)) : SHOWCASE_FPS;
+        const from =
+          take.presentation === 'live-activity-card' && take.editorialStartSeconds !== undefined
+            ? Math.round(take.editorialStartSeconds * SHOWCASE_FPS)
+            : mark && marks
+              ? Math.max(0, Math.round((marks[mark] - 0.4) * SHOWCASE_FPS))
+              : SHOWCASE_FPS;
         takes[takeId] = { ...take, segments: [[from, take.frameCount]] };
       }
     }

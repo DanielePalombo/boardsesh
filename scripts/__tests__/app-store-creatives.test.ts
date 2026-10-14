@@ -168,7 +168,7 @@ describe('multiboard App Store campaign', () => {
       '04-on-the-wall.png',
       '05-one-logbook.png',
       '06-session-plan.png',
-      '07-dynamic-island.png',
+      '07-live-activity.png',
       '08-next-project.png',
     ]);
     expect(recipes[0].sources).toEqual(['00-board-view.png', '14-spray-board-view.png', '10-moonboard-board-view.png']);
@@ -180,8 +180,8 @@ describe('multiboard App Store campaign', () => {
     ]);
     expect(recipes[2].sources).toContain('12-decoy-board-view.png');
     expect(recipes[3].sources).toEqual(['15-crew-queue.png']);
-    expect(recipes[7].sources).toEqual(['17-dynamic-island.png']);
-    for (const missing of ['14-spray-board-view.png', '12-decoy-board-view.png', '17-dynamic-island.png'])
+    expect(recipes[7]).toMatchObject({ sources: [], liveActivity: { boardFamily: 'kilter' } });
+    for (const missing of ['14-spray-board-view.png', '12-decoy-board-view.png', '16-wall-status.png'])
       expect(() =>
         resolveScreenshotRecipes(
           'ios',

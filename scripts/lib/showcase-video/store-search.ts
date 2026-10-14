@@ -39,8 +39,8 @@ const beat = (
   caption,
   frames,
   plain: true,
+  optional,
   ...(takes ? { takes } : {}),
-  ...(optional ? { optional } : {}),
 });
 
 /** Explicit take lists prevent a named CPP from inheriting the legacy Kilter pile or session. */
@@ -57,9 +57,9 @@ export function storeSearchPlan(variant: StoreSearchVariant): readonly ShowcaseS
     return [
       beat('boards', 'kilter', 90, ['boards-kilter']),
       beat('log', 'kilterLog', 90),
-      beat('crew', 'friends', 90),
       beat('boards', 'boards', 90, PILE),
-      beat('outro', 'outro', 90, []),
+      beat('crew', 'friends', 90),
+      beat('lock-screen', 'island', 90),
     ];
   if (variant === 'tension')
     return [
@@ -104,6 +104,8 @@ export function storeSearchRecordingProblems(
     platform?: string;
     recordedAt?: string;
     validated?: boolean;
+    presentation?: string;
+    boardKind?: string;
   }>,
   takeId: ShowcaseTakeId,
   locale: StoreSearchLocale,
@@ -115,6 +117,11 @@ export function storeSearchRecordingProblems(
   if (metadata.locale !== locale) problems.push(`recording locale ${metadata.locale ?? 'missing'}, expected ${locale}`);
   if (metadata.kind !== variant) problems.push(`recording variant ${metadata.kind ?? 'missing'}, expected ${variant}`);
   if (metadata.platform !== 'ios') problems.push('Apple creative requires a native iOS recording');
+  if (takeId === 'lock-screen' && variant === 'kilter') {
+    if (metadata.presentation !== 'live-activity-card')
+      problems.push('Kilter ending requires a native Live Activity card crop');
+    if (metadata.boardKind !== 'kilter') problems.push('Live Activity must show the actual Kilter board');
+  }
   if (!metadata.recordedAt || !Number.isFinite(Date.parse(metadata.recordedAt)))
     problems.push('missing recording timestamp');
   return problems;

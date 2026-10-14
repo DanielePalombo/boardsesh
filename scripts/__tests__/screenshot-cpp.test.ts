@@ -871,7 +871,7 @@ describe('custom product page captures', () => {
         '05-queue',
         '03-logbook',
         '04-led',
-        ipad ? '08-kiosk' : '08-island',
+        ...(ipad ? ['08-kiosk'] : []),
       ]);
       const statusStart = steps.findIndex(
         (step) =>
@@ -1447,7 +1447,7 @@ describe('custom product page captures', () => {
               'queue',
               'logbook',
               'led',
-              finalScene,
+              ...(target === 'kilter' && !ipad ? [] : [finalScene]),
             ]);
             for (const [index, scene] of requestedScenes.entries()) {
               const board = index < 6 ? [...page.heroBoards, ...page.otherBoards][index] : page.primaryBoard;
@@ -1496,7 +1496,9 @@ describe('custom product page captures', () => {
               typeof step.takeScreenshot === 'string' ? [`${step.takeScreenshot}.png`] : [],
             );
             expect(captures.sort()).toEqual(cppCaptureNames(page, deviceSlug(device.name)));
-            expect(captures).toContain(target === 'spray' ? '08-holds.png' : ipad ? '08-kiosk.png' : '08-island.png');
+            if (target === 'kilter' && !ipad) expect(captures).not.toContain('08-island.png');
+            else
+              expect(captures).toContain(target === 'spray' ? '08-holds.png' : ipad ? '08-kiosk.png' : '08-island.png');
             checkedDocuments += 1;
           }
         }
@@ -1712,7 +1714,7 @@ describe('custom product page captures', () => {
           const centerVariant = page.heroBoards[Number(targetTrio.sources[1].match(/hero-(\d+)/)?.[1]) - 1];
           expect(centerVariant.id).toBe('kilter-original-12x12');
           expect(recipes[3].caption).toBe('cppKilterLogbookImport');
-          expect(recipes[5].caption).toBe(device.startsWith('ipad-') ? 'cppKiosk' : 'cppIsland');
+          expect(recipes[5].caption).toBe(device.startsWith('ipad-') ? 'cppKiosk' : 'cppLiveActivity');
           expect(recipes[3].sources).toEqual(['03-logbook.png']);
         }
         expect(recipes.find((recipe) => recipe.sources.includes('other-1.png'))!.sources).toEqual([
@@ -1720,8 +1722,11 @@ describe('custom product page captures', () => {
           'other-2.png',
           'other-3.png',
         ]);
-        expect(names).toHaveLength(13);
-        expect(cppCaptureNames({ ...page, recipes: { phone: [], ipad: [] } }, device)).toEqual(names);
+        const nativeCardFixture = target === 'kilter' && !device.startsWith('ipad-');
+        expect(names).toHaveLength(nativeCardFixture ? 12 : 13);
+        expect(cppCaptureNames({ ...page, recipes: { phone: [], ipad: [] } }, device)).toEqual(
+          nativeCardFixture ? [...names, '08-island.png'].sort() : names,
+        );
         expect(() => resolveCppRecipes(page, device, names.slice(1))).toThrow('Incomplete CPP capture');
         expect(() => resolveCppRecipes(page, device, [...names, names[0]])).toThrow('Incomplete CPP capture');
       }
@@ -1867,7 +1872,9 @@ describe('custom product page captures', () => {
         const queueScene = source.slice(source.indexOf('scene=queue-join'), source.indexOf('takeScreenshot: 05-queue'));
         expect(queueScene.indexOf('tapOn: ${SCREENSHOT_QUEUE_LABEL}')).toBeLessThan(queueScene.indexOf('Ready queue'));
         expect(source).not.toContain('openLink:');
-        expect(source.match(/takeScreenshot:/g)).toHaveLength(13);
+        expect(source.match(/takeScreenshot:/g)).toHaveLength(
+          target === 'kilter' && !device.name.startsWith('iPad') ? 12 : 13,
+        );
       }
       if (target === 'spray') {
         expect(commands.status.route).toContain('/discover/smart/PROJECTS');
@@ -1976,7 +1983,9 @@ describe('custom product page captures', () => {
             expect(source.slice(beginning, ending)).toContain(marker);
           }
         }
-        expect(source.match(/takeScreenshot:/g)).toHaveLength(13);
+        expect(source.match(/takeScreenshot:/g)).toHaveLength(
+          target === 'kilter' && !device.name.startsWith('iPad') ? 12 : 13,
+        );
       }
       for (const invalid of [
         { boardId: 'different-board' },

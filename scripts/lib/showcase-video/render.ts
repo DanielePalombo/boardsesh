@@ -1515,6 +1515,9 @@ export type StageTake = Readonly<{
   /** Footage ranges the take's scene plays (`takeSegments`). */
   segments: readonly FootageRange[];
   screen: Readonly<{ width: number; height: number }>;
+  presentation?: 'live-activity-card';
+  editorialStartSeconds?: number;
+  nativeMaskUrl?: string;
   anchors: Partial<Record<ShowcaseCalloutName, readonly ShowcaseAnchorSample[]>>;
 }>;
 

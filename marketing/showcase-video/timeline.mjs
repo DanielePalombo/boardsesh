@@ -166,6 +166,22 @@ function buildPhone(layer, zIndex) {
   return { rig, img, shadow };
 }
 
+/** Display only the captured native card; surrounding notifications stay cropped out. */
+function buildLiveActivityCard(layer, zIndex, take) {
+  const width = 1120;
+  const height = (width * take.screen.height) / take.screen.width;
+  const shadow = el('div', { class: 'phone-shadow' }, layer);
+  const rig = el('div', { class: 'phone-rig search-live-activity' }, layer);
+  setVars(rig, { z: zIndex, 'phone-w': width, 'phone-h': height });
+  const img = el('img', { alt: '', decoding: 'sync' }, rig);
+  if (take.nativeMaskUrl) {
+    img.style.maskImage = `url(${take.nativeMaskUrl})`;
+    img.style.maskSize = '100% 100%';
+    img.style.maskMode = 'alpha';
+  }
+  return { rig, img, shadow, nativeCardWidth: width };
+}
+
 // --- geometry -------------------------------------------------------------------
 
 const projection = () => ({ perspective: data.perspective, originX: data.width / 2, originY: data.height / 2 });
@@ -708,7 +724,9 @@ function initSearchStage() {
     }
     const phones = scene.takes.map((takeId, phoneIndex) => ({
       takeId,
-      ...buildPhone(layer, phoneIndex + 1),
+      ...(data.takes[takeId].presentation === 'live-activity-card'
+        ? buildLiveActivityCard(layer, phoneIndex + 1, data.takes[takeId])
+        : buildPhone(layer, phoneIndex + 1)),
     }));
     return { scene, layer, caption, words, phones };
   });
@@ -737,19 +755,21 @@ function paintSearchScene(entry, frame, loopFrame = null) {
     const count = phones.length;
     const single = count === 1;
     const centre = single ? 1420 : 1390 + (index - (count - 1) / 2) * 240;
-    const slot = searchPhonePose(
-      phone.takeId,
-      count,
-      {
-        cx: centre,
-        cy: single ? (scene.id === 'lock-screen' ? 925 : 910) : 820,
-        scale: single ? 1.6 : index === Math.floor(count / 2) ? 1.12 : 0.92,
-        rx: 0,
-        ry: 0,
-        rz: 0,
-      },
-      data.storeSearch.crewPhonePose,
-    );
+    const slot = phone.nativeCardWidth
+      ? { cx: 1240, cy: 760, scale: 1, rx: 0, ry: 0, rz: 0 }
+      : searchPhonePose(
+          phone.takeId,
+          count,
+          {
+            cx: centre,
+            cy: single ? (scene.id === 'lock-screen' ? 925 : 910) : 820,
+            scale: single ? 1.6 : index === Math.floor(count / 2) ? 1.12 : 0.92,
+            rx: 0,
+            ry: 0,
+            rz: 0,
+          },
+          data.storeSearch.crewPhonePose,
+        );
     const pose = closing
       ? closerPose(slot, loopFrame, closerStart + index * 2, data.totalFrames - 1, data.height * 0.9)
       : searchPhoneMotionPose(slot, local, length, {
@@ -758,7 +778,7 @@ function paintSearchScene(entry, frame, loopFrame = null) {
           count,
           width: data.width,
           height: data.height,
-          phoneWidth: data.phone.width,
+          phoneWidth: phone.nativeCardWidth ?? data.phone.width,
           fps: data.fps,
         });
     setVars(phone.rig, { cx: pose.cx, cy: pose.cy, s: pose.scale, rx: 0, ry: 0, rz: 0 });

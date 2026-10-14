@@ -194,16 +194,31 @@ export function readCppPage(target: CppTarget, manifestPath = CPP_MANIFEST_PATH)
     if (new Set(recipes.map((recipe) => (recipe as ScreenshotRecipe).output)).size !== 9)
       throw new Error(`${target}/${device} needs distinct outputs`);
     for (const recipe of recipes) {
+      const fixtureRecipe =
+        isRecord(recipe) &&
+        recipe.layout === 'store-live-activity' &&
+        isRecord(recipe.liveActivity) &&
+        recipe.liveActivity.boardFamily === target &&
+        target === 'kilter';
       if (
         !isRecord(recipe) ||
         typeof recipe.output !== 'string' ||
         !/^[\w-]+\.png$/.test(recipe.output) ||
         !CAPTION_IDS.some((caption) => caption === recipe.caption) ||
-        !['screen', 'store-hero', 'store-boards', 'store-wall', 'store-queue', 'store-island', 'store-spray'].includes(
-          String(recipe.layout),
-        ) ||
+        ![
+          'screen',
+          'store-hero',
+          'store-boards',
+          'store-wall',
+          'store-queue',
+          'store-island',
+          'store-spray',
+          'store-live-activity',
+        ].includes(String(recipe.layout)) ||
         !Array.isArray(recipe.sources) ||
-        recipe.sources.length === 0 ||
+        (fixtureRecipe ? recipe.sources.length !== 0 : recipe.sources.length === 0) ||
+        (recipe.layout === 'store-live-activity' && !fixtureRecipe) ||
+        (recipe.liveActivity !== undefined && !fixtureRecipe) ||
         recipe.sources.some((source) => typeof source !== 'string' || !captureNames.has(source))
       )
         throw new Error(`Invalid CPP recipe for ${target}/${device}`);
@@ -228,6 +243,7 @@ export function readCppPage(target: CppTarget, manifestPath = CPP_MANIFEST_PATH)
 }
 export function cppCaptureNames(page: CppPage, device: string): string[] {
   const spray = page.primaryBoard.family === 'spray';
+  const nativeCardFixture = !device.startsWith('ipad-') && page.recipes.phone.some((recipe) => recipe.liveActivity);
   // Capture all genuine native scenes even when a presentation recipe omits
   // one. Changing a layout must never reduce the recorded source contract.
   return [
@@ -243,7 +259,9 @@ export function cppCaptureNames(page: CppPage, device: string): string[] {
     '05-queue.png',
     '06-workout.png',
     spray ? '07-playlist.png' : '07-status.png',
-    spray ? '08-holds.png' : device.startsWith('ipad-') ? '08-kiosk.png' : '08-island.png',
+    ...(nativeCardFixture
+      ? []
+      : [spray ? '08-holds.png' : device.startsWith('ipad-') ? '08-kiosk.png' : '08-island.png']),
   ].sort();
 }
 export function resolveCppRecipes(

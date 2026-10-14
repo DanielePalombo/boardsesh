@@ -67,6 +67,11 @@ export function showcaseDevice(role: 'primary' | 'secondary', nameSuffix = ''): 
   return { ...SHOWCASE_DEVICES[role], name: `${SHOWCASE_DEVICES[role].name} [${suffix}]` };
 }
 
+/** Match the visible native calendar heading, treating translated punctuation literally. */
+export function showcaseCalendarPattern(heading: string): string {
+  return heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * The seven walls the board takes sit on, in `SHOWCASE_BOARD_SLOTS` order
  * (kilter, tension, moonboard, woods, decoy, grasshopper, spray). Each entry

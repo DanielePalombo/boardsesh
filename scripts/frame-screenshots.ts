@@ -14,6 +14,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import sharp from 'sharp';
 import { extractScreenshotIsland } from './lib/screenshot-island';
+import { loadLiveActivityFixture, type NativeCaptureSize } from './lib/screenshot-live-activity';
 import { brandColors, brandColorsDark, materialSurfaces } from '../packages/shared/velvet-tokens/src/index';
 import {
   findGooglePlayImageOffenders,
@@ -141,7 +142,7 @@ export async function frameComposition(
   caption: ScreenshotCaption,
   layout: ScreenshotLayout,
   showcase = false,
-  options: { boardLabels?: readonly string[] } = {},
+  options: { boardLabels?: readonly string[]; outputCanvas?: NativeCaptureSize } = {},
 ): Promise<Buffer> {
   validateScreenshotBoardLabels(options.boardLabels, layout, sources.length);
   if (showcase || layout.startsWith('store-')) return frameShowcaseComposition(sources, caption, layout, options);
@@ -347,7 +348,11 @@ export async function frameShowcaseComposition(
   sources: readonly Buffer[],
   caption: ScreenshotCaption,
   layout: ScreenshotLayout,
-  options: { placement?: StoreCreativePlacement; boardLabels?: readonly string[] } = {},
+  options: {
+    placement?: StoreCreativePlacement;
+    boardLabels?: readonly string[];
+    outputCanvas?: NativeCaptureSize;
+  } = {},
 ): Promise<Buffer> {
   const boardLabels = validateScreenshotBoardLabels(options.boardLabels, layout, sources.length);
   const boards = layout === 'store-boards';
@@ -357,9 +362,23 @@ export async function frameShowcaseComposition(
   const sourceSize = sourceSizes[0];
   if (sourceSizes.some((size) => size.width !== sourceSize.width || size.height !== sourceSize.height))
     throw new Error('Showcase sources must come from the same capture device');
+  if (options.outputCanvas && layout !== 'store-live-activity')
+    throw new Error('Separate output canvases are only supported for native Live Activity card fixtures');
+  if (layout === 'store-live-activity' && !options.outputCanvas)
+    throw new Error('Live Activity card framing requires the requested App Store output canvas');
+  if (
+    options.outputCanvas &&
+    (!Number.isSafeInteger(options.outputCanvas.width) ||
+      !Number.isSafeInteger(options.outputCanvas.height) ||
+      options.outputCanvas.width <= 0 ||
+      options.outputCanvas.height <= 0)
+  )
+    throw new Error('Invalid Live Activity output canvas dimensions');
   if (options.placement && !boards) throw new Error('Creative placements require the three-board opening');
   if (options.placement === 'header') return frameStoreHeader(sources);
-  const { width, height } = options.placement ? STORE_CREATIVE_PLACEMENTS[options.placement] : sourceSize;
+  const { width, height } = options.placement
+    ? STORE_CREATIVE_PLACEMENTS[options.placement]
+    : (options.outputCanvas ?? sourceSize);
   const wide = width > height;
   const tablet = wide && !options.placement;
   const light = layout === 'store-wall' || layout === 'store-spray' || layout === 'wall-column';
@@ -491,6 +510,20 @@ export async function frameShowcaseComposition(
         },
       },
     );
+  } else if (layout === 'store-live-activity') {
+    // A reviewed native card, already cropped on the physical device. Its
+    // dimensions identify the source card, not this App Store canvas or a phone.
+    const cardWidth = Math.floor(Math.min(region.width, region.height / aspect));
+    const card = await sharp(sources[0]).resize(cardWidth).png().toBuffer({ resolveWithObject: true });
+    foreground.push({
+      input: card.data,
+      left: Math.round(region.left + (region.width - card.info.width) / 2),
+      top: Math.round(
+        wide
+          ? region.top + (region.height - card.info.height) / 2
+          : Math.min(copyTop + copyHeight + height * 0.1, height - margin - card.info.height),
+      ),
+    });
   } else if (layout === 'store-island') {
     // Keep the actual native silhouette and contents; omit wallpaper and the
     // decorative screenshot border. Center the Island on the complete canvas.
@@ -724,6 +757,8 @@ export interface FrameDirectoryOptions {
   input: string;
   output: string;
   cpp?: CppTarget;
+  /** Alternate reviewed fixture directory for local regeneration and tests. */
+  liveActivityFixtureRoot?: string;
 }
 
 export async function frameDirectory(options: FrameDirectoryOptions): Promise<string[]> {
@@ -781,13 +816,19 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
     const thumbnails: Array<{ data: Buffer; info: sharp.OutputInfo }> = [];
     for (const recipe of recipes) {
       const name = recipe.output;
-      const buffers = recipe.sources.map((source) => capturesByName.get(source)!);
+      const nativeFixture = recipe.liveActivity
+        ? loadLiveActivityFixture(recipe.liveActivity.boardFamily, options.locale, options.liveActivityFixtureRoot)
+        : undefined;
+      const buffers = nativeFixture
+        ? [nativeFixture.pixels]
+        : recipe.sources.map((source) => capturesByName.get(source)!);
+      const outputCanvas = nativeFixture ? readPngDimensions(captures[0].buffer) : undefined;
       const framed = await frameComposition(
         buffers,
         catalog[recipe.caption],
         recipe.layout,
         options.platform === 'ios',
-        { boardLabels: recipe.boardLabels },
+        { boardLabels: recipe.boardLabels, outputCanvas },
       );
       writeFileSync(join(staging, name), framed);
       thumbnails.push(await sharp(framed).resize({ width: 270 }).toBuffer({ resolveWithObject: true }));
@@ -806,6 +847,15 @@ export async function frameDirectory(options: FrameDirectoryOptions): Promise<st
         framedSha256: sha256Screenshot(framed),
         ...(buffers.length > 1 ? { sources: sourceMetadata } : {}),
         ...(recipe.boardLabels ? { boardLabels: recipe.boardLabels } : {}),
+        ...(nativeFixture
+          ? {
+              liveActivity: {
+                fixture: nativeFixture.provenance,
+                manifestSha256: nativeFixture.manifestSha256,
+                outputCanvas: outputCanvas!,
+              },
+            }
+          : {}),
       };
     }
     if (options.platform === 'android') {
