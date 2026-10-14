@@ -139,6 +139,15 @@ describe('Apple search video', () => {
       const copy = JSON.parse(readFileSync(storeSearchCopyPath(locale), 'utf8')) as StoreSearchCopy;
       expect(Object.keys(copy).sort()).toEqual(expectedKeys);
       expect(storeSearchCopyProblems(copy), locale).toEqual([]);
+      const islandWords = parseHeadline(copy.island).flat();
+      expect(
+        islandWords.some((word) => word.accent),
+        `${locale}: Live Activity accent`,
+      ).toBe(true);
+      expect(
+        islandWords.every((word) => !word.text.includes('*')),
+        `${locale}: no literal formatting`,
+      ).toBe(true);
       for (const variant of STORE_SEARCH_VARIANTS) {
         for (const scene of storeSearchPlan(variant))
           expect(copy[scene.caption!], `${locale}/${scene.caption}`).toBeTruthy();

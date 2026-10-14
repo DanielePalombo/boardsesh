@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import sharp from 'sharp';
@@ -13,6 +13,11 @@ import {
 import { DEFAULT_MIN_BYTES } from '../assert-screenshot-content';
 import { CPP_MANIFEST_PATH, CPP_TARGETS, readCppPage, type CppTarget } from '../lib/screenshot-cpp';
 import { captionLocaleForStore, sha256ScreenshotSources } from '../lib/screenshot-presentation';
+import {
+  LIVE_ACTIVITY_FIXTURE_ROOT,
+  loadLiveActivityFixture,
+  type LiveActivityFixture,
+} from '../lib/screenshot-live-activity';
 
 interface SourceMetadata {
   rawBytes: number;
@@ -22,7 +27,18 @@ interface TestPresentation {
   version: number;
   locale: string;
   cpp: { target: string; manifestSha256: string; fixtureSha256: string };
-  files: Record<string, SourceMetadata & { framedSha256: string; sources?: Record<string, SourceMetadata> }>;
+  files: Record<
+    string,
+    SourceMetadata & {
+      framedSha256: string;
+      sources?: Record<string, SourceMetadata>;
+      liveActivity?: {
+        fixture: LiveActivityFixture;
+        manifestSha256: string;
+        outputCanvas: { width: number; height: number };
+      };
+    }
+  >;
 }
 interface DeviceFixture {
   path: string;
@@ -68,6 +84,8 @@ afterAll(() => {
 function createTree(targets: readonly CppTarget[] = ['kilter']): string {
   const root = mkdtempSync(join(tmpdir(), 'cpp-validator-tree-'));
   ownedDirectories.push(root);
+  const activityRoot = join(root, 'app-stores/apple/live-activity-captures');
+  cpSync(LIVE_ACTIVITY_FIXTURE_ROOT, activityRoot, { recursive: true });
   const manifestHash = digest(readFileSync(CPP_MANIFEST_PATH));
   for (const target of targets) {
     const page = readCppPage(target);
@@ -107,6 +125,25 @@ function createTree(targets: readonly CppTarget[] = ['kilter']): string {
         };
         for (const recipe of recipes) {
           linkSync(seed.path, join(output, recipe.output));
+          if (recipe.liveActivity) {
+            const native = loadLiveActivityFixture(
+              recipe.liveActivity.boardFamily,
+              presentation.locale as LiveActivityFixture['appLocale'],
+              activityRoot,
+            );
+            const { width, height } = ACCEPTED_SIZES[device][0];
+            presentation.files[recipe.output] = {
+              rawBytes: native.pixels.length,
+              rawSha256: native.provenance.sha256,
+              framedSha256: seed.hash,
+              liveActivity: {
+                fixture: native.provenance,
+                manifestSha256: native.manifestSha256,
+                outputCanvas: { width, height },
+              },
+            };
+            continue;
+          }
           const sourceMetadata = Object.fromEntries(
             recipe.sources.map((filename) => [filename, { rawBytes: seed.bytes, rawSha256: seed.hash }]),
           );
@@ -197,5 +234,30 @@ describe('CPP screenshot upload integrity', () => {
       presentation.locale = 'fr';
     });
     expect(() => assertCppScreenshots('kilter', root)).toThrow('stale or unverified provenance');
+  });
+
+  it.each(['hash', 'bytes', 'manifest', 'canvas', 'identity', 'missing'] as const)(
+    'rejects altered Live Activity %s provenance before upload',
+    (field) => {
+      const root = createTree();
+      mutatePresentation(root, (presentation) => {
+        const output = readCppPage('kilter').recipes.phone.find((recipe) => recipe.liveActivity)!.output;
+        const entry = presentation.files[output];
+        if (field === 'hash') entry.rawSha256 = '0'.repeat(64);
+        if (field === 'bytes') entry.rawBytes++;
+        if (field === 'manifest') entry.liveActivity!.manifestSha256 = '0'.repeat(64);
+        if (field === 'canvas') entry.liveActivity!.outputCanvas.width++;
+        if (field === 'identity') entry.liveActivity!.fixture.content.climbName = 'Different climb';
+        if (field === 'missing') delete entry.liveActivity;
+      });
+      expect(() => assertCppScreenshots('kilter', root)).toThrow(/native Live Activity/);
+    },
+  );
+
+  it('rejects changed fixture pixels even when the framed card remains intact', () => {
+    const root = createTree();
+    const native = loadLiveActivityFixture('kilter', 'en-US', join(root, 'app-stores/apple/live-activity-captures'));
+    writeFileSync(native.maskPath, Buffer.from('altered native fixture'));
+    expect(() => assertCppScreenshots('kilter', root)).toThrow('Native Live Activity fixture hash mismatch');
   });
 });
