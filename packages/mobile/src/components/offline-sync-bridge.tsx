@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useOfflineDatabase } from '../db/use-offline-database';
 import { useQueryClient } from '@tanstack/react-query';
 import { notifyBootstrapMetadataChanged, notifyScopeDownloadComplete, setSyncProgress } from '../sync';
@@ -29,7 +29,8 @@ import { clearUserData } from '../db/connection';
 import { clearStoredSprayPhotos } from '../lib/spray/spray-photo-store';
 import { reportError } from '../lib/error-reporting';
 import { useOfflineSchemaReady } from '../db/use-offline-schema-ready';
-import { AUTHOR_QUERY_KEYS, loadFollowedAuthors, useFollowedAuthors } from '../lib/graphql/hooks/use-followed-authors';
+import { loadFollowedAuthors, useFollowedAuthors } from '../lib/graphql/hooks/use-followed-authors';
+import { invalidateFollowingCatalogueQueries, isCatalogueQuery } from '../lib/graphql/author-query-invalidation';
 
 /**
  * Publishes the permanently enabled native offline engine to the module-level
@@ -101,13 +102,21 @@ export function OfflineSyncBridge() {
   // moment.
   const { userId: localUserId } = useStoredUserId(isAuthenticated);
   useNotificationUpdates(isAuthenticated && !isLoading, localUserId);
+  const previousDatabase = useRef(db);
+  const catalogueRecoveryPending = useRef(!schemaReady);
   useEffect(() => {
+    // Ordinary offline reads can cache an empty fallback before initialization,
+    // or personal results before the owner stamp. Remember recovery across auth
+    // delays and canceled preparations, without refreshing normal ready launches.
+    if (!schemaReady || previousDatabase.current !== db) catalogueRecoveryPending.current = true;
+    previousDatabase.current = db;
     if (!isAuthenticated || !localUserId || !schemaReady) return;
     let cancelled = false;
     void (async () => {
       try {
         const ownership = await assertLocalUserDataOwner(db, localUserId);
         if (cancelled) return;
+        if (ownership !== 'ok') catalogueRecoveryPending.current = true;
         if (ownership === 'mismatch') {
           reportError(new Error('Local offline user data belonged to a different account'), {
             tags: { source: 'offline-sync', op: 'owner-stamp-mismatch' },
@@ -135,6 +144,14 @@ export function OfflineSyncBridge() {
         }
         if (ownership !== 'ok') await stampLocalUserId(db, localUserId);
         if (cancelled) return;
+        if (catalogueRecoveryPending.current) {
+          // Cancel even an initial fetch with no cached data: invalidation alone
+          // would reuse its promise and accept results captured before stamping.
+          await queryClient.cancelQueries({ predicate: isCatalogueQuery });
+          if (cancelled) return;
+          void queryClient.invalidateQueries({ predicate: isCatalogueQuery });
+          catalogueRecoveryPending.current = false;
+        }
         // A screen may already have fetched authors before SQLite was ready.
         // Load again after the owner stamp, even when that query is still fresh,
         // so an empty follow list also gets its complete offline snapshot.
@@ -143,9 +160,10 @@ export function OfflineSyncBridge() {
         const authors = await loadFollowedAuthors(localUserId);
         if (!cancelled) {
           queryClient.setQueryData(['followedAuthors', localUserId], authors);
-          for (const key of AUTHOR_QUERY_KEYS) {
-            if (key !== 'followedAuthors') void queryClient.invalidateQueries({ queryKey: [key] });
-          }
+          // Equal cached authors can still predate SQLite readiness. Retry the
+          // local Following reads now that their snapshot is usable. Ordinary
+          // readiness recovery was handled separately before the author load.
+          invalidateFollowingCatalogueQueries(queryClient);
         }
       } catch (error) {
         if (__DEV__) {

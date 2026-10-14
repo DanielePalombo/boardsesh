@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver, type QueryKey } from '@tanstack/react-query';
 const useNotificationUpdatesMock = vi.hoisted(() => vi.fn());
 vi.mock('../../notifications/use-notification-updates', async () => {
   const { useEffect } = await import('react');
@@ -16,10 +16,10 @@ vi.mock('../../notifications/use-notification-updates', async () => {
 const loadFollowedAuthorsMock = vi.hoisted(() =>
   vi.fn(async (_userId: string) => ({ setterUsernames: [], users: [] })),
 );
-vi.mock('../../lib/graphql/hooks/use-followed-authors', () => ({
+vi.mock('../../lib/graphql/hooks/use-followed-authors', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/graphql/hooks/use-followed-authors')>()),
   useFollowedAuthors: () => ({}),
   loadFollowedAuthors: loadFollowedAuthorsMock,
-  AUTHOR_QUERY_KEYS: ['followedAuthors', 'setterStats'],
 }));
 
 // The analytics barrel reaches posthog-react-native; stub it so the module scan
@@ -138,7 +138,9 @@ vi.mock('../../settings', () => ({
 
 vi.mock('../../lib/graphql/client', () => ({
   getOfflineSyncHttpClient: () => ({ request: vi.fn() }),
+  getHttpClient: () => ({ request: vi.fn() }),
 }));
+vi.mock('../../db', () => ({ getDatabaseHandle: () => null }));
 
 const snapshotBaseUrlConfigured = vi.hoisted(() => ({ value: true }));
 vi.mock('../../lib/env', () => ({
@@ -146,8 +148,9 @@ vi.mock('../../lib/env', () => ({
 }));
 
 const fakeDb = { tag: 'db' };
+let providedDatabase = fakeDb;
 vi.mock('expo-sqlite', () => ({
-  useSQLiteContext: () => fakeDb,
+  useSQLiteContext: () => providedDatabase,
 }));
 
 vi.mock('expo-router', () => ({
@@ -201,6 +204,18 @@ function makeQueryClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
+function observeCachedQuery(queryClient: QueryClient, queryKey: QueryKey) {
+  const fetch = vi.fn(async () => 'cached');
+  const observer = new QueryObserver(queryClient, {
+    queryKey,
+    queryFn: fetch,
+    initialData: 'cached',
+    staleTime: Infinity,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  return { fetch, unsubscribe, observer };
+}
+
 // Just the flag-sync component — no scheduler, no async drain — so the
 // measurement tests can run under fake timers without racing the bridge.
 function FlagSyncHarness({ flags }: { flags: FeatureFlags }) {
@@ -246,6 +261,7 @@ beforeEach(() => {
   startSyncSchedulerMock.mockReturnValue(startSyncSchedulerStop);
   getPendingCountMock.mockResolvedValue(0);
   isAuthenticated = true;
+  providedDatabase = fakeDb;
   storedUserId = 'user-1';
   assertLocalUserDataOwnerMock.mockClear();
   assertLocalUserDataOwnerMock.mockResolvedValue('ok');
@@ -431,7 +447,7 @@ describe('OfflineSyncBridge — legacy flag changes', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { rerender } = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
     await waitFor(() => expect(startSyncSchedulerMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['setterStats'] }));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
     invalidateSpy.mockClear();
 
     rerender(<Harness flags={FLAG_OFF} queryClient={queryClient} />);
@@ -489,6 +505,243 @@ describe('OfflineSyncBridge — outbox backlog gauge', () => {
 // migrations never ran — no board_climb_grades, no characteristics column. Both
 // the sync effect writes, so it has to wait.
 describe('OfflineSyncBridge — schema readiness gating', () => {
+  it('retries only Following catalogue reads after the owner warm-up', async () => {
+    const queryClient = makeQueryClient();
+    const catalogueRoots = ['searchClimbs', 'infiniteSearchClimbs', 'searchClimbsCount', 'setterStats'];
+    const ordinaryQueries = catalogueRoots.flatMap((root) => [
+      observeCachedQuery(queryClient, [root, { boardName: 'kilter', layoutId: 1 }]),
+      observeCachedQuery(queryClient, [root, { boardName: 'kilter', layoutId: 1, onlyFollowedAuthors: false }]),
+    ]);
+    const followingQueries = catalogueRoots.map((root) =>
+      observeCachedQuery(queryClient, [
+        root,
+        { boardName: 'kilter', layoutId: 1, onlyFollowedAuthors: true },
+        'user-1',
+      ]),
+    );
+    const feedQueries = ['crewFeed', 'followingClimbLogs', 'climbLogs', 'climbLogsPreview'].map((root) =>
+      observeCachedQuery(queryClient, [root, 'user-1']),
+    );
+    const observedQueries = [...ordinaryQueries, ...followingQueries, ...feedQueries];
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => {
+        for (const query of followingQueries) expect(query.fetch).toHaveBeenCalledTimes(1);
+      });
+      for (const query of [...ordinaryQueries, ...feedQueries]) {
+        expect(query.fetch).not.toHaveBeenCalled();
+        expect(query.observer.getCurrentResult().isStale).toBe(false);
+      }
+    } finally {
+      view.unmount();
+      for (const query of observedQueries) query.unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('reopens a gated Following read when unchanged authors become locally ready', async () => {
+    setSchemaReady(false);
+    assertLocalUserDataOwnerMock.mockResolvedValue('missing');
+    const queryClient = makeQueryClient();
+    const cachedAuthors = { setterUsernames: [], users: [] };
+    queryClient.setQueryData(['followedAuthors', 'user-1'], cachedAuthors);
+    let localAuthorsReady = false;
+    loadFollowedAuthorsMock.mockImplementationOnce(async () => {
+      localAuthorsReady = true;
+      return { setterUsernames: [], users: [] };
+    });
+    const followingFetch = vi.fn(async () => {
+      if (!localAuthorsReady) throw new Error('Followed authors need an online sync');
+      return 'following-climbs';
+    });
+    const followingObserver = new QueryObserver(queryClient, {
+      queryKey: ['infiniteSearchClimbs', { onlyFollowedAuthors: true }, 'user-1'],
+      queryFn: followingFetch,
+      staleTime: Infinity,
+    });
+    const unsubscribe = followingObserver.subscribe(() => {});
+    const ordinaryQuery = observeCachedQuery(queryClient, ['infiniteSearchClimbs', { boardName: 'kilter' }]);
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => expect(followingObserver.getCurrentResult().isError).toBe(true));
+      expect(loadFollowedAuthorsMock).not.toHaveBeenCalled();
+      act(() => setSchemaReady(true));
+      await waitFor(() => expect(followingObserver.getCurrentResult().data).toBe('following-climbs'));
+      expect(stampLocalUserIdMock).toHaveBeenCalledTimes(1);
+      expect(followingFetch).toHaveBeenCalledTimes(3);
+      expect(queryClient.getQueryData(['followedAuthors', 'user-1'])).toBe(cachedAuthors);
+      expect(ordinaryQuery.fetch).toHaveBeenCalledOnce();
+    } finally {
+      view.unmount();
+      unsubscribe();
+      ordinaryQuery.unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('restores empty ordinary offline results after late schema readiness even if authors fail', async () => {
+    setSchemaReady(false);
+    let localCatalogueReady = false;
+    loadFollowedAuthorsMock.mockRejectedValueOnce(new Error('Offline author request failed'));
+    const queryClient = makeQueryClient();
+    const roots = ['searchClimbs', 'infiniteSearchClimbs', 'searchClimbsCount', 'setterStats'];
+    const ordinaryQueries = roots.map((root) => {
+      const fetch = vi.fn(async () => (localCatalogueReady ? ['downloaded-climb'] : []));
+      const observer = new QueryObserver(queryClient, {
+        queryKey: [root, { boardName: 'kilter' }],
+        queryFn: fetch,
+        staleTime: Infinity,
+      });
+      return { fetch, observer, unsubscribe: observer.subscribe(() => {}) };
+    });
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => {
+        for (const query of ordinaryQueries) expect(query.observer.getCurrentResult().data).toEqual([]);
+      });
+      act(() => {
+        localCatalogueReady = true;
+        setSchemaReady(true);
+      });
+      await waitFor(() => {
+        for (const query of ordinaryQueries) {
+          expect(query.observer.getCurrentResult().data).toEqual(['downloaded-climb']);
+          expect(query.fetch).toHaveBeenCalledTimes(2);
+        }
+      });
+      expect(loadFollowedAuthorsMock).toHaveBeenCalledOnce();
+      expect(stampLocalUserIdMock).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      for (const query of ordinaryQueries) query.unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('restores personal-filter results after stamping before an author request fails', async () => {
+    assertLocalUserDataOwnerMock.mockResolvedValue('unstamped');
+    let stampedOwner = false;
+    stampLocalUserIdMock.mockImplementationOnce(async () => {
+      stampedOwner = true;
+    });
+    loadFollowedAuthorsMock.mockRejectedValueOnce(new Error('Offline author request failed'));
+    const queryClient = makeQueryClient();
+    const fetch = vi.fn(async () => (stampedOwner ? ['my-attempted-climb'] : []));
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['infiniteSearchClimbs', { boardName: 'kilter', showOnlyAttempted: true }],
+      queryFn: fetch,
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await waitFor(() => expect(observer.getCurrentResult().data).toEqual([]));
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => expect(observer.getCurrentResult().data).toEqual(['my-attempted-climb']));
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(loadFollowedAuthorsMock).toHaveBeenCalledOnce();
+    } finally {
+      view.unmount();
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('retries ordinary reads after the database handle is replaced', async () => {
+    const queryClient = makeQueryClient();
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    await waitFor(() => expect(loadFollowedAuthorsMock).toHaveBeenCalledOnce());
+    const fetch = vi.fn(async () => (providedDatabase === fakeDb ? [] : ['recovered-climb']));
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['searchClimbs', { boardName: 'kilter' }],
+      queryFn: fetch,
+      staleTime: Infinity,
+      initialData: [],
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      providedDatabase = { tag: 'replacement' };
+      view.rerender(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+      await waitFor(() => expect(observer.getCurrentResult().data).toEqual(['recovered-climb']));
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(stampLocalUserIdMock).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('rejects a late initial result captured before stamping', async () => {
+    assertLocalUserDataOwnerMock.mockResolvedValue('unstamped');
+    let stampedOwner = false;
+    let finishOldRead!: (climbs: string[]) => void;
+    stampLocalUserIdMock.mockImplementationOnce(async () => {
+      stampedOwner = true;
+    });
+    const queryClient = makeQueryClient();
+    const fetch = vi.fn(async () => {
+      if (stampedOwner) return ['my-attempted-climb'];
+      return new Promise<string[]>((resolve) => {
+        finishOldRead = resolve;
+      });
+    });
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['searchClimbs', { boardName: 'kilter', showOnlyAttempted: true }],
+      queryFn: fetch,
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => expect(observer.getCurrentResult().data).toEqual(['my-attempted-climb']));
+      await act(async () => finishOldRead([]));
+      expect(observer.getCurrentResult().data).toEqual(['my-attempted-climb']);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
+  it('retains an owner recovery retry across a canceled preparation', async () => {
+    assertLocalUserDataOwnerMock.mockResolvedValueOnce('unstamped');
+    let finishStamp!: () => void;
+    let stampedOwner = false;
+    stampLocalUserIdMock.mockImplementationOnce(() => {
+      stampedOwner = true;
+      return new Promise<void>((resolve) => {
+        finishStamp = resolve;
+      });
+    });
+    const queryClient = makeQueryClient();
+    const fetch = vi.fn(async () => (stampedOwner ? ['my-attempted-climb'] : []));
+    const observer = new QueryObserver(queryClient, {
+      queryKey: ['searchClimbs', { boardName: 'kilter', showOnlyAttempted: true }],
+      queryFn: fetch,
+      staleTime: Infinity,
+      initialData: [],
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    try {
+      await waitFor(() => expect(stampLocalUserIdMock).toHaveBeenCalledOnce());
+      isAuthenticated = false;
+      view.rerender(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+      await act(async () => finishStamp());
+      expect(fetch).not.toHaveBeenCalled();
+      isAuthenticated = true;
+      view.rerender(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+      await waitFor(() => expect(observer.getCurrentResult().data).toEqual(['my-attempted-climb']));
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(stampLocalUserIdMock).toHaveBeenCalledOnce();
+    } finally {
+      view.unmount();
+      unsubscribe();
+      queryClient.clear();
+    }
+  });
+
   it('warms authors after schema readiness and owner stamping despite a fresh cached query', async () => {
     setSchemaReady(false);
     assertLocalUserDataOwnerMock.mockResolvedValue('missing');
