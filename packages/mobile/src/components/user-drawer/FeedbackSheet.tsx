@@ -181,9 +181,9 @@ export const FeedbackSheet = memo(function FeedbackSheet({
         header={
           <SheetTopBar
             title={title}
-            leading={{ kind: 'cancel', onPress: guard.requestClose }}
+            leading={{ kind: 'close', onPress: guard.requestClose }}
             trailing={{
-              kind: 'send',
+              kind: 'confirm',
               label: submitLabel,
               onPress: () => {
                 void handleSubmit();

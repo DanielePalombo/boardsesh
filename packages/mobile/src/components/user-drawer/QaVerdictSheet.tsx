@@ -208,9 +208,9 @@ export function QaVerdictSheet({ sheetRef }: QaVerdictSheetProps) {
       header={
         <SheetTopBar
           title={title}
-          leading={{ kind: 'cancel', onPress: () => sheetRef.current?.dismiss() }}
+          leading={{ kind: 'close', onPress: () => sheetRef.current?.dismiss() }}
           trailing={{
-            kind: 'send',
+            kind: 'confirm',
             label: t('qa.verdict.submitLabel'),
             onPress: () => {
               void handleSubmit();
