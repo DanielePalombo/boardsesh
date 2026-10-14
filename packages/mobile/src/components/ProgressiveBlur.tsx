@@ -13,8 +13,8 @@ const MASK_COLORS = ['#000000', 'transparent'] as const;
 // opacity (uniform radius), which reads as an abrupt edge. Stacking N layers, each
 // fading out higher than the last, means the top is covered by every layer (max
 // blur) and the bottom by just one — so the effective blur radius ramps smoothly.
-// Thin material is heavier than ultra-thin (closer to the native tab bar's chrome
-// glass), so fewer layers reach the target darkness — which also helps scroll perf.
+// Thin material accumulates with each layer; three layers keep the ramp smooth
+// without excessive work during scrolling.
 const DEFAULT_LAYERS = 3;
 // In dark mode the thin material frosts to a medium grey, so the status-bar /
 // dynamic-island band reads grey against the black island. A black wash, strongest
@@ -49,8 +49,7 @@ type ProgressiveBlurProps = {
    * the default ramp is strongest at the very top and nearly clear where the
    * lowest control row sits. Omit for the default ramp across the whole height.
    *
-   * Live blur only. The one caller mounts it on iOS 26 glass and paints an opaque
-   * band everywhere else, so the no-blur fallback below keeps its single fade.
+   * Live blur only. The no-blur fallback below keeps its single fade.
    */
   fadeLength?: number;
   /**
@@ -91,8 +90,7 @@ function PlateauFade({
  * A top-down progressive (gradient) blur for the floating header chrome: a few
  * thin blur layers stacked so the blur radius ramps smoothly from strong at the
  * top to nothing at the bottom (a true variable blur, not just a faded uniform
- * one). The thin material matches the native tab bar's heavier glass so the header
- * and tab bar read as the same surface. The blur tint follows the app's resolved
+ * one). Legacy custom headers use this thin material. The blur tint follows the app's resolved
  * colour scheme, so it honours the in-app light/dark override.
  *
  * With `fadeLength` it becomes a backdrop for controls pinned under a bar: full
@@ -129,8 +127,7 @@ export function ProgressiveBlur({
     );
   }
 
-  // Thin material: heavier than ultra-thin, so it reads like the native tab bar's
-  // chrome glass rather than a light grey. Stacking accumulates it toward the top.
+  // Stacking thin material accumulates blur toward the top.
   const blurType = isDark ? 'thinMaterialDark' : 'thinMaterialLight';
   const washRgb = isDark ? WASH_RGB_DARK : WASH_RGB_LIGHT;
 

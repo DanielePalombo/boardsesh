@@ -16,6 +16,7 @@ import { Appbar, Chip } from 'react-native-paper';
 import type { Grade } from '@boardsesh/shared-schema';
 import type { GradeBound } from '@boardsesh/climb-filters';
 import { useTheme } from '../../providers/theme-provider';
+import { useFloatingHeaderControls } from '../../hooks/use-floating-header-controls';
 import type { ScrollEdgeBackdrop } from '../../hooks/use-scroll-edge-backdrop';
 import { selectByVariant } from '../../theme/variants';
 import { spacing } from '../../theme/tokens';
@@ -96,10 +97,7 @@ type ClimbTopChromeProps = {
    *  the in-chrome grade rail stay. Always false on Liquid Glass (its own path renders
    *  `filterChrome`). */
   showPersistentChips?: boolean;
-  /** Liquid Glass under the UIKit header: the screen's
-   *  `useScrollEdgeBackdrop().backdrop`. The blur behind the filter rows shows only
-   *  while the list is scrolled under them. A stable store, so a row crossing under
-   *  the chips does not re-render this memoized chrome. */
+  /** Legacy native scroll-edge wiring. The filter row draws only its individual capsules. */
   scrollEdge?: ScrollEdgeBackdrop;
 };
 
@@ -138,6 +136,7 @@ function ClimbTopChromeComponent({
 }: ClimbTopChromeProps) {
   const { t } = useTranslation('climbs');
   const { systemColors, variant } = useTheme();
+  const glassGradeRail = useFloatingHeaderControls();
   const insets = useSafeAreaInsets();
   const usesCustomSearch = searchMode === 'custom';
   // "On the wall" capsule: own the gate here so a falsy centre slot falls back to
@@ -174,6 +173,7 @@ function ClimbTopChromeComponent({
   const gradeRail =
     gradeRailVisible && gradeBound && onGradeChange ? (
       <GradeRangeRail
+        glass={glassGradeRail}
         grades={grades}
         bound={gradeBound}
         lastUsedGradeId={lastUsedGradeId}
@@ -356,7 +356,16 @@ function ClimbTopChromeComponent({
       anchorBoardButton={anchorBoardButton}
       onHeightChange={onHeightChange}
       scrollEdge={scrollEdge}
-      floatingContent={gradeRail ? <View style={styles.gradeRail}>{gradeRail}</View> : undefined}
+      floatingContent={
+        gradeRail ? (
+          <View
+            testID="climb-grade-rail"
+            style={[styles.gradeRail, glassGradeRail ? null : { backgroundColor: systemColors.background }]}
+          >
+            {gradeRail}
+          </View>
+        ) : undefined
+      }
       hideLight
     >
       {usesCustomSearch ? (

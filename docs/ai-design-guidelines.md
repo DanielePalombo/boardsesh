@@ -455,85 +455,45 @@ draws that block (`HeaderControls`), and the list pads its top by the persistent
 height. The disclosed grade row is drawn below that measurement, inside the full background and
 touch surface, so showing or hiding it leaves the list's spacing and scroll position unchanged.
 
-**On iOS 26 the block floats.** It paints no background. The list scrolls behind the controls, and
-one blur runs from the top of the screen to one fade length (24pt) below the block: full strength
-behind every control, fading out over the rows just under them. With the fade inside the block, a
-translucent control (the segmented control) had sharp list text showing through its lower half.
-[HIG Layout](https://developer.apple.com/design/human-interface-guidelines/layout): "Instead of
-applying a solid or semi-opaque background color beneath controls, use a scroll edge effect to
-visually elevate controls above content." [HIG
-Materials](https://developer.apple.com/design/human-interface-guidelines/materials) says what that
-effect does: it blurs the content behind and reduces its opacity. Ours is `ProgressiveBlur` with a
-`fadeLength`: a thin material, with a wash of the scene background over it. It is a material and
-never a `GlassSurface`, because the chips on it are glass already (see "Glass material").
+**On iOS 26 the block floats without a continuous blur.** Individual filter capsules keep their
+native glass surfaces. List content remains sharp between and beneath them, matching the GitHub
+app's floating filter row. Profile's translucent segmented track has a local opaque
+`systemColors.background` backing so list text cannot cross its tab labels; child filter capsules
+remain outside that backing. UIKit owns the navigation bar's
+scroll-edge material, status area and action lenses above the supplementary controls.
 
-**The blur is there while rows are under the controls.** An open grade row overlaps the first
-climbs even at rest, so it keeps the backdrop visible. With the grade row closed, the page behind
-the resting controls is the
-page: a material over an empty black page reads as a grey panel, which is the painted band again.
-Three parties meet in one small store (`src/hooks/use-scroll-edge-backdrop.ts`), and only the blur
-re-renders:
+The control block stays below the native bar as its title collapses. Opening the grade row does
+not reserve more list space; it remains inside the control block's touch surface. The block owns
+touches through the gaps between controls, so taps do not open climbs underneath.
+Disclosed grade rails opt into individual regular native glass chips on the same capability
+and accessibility gate as floating header controls. Their rail has no continuous backing;
+neutral labels use the secondary theme label, selected/range labels the primary label.
+Selected endpoints retain the grade hue with a 35% tint and a selection ring; interior grades
+keep their 18% tint and grade-colour ring. Each native lens has its own rounded edge, with
+rings drawn separately. At normal text size the 28pt lens matches the native small filter
+capsules inside a full 44pt touch target. Eight-point vertical insets and matching content
+padding let the lens grow with taller text. The static carrier preserves tap/hold behavior.
+Other grade pickers keep their existing flat chips. Older iOS, Material, Reduce Transparency
+and Increase Contrast keep the local opaque backing. Angle rails also retain their local
+`systemColors.background` backing; the filter capsule row stays transparent.
 
-- The **screen** holds it: `const scrollEdge = useScrollEdgeBackdrop()`. It hands `scrollEdge.list`
-  to the list and `scrollEdge.backdrop` to its top chrome (`ClimbTopChrome`, `ProfileTopChrome`,
-  down to `NativeRootHeader`). The screen re-renders for neither a scroll nor a change in the bar's
-  height. A screen that read the header height itself would re-render every row under it on each
-  frame of a collapsing title.
-- The **list** spreads `scrollEdge.listProps` (five scroll listeners, none of which sets state) and
-  mounts `<ScrollEdgeListReset edge={scrollEdge} />` beside itself, in the branch that renders the
-  list. A list that mounts is at rest, and one that unmounts for a loading or offline branch, or
-  for another sub-tab, takes what it had scrolled under the controls with it.
-- The **blur** (`ControlsBackdrop`) subscribes with `useScrolledUnder`, tells the store where the
-  block was drawn (the list rests at minus the bar's height) and that a blur is listening.
-  `scrollEdge.list` is undefined until then, so a list under an opaque header carries no scroll
-  listeners.
+Older iOS versions, Reduce Transparency, Increase Contrast and an explicit `opaqueControls`
+request retain the painted band in `systemColors.background`. The native glass path adds no
+custom backdrop, fade, wash or list-scroll subscription. Existing scroll-edge wiring is accepted
+for caller compatibility without attaching a backdrop to the store.
 
-**The rule is geometry.** Rows are under the controls once the list's offset is more than 2pt past
-the top the block was drawn at. The rubber-band overscroll and a pull-to-refresh are more negative
-than that top, so they count as at rest. Each reading of the bar's height replaces the last, so
-nothing is remembered that can go stale (react-native-screens reports 0 while the bar is hidden).
-Two things bend the rule, both because JS hears the bar's height late, a frame or two on Profile
-and 100 ms after it stops on Climbs:
+Filter capsules' SwiftUI Host follows the app's resolved light/dark scheme. Resting native glass
+capsules use SwiftUI's secondary foreground style for muted grey labels, symbols and chevrons.
+Active capsules retain the brand fill and `onPrimary` label; older opaque capsules keep their
+existing neutral styling. The wall-status
+capsule carries one regular native `GlassSurface` with a 14% amber tint and a native rounded
+edge; its opaque amber-bordered fallback remains on older devices and with Reduce Transparency.
+Native glass does not enter through an opacity fade.
+Its custom native title is bounded by the navigation stack's measured local frame, horizontal
+safe-area insets, and the actual leading/trailing action widths plus capsule padding and gaps.
+Only the climb name shrinks; the avatar and grade retain their width. This keeps long names
+inside the title slot on narrow phones, after rotation, and in a tablet pane.
 
-- A bar that grows during a gesture never moves the top down. A held pull stretches the bar, and
-  JS can still hold that height after the list has snapped back.
-- A bar that shrinks during a gesture that began at rest is ignored until the list stops. Under a
-  collapsing large title the block trails the title, and rows that have left rest are under it. So
-  the blur is on as soon as such a drag leaves rest, and the settled height decides once it ends.
-
-The blur fades over `timing.fast` and switches without a fade under Reduce Motion.
-
-**Wire every list under a floating block.** Leave `scrollEdge` out and the blur stays on all the
-time. That is the safe default: a forgotten wire shows as a frost at rest, which anyone can see,
-where the other default would put bare controls over rows mid-scroll.
-
-**The look is a few numbers**, `CONTROLS_BACKDROP` in `NativeRootHeader.tsx`: `layers` (how heavily
-the list behind is frosted), `fadeLength` (points of fade below the block), `washOpacity` (a
-scene-background wash that fades the list behind toward the page colour; 0.5, because thin material
-alone still frosted grey over a black page, and at half strength rows still show passing under the
-controls) and `fadeDuration`. Tune them there, on a device.
-
-**Everywhere else the block keeps its painted band**, in `systemColors.background`:
-`useFloatingHeaderControls` lets it float only when the surface mode is `glass` and Increase
-Contrast is known to be off. That leaves the band on iOS before 26, with Reduce Transparency or
-Increase Contrast on, and for a caller that passes `opaqueControls`. Material, Android and the web
-never reach this component and keep their own chrome.
-
-**What a control needs to sit on the blur.** Its own surface. Glass chips, the native segmented
-control and the grade row's `systemColors.fill` capsules have one. The filter tokens carry an
-opaque `systemColors.secondaryBackground` fill for this reason. The fill is on every path: on the
-Material band it is the band's own colour and does not show, and on the iOS band it shows as a
-quiet grey pill. Keep floating control labels on a control surface rather than adding a bare
-section heading above them. The native Profile Logbook's capsule row uses the selected tab as
-its heading.
-
-**It always swallows touches.** The block is `pointerEvents="auto"` whether it floats or not: a row
-the blur has smeared must not take a tap through the gap between two chips.
-
-**The blur is not measured.** It is absolutely positioned inside the block, so `onHeightChange`
-still reports the controls alone and the list's `paddingTop`, scroll-indicator inset and
-`useListTopOffset` are unchanged. The Climbs list also draws its pull-to-refresh spinner below the
-block (`progressViewOffset`).
 
 ### Quick filter capsules
 
@@ -555,6 +515,12 @@ surface passes final, localised labels and bound handlers. Five kinds (`CapsuleR
   on every platform, the web included (Paper's selected chip would draw `secondaryContainer`).
   Never the text brand colour: in dark mode it is a light lavender that white text can't sit on
   (see "Brand colours").
+- **Compact Filters control.** Climbs and Logbook opt their Filters sheet capsule into
+  `presentation: 'iconBadge'`: only the filter glyph is visible when no filters are active;
+  an inline count badge appears above zero and grows for multiple digits (99+ ceiling).
+  The full localized Filters/count label remains available to assistive technology.
+  Active capsules retain the brand fill, with an inverse badge for contrast. Other sheet
+  capsules keep their labels; the badge adds no separate tap target or glass surface.
 - **Glass only where it is real.** Below iOS 26 `@expo/ui` turns the glass styles into plain text
   buttons, so the row draws `bordered` (resting, neutral) and `borderedProminent` (active) there,
   picked by `useGlassCapability()` as `Button` does.

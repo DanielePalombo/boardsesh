@@ -27,13 +27,11 @@ export type ProfileTopChromeProps = {
   /**
    * Liquid Glass only: keep the painted band behind the header instead of letting
    * it float over the list. Logbook sets it: its `children` include a bare text
-   * heading, which a blur alone does not keep readable over scrolling rows.
+   * heading that needs an opaque background over scrolling rows.
    * Material's header is always opaque.
    */
   opaqueControls?: boolean;
-  /** Liquid Glass only: the screen's `useScrollEdgeBackdrop().backdrop`. The blur
-   *  behind a floating header shows only while the sub-tab's list is scrolled
-   *  under it. */
+  /** Legacy scroll-edge wiring. Native supplementary controls do not attach a backdrop. */
   scrollEdge?: ScrollEdgeBackdrop;
 };
 
@@ -118,6 +116,7 @@ function ProfileTopChromeGlass({
   scrollEdge,
 }: ProfileTopChromeProps) {
   const { t } = useTranslation('you');
+  const { systemColors } = useTheme();
 
   const dashboardTitle = t('metadata.dashboard.title');
   const segmentOptions = useSegmentOptions();
@@ -136,10 +135,9 @@ function ProfileTopChromeGlass({
       opaqueControls={opaqueControls}
       scrollEdge={scrollEdge}
     >
-      {/* The native iOS segmented control brings its own track/background, so it
-          renders directly — wrapping it in the old GlassSurface track doubled the
-          border. The padded segmentStack positions it under the large title. */}
-      <View pointerEvents="box-none" style={styles.segmentStack}>
+      {/* The native track is translucent. Its local opaque backing keeps tab labels
+          readable over list content without adding glass or covering child filters. */}
+      <View pointerEvents="box-none" style={[styles.segmentStack, { backgroundColor: systemColors.background }]}>
         {fontScale > 1.3 ? (
           <ScrollableTabs
             options={segmentOptions}

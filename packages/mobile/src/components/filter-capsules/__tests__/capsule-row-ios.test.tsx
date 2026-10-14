@@ -13,6 +13,7 @@ type RecordedProps = Record<string, unknown> & { children?: ReactNode; modifiers
 
 const captured = vi.hoisted(() => ({
   supportsGlass: true,
+  colorScheme: 'dark' as 'dark' | 'light',
   views: [] as {
     view: string;
     props: Record<string, unknown> & { modifiers?: { modifier: string; arg?: unknown }[] };
@@ -28,6 +29,7 @@ vi.mock('@expo/ui/swift-ui/modifiers', () => {
     controlSize: make('controlSize'),
     tint: make('tint'),
     foregroundColor: make('foregroundColor'),
+    foregroundStyle: make('foregroundStyle'),
     tag: make('tag'),
     padding: make('padding'),
     fixedSize: make('fixedSize'),
@@ -35,6 +37,10 @@ vi.mock('@expo/ui/swift-ui/modifiers', () => {
     accessibilityHidden: make('accessibilityHidden'),
     accessibilityLabel: make('accessibilityLabel'),
     accessibilityAddTraits: make('accessibilityAddTraits'),
+    font: make('font'),
+    frame: make('frame'),
+    background: (style: unknown, shape: unknown) => ({ modifier: 'background', arg: { style, shape } }),
+    shapes: { capsule: () => ({ type: 'capsule' }) },
   };
 });
 
@@ -83,7 +89,10 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('../../../providers/theme-provider', () => ({
-  useTheme: () => ({ brandColors: { primary: '#A78BFA', primaryFill: '#7C3AED', onPrimary: '#FFFFFF' } }),
+  useTheme: () => ({
+    colorScheme: captured.colorScheme,
+    brandColors: { primary: '#A78BFA', primaryFill: '#7C3AED', onPrimary: '#FFFFFF' },
+  }),
 }));
 
 vi.mock('../../../hooks/use-glass-capability', () => ({
@@ -96,6 +105,7 @@ const { CapsuleRow } = await import('../CapsuleRow.ios');
 beforeEach(() => {
   captured.views = [];
   captured.supportsGlass = true;
+  captured.colorScheme = 'dark';
 });
 
 function viewsOf(name: string) {
@@ -118,6 +128,7 @@ const ACTIVE = [
 const RESTING = [
   { modifier: 'buttonStyle', arg: 'glass' },
   { modifier: 'controlSize', arg: 'small' },
+  { modifier: 'foregroundStyle', arg: { type: 'hierarchical', style: 'secondary' } },
 ];
 
 describe('CapsuleRow.ios below iOS 26 (no Liquid Glass)', () => {
@@ -157,6 +168,67 @@ describe('CapsuleRow.ios below iOS 26 (no Liquid Glass)', () => {
 });
 
 describe('CapsuleRow.ios', () => {
+  it.each([0, 1, 2, 12, 123])('renders an icon/count opener with its full spoken label (%s filters)', (count) => {
+    const onPress = vi.fn();
+    const label = count ? `Filters · ${count}` : 'Filters';
+    const { container } = render(
+      createElement(CapsuleRow, {
+        capsules: [
+          { kind: 'sheet', key: 'filters', label, count, icon: 'filters', presentation: 'iconBadge', onPress },
+        ],
+      }),
+    );
+    const button = viewsOf('Button').at(-1)!;
+    expect(button.label).toBeUndefined();
+    expect(button.systemImage).toBeUndefined();
+    expect(button.modifiers).toContainEqual({ modifier: 'accessibilityLabel', arg: label });
+    expect(viewsOf('Image').at(-1)).toMatchObject({ systemName: 'line.3.horizontal.decrease', size: 20 });
+    const countText = viewsOf('Text').at(-1);
+    if (count === 0) {
+      expect(countText).toBeUndefined();
+      expect(button.modifiers).toContainEqual(RESTING[2]);
+    } else {
+      expect(countText?.children).toBe(count > 99 ? '99+' : String(count));
+      expect(countText?.modifiers).toContainEqual({ modifier: 'frame', arg: { minWidth: 18, minHeight: 18 } });
+      expect(countText?.modifiers).toContainEqual({ modifier: 'foregroundColor', arg: '#7C3AED' });
+      expect(countText?.modifiers).toContainEqual({
+        modifier: 'background',
+        arg: { style: '#FFFFFF', shape: { type: 'capsule' } },
+      });
+      expect(countText?.modifiers).toContainEqual({ modifier: 'accessibilityHidden', arg: undefined });
+    }
+    expect(container.textContent).not.toContain('Filters');
+    fireEvent.click(container.querySelector('button')!);
+    expect(onPress).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the compact icon/count opener bordered on older iOS', () => {
+    captured.supportsGlass = false;
+    render(
+      createElement(CapsuleRow, {
+        capsules: [
+          {
+            kind: 'sheet',
+            key: 'filters',
+            label: 'Filters · 2',
+            count: 2,
+            icon: 'filters',
+            presentation: 'iconBadge',
+            onPress: vi.fn(),
+          },
+        ],
+      }),
+    );
+    expect(viewsOf('Button').at(-1)?.modifiers?.[0]).toEqual({ modifier: 'buttonStyle', arg: 'borderedProminent' });
+    expect(viewsOf('Text').at(-1)?.children).toBe('2');
+  });
+
+  it.each(['dark', 'light'] as const)('pins the SwiftUI host to the app resolved %s scheme', (scheme) => {
+    captured.colorScheme = scheme;
+    render(createElement(CapsuleRow, { capsules: [] }));
+    expect(viewsOf('Host').at(-1)?.colorScheme).toBe(scheme);
+  });
+
   it('fills an active capsule with primaryFill + onPrimary, never the text tint', () => {
     render(
       createElement(CapsuleRow, {
@@ -170,7 +242,10 @@ describe('CapsuleRow.ios', () => {
     expect(filters.systemImage).toBe('line.3.horizontal.decrease');
     expect(filters.modifiers).toEqual(ACTIVE);
     expect(JSON.stringify(captured.views.map((entry) => entry.props.modifiers))).not.toContain('#A78BFA');
-    expect(lastViewWithLabel('Button', 'Beta videos').modifiers?.slice(0, 2)).toEqual(RESTING);
+    expect(lastViewWithLabel('Button', 'Beta videos').modifiers).toEqual([
+      ...RESTING,
+      { modifier: 'accessibilityAddTraits', arg: ['isToggle'] },
+    ]);
   });
 
   it('renders capsules in order inside one Host', () => {

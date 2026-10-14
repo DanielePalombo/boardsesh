@@ -38,12 +38,17 @@ import {
   accessibilityHidden,
   accessibilityLabel,
   accessibilityAddTraits,
+  background,
+  font,
+  foregroundColor,
+  frame,
+  shapes,
 } from '@expo/ui/swift-ui/modifiers';
 import { useGlassCapability } from '../../hooks/use-glass-capability';
 import { useTheme } from '../../providers/theme-provider';
 import { spacing } from '../../theme/tokens';
 import { capsuleModifiers, type CapsuleStyleContext } from './capsule-style.ios';
-import { isCapsuleActive } from './CapsuleRow.logic';
+import { capsuleBadgeLabel, isCapsuleActive } from './CapsuleRow.logic';
 import type {
   Capsule,
   CapsuleIcon,
@@ -51,18 +56,22 @@ import type {
   CapsuleRowProps,
   MenuCapsule,
   RailCapsule,
+  SheetCapsule,
 } from './CapsuleRow.types';
 
 // The rail chevron, in points. Small beside a `controlSize('small')` label; it
 // needs an explicit size because @expo/ui gives an Image without one a 24pt font.
 const CHEVRON_SIZE = 12;
+const FILTER_ICON_SIZE = 20;
+const COUNT_BADGE_SIZE = 18;
 
 // The SF Symbol union the Button `systemImage` prop accepts. Mapped from the
 // semantic CapsuleIcon here, then narrowed at the single call site (the symbol
 // union isn't resolvable from the shared types module; see MoreForm.ios).
 type SystemImageName = NonNullable<ComponentProps<typeof Button>['systemImage']>;
+type SymbolImageName = NonNullable<ComponentProps<typeof Image>['systemName']>;
 
-const SF_SYMBOL: Record<CapsuleIcon, string> = {
+const SF_SYMBOL: Record<CapsuleIcon, SymbolImageName> = {
   filters: 'line.3.horizontal.decrease',
   recent: 'clock.arrow.circlepath',
   locked: 'lock.fill',
@@ -180,23 +189,54 @@ function RailControl({ capsule, look }: { capsule: RailCapsule; look: CapsuleSty
   );
 }
 
+function SheetControl({ capsule, look }: { capsule: SheetCapsule; look: CapsuleStyleContext }) {
+  const active = isCapsuleActive(capsule);
+  const styleModifiers = capsuleModifiers(active, look);
+  if (capsule.presentation === 'iconBadge') {
+    const badgeLabel = capsuleBadgeLabel(capsule.count);
+    return (
+      <Button
+        onPress={capsule.onPress}
+        modifiers={[...styleModifiers, accessibilityLabel(capsule.accessibilityLabel ?? capsule.label)]}
+      >
+        <HStack spacing={spacing[1]}>
+          <Image systemName={SF_SYMBOL[capsule.icon]} size={FILTER_ICON_SIZE} modifiers={[accessibilityHidden()]} />
+          {badgeLabel ? (
+            <Text
+              modifiers={[
+                font({ textStyle: 'caption2', weight: 'semibold' }),
+                foregroundColor(active ? look.brandColors.primaryFill : look.brandColors.onPrimary),
+                padding({ horizontal: spacing[1] }),
+                frame({ minWidth: COUNT_BADGE_SIZE, minHeight: COUNT_BADGE_SIZE }),
+                background(active ? look.brandColors.onPrimary : look.brandColors.primaryFill, shapes.capsule()),
+                accessibilityHidden(),
+              ]}
+            >
+              {badgeLabel}
+            </Text>
+          ) : null}
+        </HStack>
+      </Button>
+    );
+  }
+  return (
+    <Button
+      label={capsule.label}
+      systemImage={systemImageFor(capsule.icon)}
+      onPress={capsule.onPress}
+      modifiers={
+        capsule.accessibilityLabel
+          ? [...styleModifiers, accessibilityLabel(capsule.accessibilityLabel)]
+          : styleModifiers
+      }
+    />
+  );
+}
+
 function CapsuleControl({ capsule, look }: { capsule: Capsule; look: CapsuleStyleContext }) {
   switch (capsule.kind) {
-    case 'sheet': {
-      const styleModifiers = capsuleModifiers(isCapsuleActive(capsule), look);
-      return (
-        <Button
-          label={capsule.label}
-          systemImage={systemImageFor(capsule.icon)}
-          onPress={capsule.onPress}
-          modifiers={
-            capsule.accessibilityLabel
-              ? [...styleModifiers, accessibilityLabel(capsule.accessibilityLabel)]
-              : styleModifiers
-          }
-        />
-      );
-    }
+    case 'sheet':
+      return <SheetControl capsule={capsule} look={look} />;
     case 'rail':
       return <RailControl capsule={capsule} look={look} />;
     case 'menu':
@@ -231,11 +271,11 @@ function CapsuleControl({ capsule, look }: { capsule: Capsule; look: CapsuleStyl
 }
 
 function CapsuleRowComponent({ capsules }: CapsuleRowProps) {
-  const { brandColors } = useTheme();
+  const { brandColors, colorScheme } = useTheme();
   const supportsGlass = useGlassCapability();
   const look = useMemo<CapsuleStyleContext>(() => ({ brandColors, supportsGlass }), [brandColors, supportsGlass]);
   return (
-    <Host matchContents={{ vertical: true }} style={styles.host}>
+    <Host matchContents={{ vertical: true }} colorScheme={colorScheme} style={styles.host}>
       <ScrollView axes="horizontal" showsIndicators={false}>
         {/* Vertical slack lets a pressed capsule's Liquid Glass lens expand without the host's fixed height clipping it.
             `fixedSize(horizontal)` is what keeps the labels whole: a horizontal ScrollView still proposes its own
@@ -263,7 +303,7 @@ const styles = StyleSheet.create({
     width: '100%',
     // A hosting view can paint a system background; on a plain toolbar that
     // shows as an opaque band. The row always sits on its container's surface
-    // (or the floating chrome's blur), so keep the Host see-through.
+    // (or directly over scrolling content), so keep the Host see-through.
     backgroundColor: 'transparent',
   },
   // The rail draws no frame of its own, so the popover gives it the room above

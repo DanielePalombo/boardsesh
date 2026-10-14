@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Text } from '../Text';
 import { PressableSurface } from '../PressableSurface';
+import { GlassSurface } from '../GlassSurface';
 import { useTheme } from '../../providers/theme-provider';
 import { withAlpha } from '../../theme/colors';
 import { spacing } from '../../theme/tokens';
@@ -33,10 +34,13 @@ export type GradeChipTone = 'neutral' | 'selected' | 'range' | 'consensus';
 export type GradeChipColorway = 'grade' | 'selection';
 
 /**
- * The chip's visual height. The chip and the range rail's row both size from
- * this one number, so a different height is a one-line change.
+ * The chip's minimum touch height, shared with the range rail. Flat chips also
+ * use this visual height; floating glass has a smaller lens inside the target.
  */
 export const GRADE_CHIP_HEIGHT = 44;
+// Measured native controlSize('small') capsule: 84px at 3x, or 28pt.
+const GLASS_CHIP_HEIGHT = 28;
+const GLASS_CHIP_INSET = (GRADE_CHIP_HEIGHT - GLASS_CHIP_HEIGHT) / 2;
 
 // The chip's border. Every `grade` tone keeps this width, so none of them
 // resizes the box; the `selection` colorway's 2pt consensus ring is the one
@@ -50,6 +54,8 @@ export type GradeChipProps = {
   label: string;
   tone?: GradeChipTone;
   colorway?: GradeChipColorway;
+  /** Individual native glass for a floating rail; hosts gate capability/accessibility. */
+  glass?: boolean;
   /** The grade's colour. A `grade`-colorway chip that stands for no grade (the
    *  range rail's "Any") leaves it out: selected, it keeps the neutral fill and
    *  takes only the ring. */
@@ -69,6 +75,7 @@ export function GradeChip({
   label,
   tone = 'neutral',
   colorway = 'grade',
+  glass = false,
   gradeColor,
   onPress,
   onLongPress,
@@ -127,6 +134,54 @@ export function GradeChip({
     borderColor = withAlpha(accentColor, 0.55);
   }
 
+  if (glass) {
+    const tintColor =
+      backgroundColor === systemColors.fill
+        ? undefined
+        : typeof backgroundColor === 'string'
+          ? selected
+            ? withAlpha(backgroundColor, 0.35)
+            : backgroundColor
+          : undefined;
+    return (
+      <View onLayout={onLayout} style={[styles.glassCarrier, style]}>
+        <GlassSurface
+          glassEffectStyle="regular"
+          borderRadius={GLASS_CHIP_HEIGHT / 2}
+          tintColor={tintColor}
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.glassSurface]}
+        />
+        <PressableSurface
+          onPress={onPress}
+          onLongPress={onLongPress}
+          delayLongPress={delayLongPress}
+          feedback="none"
+          hitSlop={4}
+          accessibilityRole="button"
+          accessibilityLabel={accessibilityLabel}
+          accessibilityHint={accessibilityHint}
+          accessibilityState={accessibilityState}
+          style={[styles.pressable, styles.glassPressable]}
+        >
+          <View style={[styles.content, styles.glassContent]}>
+            <Text
+              variant="footnote"
+              // Glass tint remains translucent: its label follows the theme,
+              // rather than assuming the grade RGB is an opaque background.
+              color={tone === 'neutral' ? systemColors.secondaryLabel : systemColors.label}
+              numberOfLines={1}
+              style={styles.label}
+            >
+              {label}
+            </Text>
+          </View>
+        </PressableSurface>
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.glassRing, { borderColor, borderWidth }]} />
+      </View>
+    );
+  }
+
   return (
     <PressableSurface
       onPress={onPress}
@@ -153,6 +208,28 @@ export function GradeChip({
 }
 
 const styles = StyleSheet.create({
+  glassCarrier: {
+    minHeight: GRADE_CHIP_HEIGHT,
+    minWidth: 52,
+  },
+  glassSurface: {
+    top: GLASS_CHIP_INSET,
+    bottom: GLASS_CHIP_INSET,
+  },
+  glassPressable: {
+    // Keep the full 44pt target and horizontal border-box geometry. Taller text
+    // grows the carrier and its inset lens together, without clipping glyphs.
+    paddingHorizontal: CHIP_BORDER_WIDTH,
+    paddingVertical: GLASS_CHIP_INSET + CHIP_BORDER_WIDTH,
+  },
+  glassContent: {
+    minHeight: GLASS_CHIP_HEIGHT - CHIP_BORDER_WIDTH * 2,
+  },
+  glassRing: {
+    top: GLASS_CHIP_INSET,
+    bottom: GLASS_CHIP_INSET,
+    borderRadius: GLASS_CHIP_HEIGHT / 2,
+  },
   pressable: {
     minHeight: GRADE_CHIP_HEIGHT,
     minWidth: 52,
