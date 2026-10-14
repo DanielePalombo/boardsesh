@@ -44,8 +44,6 @@ import {
   writeFileSync,
   type WriteStream,
 } from 'node:fs';
-import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -100,6 +98,11 @@ import {
   buildMarksFile,
   checkTake,
   countHomeReady,
+  collapseCaptureNotificationShade,
+  crewQueueFallbackPoint,
+  crewPeerRowFallbackPoint,
+  crewPeerRowPattern,
+  ensureCaptureSessionClosed,
   differingPixelRatio,
   findBoardHandoffProblem,
   findKeychainTeamProblem,
@@ -113,7 +116,8 @@ import {
   recordingWorkDirs,
   recordRunMode,
   parseSessionIdFromInviteUrl,
-  parseSignalRequest,
+  startSignalServer,
+  type SignalServer,
   resolveTrimSeconds,
   restoredSessionId,
   sessionStarted,
@@ -322,55 +326,6 @@ class LogWindow {
 }
 
 // ---------------------------------------------------------------------------
-// Signal server: flows mark steps and wake each other through it (see record.ts)
-
-type SignalServer = Readonly<{
-  url: string;
-  marks: Map<string, number>;
-  values: Map<string, string>;
-  raise(name: string): void;
-  reset(): void;
-  close(): Promise<void>;
-}>;
-
-async function startSignalServer(): Promise<SignalServer> {
-  const marks = new Map<string, number>();
-  const values = new Map<string, string>();
-  const raised = new Set<string>();
-  const server: Server = createServer((request, response) => {
-    const parsed = parseSignalRequest(request.url ?? '');
-    response.setHeader('content-type', 'text/plain');
-    if (parsed.kind === 'unknown') {
-      response.statusCode = 404;
-      response.end('unknown');
-      return;
-    }
-    if (parsed.kind === 'mark') marks.set(parsed.name, Date.now());
-    if (parsed.kind === 'set') raised.add(parsed.name);
-    if (parsed.kind === 'value') {
-      response.end(values.get(parsed.name) ?? '');
-      return;
-    }
-    response.end(parsed.kind === 'signal' ? (raised.has(parsed.name) ? 'go' : 'wait') : 'ok');
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const { port } = server.address() as AddressInfo;
-  return {
-    url: `http://127.0.0.1:${port}`,
-    marks,
-    values,
-    raise: (name) => raised.add(name),
-    reset: () => {
-      marks.clear();
-      values.clear();
-      raised.clear();
-    },
-    close: () => new Promise((resolvePromise) => server.close(() => resolvePromise())),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Maestro
 
 let maestroRunCounter = 0;
@@ -503,6 +458,7 @@ type Phone = {
   metroPort: number;
   metroLog: string;
   metro: ChildProcess | null;
+  signal: SignalServer;
 };
 
 function screenshotOptions(args: ShowcaseRecordArgs, appPath: string | null): ScreenshotOptions {
@@ -660,8 +616,12 @@ async function preparePhone(
 
   const metroLog = resolve(LOG_DIR, `metro-${role}.log`);
   console.log(`${LOG} ${role}: starting Metro on ${metroPort} (log ${relative(ROOT_DIR, metroLog)})...`);
-  const phone: Phone = { platform: 'ios', role, spec, device, appPath, metroPort, metroLog, metro: null };
-  phone.metro = startMetro(metroPort, env, metroLog);
+  const phone: Phone = { platform: 'ios', role, spec, device, appPath, metroPort, metroLog, metro: null, signal };
+  phone.metro = startMetro(
+    metroPort,
+    { ...env, EXPO_PUBLIC_SCREENSHOT_READY_URL: signal.readinessUrl(role) },
+    metroLog,
+  );
   if (!(await waitForHttp(`http://localhost:${metroPort}/status`, 120_000))) {
     throw new Error(`Metro on ${metroPort} never answered /status; see ${metroLog}`);
   }
@@ -687,13 +647,21 @@ async function relaunch(phone: Phone): Promise<LogWindow> {
   const attempts = 3;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     simctl(['terminate', phone.device.udid, APP_ID]);
+    // spawnSync blocks HTTP callbacks: drain an old app's queued ping before
+    // snapshotting the next launch's readiness baseline.
+    await sleep(100);
+    window.pull();
+    const readyBaseline = phone.signal.homeReadyCount(phone.role);
+    const logBaseline = countHomeReady(window.text);
     // SIMCTL_CHILD_TZ pins the app to UTC, like every screenshot capture.
     const launch = simctl(['launch', phone.device.udid, APP_ID], { ...process.env, SIMCTL_CHILD_TZ: 'UTC' });
     if (launch.status !== 0) throw new Error(`simctl launch on ${phone.device.name} failed: ${launch.stderr.trim()}`);
     const deadline = Date.now() + HOME_READY_TIMEOUT_MS / attempts;
     while (Date.now() < deadline) {
       window.pull();
-      if (countHomeReady(window.text) > 0) return window;
+      if (phone.signal.homeReadyCount(phone.role) > readyBaseline || countHomeReady(window.text) > logBaseline) {
+        return window;
+      }
       await sleep(1000);
     }
     console.warn(`${LOG} ${phone.role}: app not home after launch ${attempt}/${attempts}.`);
@@ -815,6 +783,7 @@ async function prepareAndroidPhone(
   metroPort: number,
   env: NodeJS.ProcessEnv,
   backendUrl: string | null,
+  signal: SignalServer,
 ): Promise<Phone> {
   const serial = await bootShowcaseEmulator(false);
   // Dark system UI, which the notification shade the island take films follows.
@@ -830,7 +799,7 @@ async function prepareAndroidPhone(
   // Notifications allowed without a prompt (the island take films the session notification).
   adb(['-s', serial, 'shell', 'pm', 'grant', SHOWCASE_ANDROID_PACKAGE, 'android.permission.POST_NOTIFICATIONS']);
   // The emulator's localhost is its own: map Metro (and a local backend) onto the host's.
-  const ports = [metroPort, ...(backendUrl ? [Number(new URL(backendUrl).port)] : [])];
+  const ports = [metroPort, signal.port, ...(backendUrl ? [Number(new URL(backendUrl).port)] : [])];
   for (const port of ports) {
     const reverse = adb(['-s', serial, 'reverse', `tcp:${port}`, `tcp:${port}`]);
     if (reverse.status !== 0) throw new Error(`adb reverse tcp:${port} failed: ${reverse.stderr.trim()}`);
@@ -847,8 +816,13 @@ async function prepareAndroidPhone(
     metroPort,
     metroLog,
     metro: null,
+    signal,
   };
-  phone.metro = startMetro(metroPort, env, metroLog);
+  phone.metro = startMetro(
+    metroPort,
+    { ...env, EXPO_PUBLIC_SCREENSHOT_READY_URL: signal.readinessUrl('primary') },
+    metroLog,
+  );
   if (!(await waitForHttp(`http://localhost:${metroPort}/status`, 120_000))) {
     throw new Error(`Metro on ${metroPort} never answered /status; see ${metroLog}`);
   }
@@ -878,6 +852,10 @@ async function relaunchAndroid(phone: Phone): Promise<LogWindow> {
   adb(['-s', phone.device.udid, 'shell', 'cmd', 'statusbar', 'collapse']);
   for (let attempt = 1; attempt <= attempts; attempt++) {
     adb(['-s', phone.device.udid, 'shell', 'am', 'force-stop', SHOWCASE_ANDROID_PACKAGE]);
+    await sleep(100);
+    window.pull();
+    const readyBaseline = phone.signal.homeReadyCount(phone.role);
+    const logBaseline = countHomeReady(window.text);
     adb([
       '-s',
       phone.device.udid,
@@ -887,7 +865,9 @@ async function relaunchAndroid(phone: Phone): Promise<LogWindow> {
     const deadline = Date.now() + HOME_READY_TIMEOUT_MS / attempts;
     while (Date.now() < deadline) {
       window.pull();
-      if (countHomeReady(window.text) > 0) return window;
+      if (phone.signal.homeReadyCount(phone.role) > readyBaseline || countHomeReady(window.text) > logBaseline) {
+        return window;
+      }
       await sleep(1000);
     }
     console.warn(`${LOG} android: app not home after launch ${attempt}/${attempts}.`);
@@ -1233,6 +1213,16 @@ function showcaseCloseLabel(locale: ShowcaseRecordArgs['locales'][number]): stri
   return catalog.ariaLabels.close;
 }
 
+function showcasePeerQueueRowLabel(locale: ShowcaseRecordArgs['locales'][number]): string {
+  const catalog = JSON.parse(
+    readFileSync(resolve(ROOT_DIR, 'packages/shared/i18n/locales', locale, 'session.json'), 'utf8'),
+  ) as { mobile: { queue: { addedByAria: string; positionLabel: string } } };
+  return crewPeerRowPattern(
+    catalog.mobile.queue.addedByAria,
+    catalog.mobile.queue.positionLabel.replace('{{position}}', '2'),
+  );
+}
+
 async function runFlow(context: RunContext, flow: string, label: string): Promise<number> {
   return runMaestro({
     udid: context.primary.device.udid,
@@ -1241,6 +1231,17 @@ async function runFlow(context: RunContext, flow: string, label: string): Promis
     signalUrl: context.signal.url,
     env: {
       SHOWCASE_QUEUE_LABEL: showcaseQueueLabel(context.args.locales[0]),
+      SHOWCASE_CREW_PEER_ROW_LABEL: showcasePeerQueueRowLabel(context.args.locales[0]),
+      SHOWCASE_CREW_PEER_ROW_FALLBACK_POINT: crewPeerRowFallbackPoint(
+        context.args.kind,
+        context.primary.platform,
+        existsSync(context.primary.metroLog) ? readFileSync(context.primary.metroLog, 'utf8') : '',
+      ),
+      SHOWCASE_CREW_QUEUE_FALLBACK_POINT: crewQueueFallbackPoint(
+        context.args.kind,
+        context.primary.platform,
+        existsSync(context.primary.metroLog) ? readFileSync(context.primary.metroLog, 'utf8') : '',
+      ),
       SHOWCASE_CLOSE_LABEL: showcaseCloseLabel(context.args.locales[0]),
       SHOWCASE_LOG_BOARD_LABEL: formatBoardDisplayName(context.args.kind),
     },
@@ -1264,6 +1265,9 @@ async function recordTake(context: RunContext, take: ShowcaseTake): Promise<Take
       marks: {},
     }),
   );
+  // A failed earlier setup may have started a session. Screenshot mode skips
+  // cold-start restoration, so finish it while its live JS context still exists.
+  await ensureCaptureSessionClosed(context.session, () => endSession(context, `${take.id}-previous`));
   signal.reset();
   let window = await relaunch(primary);
   if (primary.platform === 'android') cleanAndroidStatusBar(primary.device.udid);
@@ -1397,11 +1401,15 @@ async function recordTake(context: RunContext, take: ShowcaseTake): Promise<Take
   });
 }
 
-/** End the live session a take started. Relaunches first so no open sheet swallows the Stop tap. */
+/** End the live session using the creator’s current JS state; capture launches never restore it. */
 async function endSession(context: RunContext, label: string): Promise<void> {
   if (!context.session.open) return;
-  // The app restores the session on launch, so the Record tab comes back in-session.
-  await relaunch(context.primary);
+  // Screenshot mode deliberately skips persisted queue/session hydration.
+  // Native relaunch here would lose the live session before we can end it.
+  // The teardown flow dismisses overlays and navigates home -> record in place.
+  // The Android lock-screen take leaves SystemUI's notification shade open;
+  // dismiss it without cold-launching away the creator's live session.
+  collapseCaptureNotificationShade(context.primary.platform, context.primary.device.udid, adb);
   const window = new LogWindow(context.primary.metroLog);
   for (const flow of SESSION_END_FLOWS) await runFlow(context, flow, `${label}-end-session`);
   const endedBy = Date.now() + 10_000;
@@ -1462,7 +1470,7 @@ async function endStraySession(context: RunContext, sessionId: string): Promise<
 async function prepareCrew(context: RunContext, take: ShowcaseTake): Promise<{ udid: string } | string> {
   const { primary, secondary, signal } = context;
   if (!secondary || !take.secondary) return `[${take.id}] needs the second phone, which was not set up`;
-  const [startFlow, ...inviteFlows] = take.setupFlows;
+  const [startFlow] = take.setupFlows;
   const window = new LogWindow(primary.metroLog);
   let sessionId: string | null = null;
   if (primary.platform === 'ios') {
@@ -1479,21 +1487,13 @@ async function prepareCrew(context: RunContext, take: ShowcaseTake): Promise<{ u
       );
     }
   } else {
-    // No clipboard to read back on the emulator. A relaunch restores the
-    // session and logs its id; then the remaining setup flows open the invite.
-    await runFlow(context, startFlow, `${take.id}-start`);
-    window.pull();
-    noteSessionStarted(context, window.text);
-    if (!context.session.open) return `[${take.id}] the session did not start; check the Start point in ${startFlow}`;
-    const relaunched = await relaunch(primary);
-    const idBy = Date.now() + 10_000;
-    while (!restoredSessionId(relaunched.text) && Date.now() < idBy) {
-      relaunched.pull();
-      await sleep(250);
-    }
-    sessionId = restoredSessionId(relaunched.text);
-    if (!sessionId) return `[${take.id}] the app did not log the session it restored after a relaunch`;
-    for (const flow of inviteFlows) await runFlow(context, flow, `${take.id}-invite`);
+    // Fail before Start: a cold capture launch cannot recover an Android invite
+    // id, and an emulator clipboard reader is not available in this harness.
+    // Keep the app alive; never discard an existing primary session to infer it.
+    return (
+      `[${take.id}] Android capture cannot retrieve the invite session id without a clipboard reader. ` +
+      `No session was started; cold-start capture mode does not restore sessions.`
+    );
   }
   console.log(`${LOG} [${take.id}] hidden session ${sessionId} started; sending the second phone in.`);
 
@@ -1513,7 +1513,7 @@ async function prepareCrew(context: RunContext, take: ShowcaseTake): Promise<{ u
       signalUrl: signal.url,
     })) === 0;
   if (!joined) return `[${take.id}] the second phone could not join session ${sessionId}; see its Maestro log`;
-  // The Join tap is a coordinate; prove it landed before filming a take whose
+  // Prove the Join control worked before filming a take whose
   // whole point is the second account's row.
   const joinDeadline = Date.now() + 15_000;
   while (!secondaryWindow.text.includes('[analytics] Session Joined') && Date.now() < joinDeadline) {
@@ -1846,7 +1846,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     const primaryEnv = metroEnv(args, credentials.primary, backendUrl);
     const primary =
       args.platform === 'android'
-        ? await prepareAndroidPhone(args, primaryMetroPort, primaryEnv, backendUrl)
+        ? await prepareAndroidPhone(args, primaryMetroPort, primaryEnv, backendUrl, signal)
         : await preparePhone(
             'primary',
             readPlistString(resolve(appPath, 'Info.plist'), 'DEV_CLIENT_DEFAULT_LAUNCHER_URL') ===
@@ -1917,6 +1917,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           frames: 0,
           seconds: 0,
         });
+      }
+      // Setup can fail after Start. Clean up immediately while JS still owns
+      // the session, rather than letting the next take cold-launch over it.
+      try {
+        await ensureCaptureSessionClosed(context.session, () => endSession(context, `${take.id}-cleanup`));
+      } catch (error) {
+        results[results.length - 1].problems.push(error instanceof Error ? error.message : String(error));
+        break;
       }
     }
   } catch (error) {

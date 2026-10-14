@@ -48,3 +48,37 @@ export function footageAt(
   local: number,
   frameCount: number,
 ): number;
+
+export function searchPhonePose<T extends Pose>(
+  takeId: string | undefined,
+  phoneCount: number,
+  defaultPose: T,
+  crewPose?: T,
+): T;
+
+export function searchWordTiming(
+  regularCount: number,
+  readByFrame?: number,
+): {
+  firstWord: number;
+  wordStagger: number;
+  wordFrames: number;
+  accentDelay: number;
+  accentFrames: number;
+};
+export function searchPhoneMotionPose<T extends Pose>(
+  slot: T,
+  local: number,
+  length: number,
+  options?: {
+    opening?: boolean;
+    index?: number;
+    count?: number;
+    width?: number;
+    height?: number;
+    phoneWidth?: number;
+    fps?: number;
+    leadFrames?: number;
+    exitFrames?: number;
+  },
+): T;

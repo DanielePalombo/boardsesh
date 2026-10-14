@@ -89,8 +89,12 @@ fallback. It:
    9:41, app in UTC), resets their keychains and installs the dev-client;
 2. starts Metro with the screenshot-mode env (`EXPO_PUBLIC_SCREENSHOT_MODE=1`,
    `EXPO_PUBLIC_SCREENSHOT_FAKE_BLE=1`, the walls in `EXPO_PUBLIC_SCREENSHOT_BOARDS`,
-   the account) and waits for the app to reach home. The second phone gets its
-   own Metro and a copy of the `.app` whose launcher URL points at it;
+   the account) and waits for the app to reach home. Each phone reports home
+   through its own GET endpoint on the recorder’s loopback signal server, independently
+   of analytics consent. A fresh counter increase after each native launch (or a fresh
+   legacy Metro home marker) confirms readiness; earlier pings and the other phone
+   cannot unblock it. Android reverses this ephemeral port onto the host. The second
+   phone gets its own Metro and a copy of the `.app` whose launcher URL points at it;
 3. per take: relaunches the app (so the one-shot deep-link params fire again),
    opens the take's deep links, starts `simctl io recordVideo`, runs the take's
    Maestro flow while collecting `[showcase-anchor]` lines from Metro's output,
@@ -100,6 +104,29 @@ fallback. It:
 5. checks every take (below), prints a summary, and tears everything down:
    the crew take's live session is ended, Metro, the backend it started and the
    simulators are stopped. Ctrl-C does the same.
+
+Crew setup uses the existing localized Start, Invite climbers, and Copy link
+accessibility labels across all four locales. The second phone waits for the
+localized Join session button on the join card. The invitation closes through its
+localized Close control. Session teardown waits for `end-session-content` and taps
+`sheet-top-bar-trailing`, the confirmation in the sheet header; these actions
+follow the current UI instead of relying on old sheet coordinates.
+The crew Queue action prefers its accessibility label. If the native iOS drawer
+exposes no controls, the observed `10%,84%` point is available only for a
+Kilter/default recording whose actual slot-zero log resolves to Kilter. Mirror
+boards receive no coordinate fallback. The existing avatar and Play next anchor
+checks still gate whether the resulting crew footage is valid.
+After the second phone adds its climb, the flow requires the first upcoming
+row's genuine avatar marker before long-pressing it. The preferred accessibility
+label combines localized position 2 with the added-by label. The verified iOS
+Kilter fallback presses row text at `50%,78%`, away from its drag handle; a
+missing avatar never substitutes a guessed coordinate.
+
+Screenshot mode skips persisted session restoration. End a capture session in
+its existing app context before any cold launch, and stop if that cannot be
+confirmed. Android cleanup collapses the notification shade first. Android crew
+capture currently stops before starting a session because invite extraction is
+not supported.
 
 ### Board-specific store footage
 
@@ -207,9 +234,11 @@ board takes and `spray` are skipped with a note.
 
 `crew`, `workouts` and `lock-screen` start a live session on the account. Each
 first runs `session-private.yaml` ("Show this session live" off; the recorder
-stops unless the app logged it) and afterwards `session-end.yaml`, on a fresh
-relaunch so no sheet covers Stop. Teardown runs it again on a failure or
-Ctrl-C, and a take that finds a session restored on launch ends it first.
+stops unless the app logged it) and afterwards `session-end.yaml`, while the
+creator’s live app context still owns the session. The flow closes any overlay
+then navigates Home → Record; capture mode skips cold-start session restore.
+Teardown retries on failure or Ctrl-C, and recording stops before another cold
+launch if ending the session cannot be confirmed.
 
 ### The lock-screen take (the Dynamic Island)
 
@@ -274,9 +303,10 @@ so this needs a live backend.
    "Play next". The row's place depends on the queue's history, so the flow
    reads it from the row's anchor, which the recorder republishes on the signal
    server (`/value/anchor-<name>-x|-y|-cy`).
-5. `session-end.yaml` ends the session, after a relaunch so no sheet swallows the
-   Stop tap. It also runs on a failure or Ctrl-C, and a crew take that finds a
-   session restored on launch ends it before starting its own.
+5. `session-end.yaml` closes any overlay and ends the session with the live
+   primary app, preserving the creator’s queue context. It also runs on a failure
+   or Ctrl-C. A setup failure cleans up before the next take; unconfirmed cleanup
+   prevents further cold launches.
 
 Why a signal server: two Maestro processes each take 4-7 s to attach, so a
 timed wait cannot line them up. The flows `GET` the recorder's local server
@@ -499,9 +529,10 @@ phone is filmed, so its platform does not show, and it reuses the iOS
 second emulator would need its own 4 GB of RAM, a second cold boot (a minute or
 two), and its own calibrated flows. The Android primary cannot hand the invite
 link over by clipboard (`simctl pbpaste` has no emulator twin), so
-`crew-start.yaml` only taps Start, the recorder relaunches the app, reads the
-id from its `[session] restored from store: <id>` log line, and
-`crew-invite.yaml` opens the invite sheet so recording starts on the QR.
+Android crew capture currently fails before starting a session: screenshot mode
+skips cold-start session restoration, so the previous relaunch-and-read-id
+strategy cannot recover its invite. An emulator clipboard reader is needed
+before this take can record; other Android takes keep their existing flows.
 
 **Two app bugs the recording found (not recorder ones).**
 

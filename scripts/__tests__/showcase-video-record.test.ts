@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { parseAllDocuments } from 'yaml';
 import {
   SHOWCASE_TAKE_IDS,
   SHOWCASE_LOCALES,
@@ -20,6 +21,11 @@ import {
   buildMarksFile,
   checkTake,
   countHomeReady,
+  collapseCaptureNotificationShade,
+  crewQueueFallbackPoint,
+  crewPeerRowPattern,
+  crewPeerRowFallbackPoint,
+  ensureCaptureSessionClosed,
   findBoardHandoffProblem,
   findKeychainTeamProblem,
   differingPixelRatio,
@@ -32,6 +38,7 @@ import {
   recordingWorkDirs,
   parseSessionIdFromInviteUrl,
   parseSignalRequest,
+  startSignalServer,
   resolveTrimSeconds,
   restoredSessionId,
   sessionStarted,
@@ -280,7 +287,9 @@ describe('logs', () => {
   });
 
   it('counts home arrivals', () => {
-    expect(countHomeReady(' INFO  [analytics] $screen /home\n INFO  [analytics] $screen /homes\nx')).toBe(2);
+    expect(countHomeReady(' INFO  [analytics] $screen /home\n INFO  [analytics] $screen /homes\nx')).toBe(1);
+    expect(countHomeReady('$screen /home/climbs\n$screen /home?filter=1')).toBe(0);
+    expect(countHomeReady('$screen /home')).toBe(1);
     expect(countHomeReady('')).toBe(0);
   });
 
@@ -662,6 +671,61 @@ describe('take registry', () => {
     }
   });
 
+  it('targets existing crew controls in every recording locale, including the moved exit confirm', () => {
+    type Selector = { text?: string; id?: string; index?: number };
+    type FlowStep = { tapOn?: Selector | string; extendedWaitUntil?: { visible: Selector | string } };
+    const startSteps = parseAllDocuments(
+      readFileSync(showcaseFlowPath('crew-start.yaml'), 'utf8'),
+    )[1].toJS() as FlowStep[];
+    const endSteps = parseAllDocuments(
+      readFileSync(showcaseFlowPath('session-end.yaml'), 'utf8'),
+    )[1].toJS() as FlowStep[];
+    const joinSteps = parseAllDocuments(
+      readFileSync(showcaseFlowPath('crew-join.yaml'), 'utf8'),
+    )[1].toJS() as FlowStep[];
+    const joinSelector = joinSteps.find((step) => typeof step.tapOn === 'object' && step.tapOn.text)?.tapOn as Selector;
+    const startSelectors = startSteps.flatMap((step) =>
+      typeof step.tapOn === 'object' && step.tapOn.text ? [new RegExp(step.tapOn.text)] : [],
+    );
+    const endSelector = endSteps.find((step) => typeof step.tapOn === 'object' && step.tapOn.text?.startsWith('^'))
+      ?.tapOn as Selector;
+    for (const locale of SHOWCASE_LOCALES) {
+      const catalog = JSON.parse(
+        readFileSync(new URL(`../../packages/shared/i18n/locales/${locale}/session.json`, import.meta.url), 'utf8'),
+      ) as {
+        mobile: { session: { preStart: string; invite: string; inviteCopyLink: string; inEndSession: string } };
+        mobileJoin: { join: string };
+      };
+      for (const label of [
+        catalog.mobile.session.preStart,
+        catalog.mobile.session.invite,
+        catalog.mobile.session.inviteCopyLink,
+      ]) {
+        expect(
+          startSelectors.some((selector) => selector.test(label)),
+          `${locale}: ${label}`,
+        ).toBe(true);
+        expect(startSelectors.some((selector) => selector.test(`${label} unrelated`))).toBe(false);
+      }
+      expect(new RegExp(endSelector.text ?? '').test(catalog.mobile.session.inEndSession)).toBe(true);
+      expect(new RegExp(joinSelector.text ?? '').test(catalog.mobileJoin.join)).toBe(true);
+    }
+    const sheetWait = endSteps.findIndex(
+      (step) =>
+        typeof step.extendedWaitUntil?.visible === 'object' &&
+        step.extendedWaitUntil.visible.id === 'end-session-content',
+    );
+    const confirmTap = endSteps.findIndex(
+      (step) => typeof step.tapOn === 'object' && step.tapOn.id === 'sheet-top-bar-trailing',
+    );
+    expect(sheetWait).toBeGreaterThan(-1);
+    expect(confirmTap).toBeGreaterThan(sheetWait);
+    expect(readFileSync(showcaseFlowPath('crew-start.yaml'), 'utf8')).not.toContain('point:');
+    expect(readFileSync(showcaseFlowPath('session-end.yaml'), 'utf8')).not.toContain('point:');
+    expect(readFileSync(showcaseFlowPath('crew-join.yaml'), 'utf8')).not.toContain('point:');
+    expect(readFileSync(showcaseFlowPath('crew.yaml'), 'utf8')).toContain("- tapOn: '${SHOWCASE_CLOSE_LABEL}'");
+  });
+
   it('keeps every flow percentage a whole number', () => {
     for (const take of SHOWCASE_TAKES) {
       const flows = [take.flow, ...take.setupFlows, ...take.teardownFlows].filter(isShowcaseFlow);
@@ -717,5 +781,240 @@ describe('take registry', () => {
       expect(kind && SHOWCASE_BOARD_CONFIG_LINKS[kind], take.id).toBeTruthy();
       expect(take.primeLinks).toContain(kind ? SHOWCASE_BOARD_CONFIG_LINKS[kind] : '');
     }
+  });
+});
+
+describe('recorder home readiness server', () => {
+  it('accepts only exact per-phone GET routes and keeps counters through take resets', async () => {
+    const signal = await startSignalServer();
+    try {
+      const primaryUrl = signal.readinessUrl('primary');
+      const secondaryUrl = signal.readinessUrl('secondary');
+      expect(new URL(primaryUrl).hostname).toBe('127.0.0.1');
+      expect(Number(new URL(primaryUrl).port)).toBe(signal.port);
+      expect(signal.homeReadyCount('primary')).toBe(0);
+      expect((await fetch(primaryUrl)).status).toBe(200);
+      expect(signal.homeReadyCount('primary')).toBe(1);
+      expect(signal.homeReadyCount('secondary')).toBe(0);
+      const primaryBaseline = signal.homeReadyCount('primary');
+      // Old arrivals and the other phone cannot satisfy the next primary launch.
+      expect(signal.homeReadyCount('primary') > primaryBaseline).toBe(false);
+      expect((await fetch(secondaryUrl)).status).toBe(200);
+      expect(signal.homeReadyCount('primary') > primaryBaseline).toBe(false);
+      expect(signal.homeReadyCount('secondary')).toBe(1);
+      expect((await fetch(primaryUrl, { method: 'POST', body: '{"ready":true}' })).status).toBe(405);
+      expect((await fetch(primaryUrl, { method: 'HEAD' })).status).toBe(405);
+      expect((await fetch(`${signal.url}/ready/unknown`)).status).toBe(404);
+      expect((await fetch(`${primaryUrl}/extra`)).status).toBe(404);
+      expect(signal.homeReadyCount('primary')).toBe(primaryBaseline);
+      signal.reset();
+      expect(signal.homeReadyCount('primary')).toBe(primaryBaseline);
+      expect(signal.homeReadyCount('secondary')).toBe(1);
+      expect((await fetch(`${primaryUrl}?source=home`)).status).toBe(200);
+      expect(signal.homeReadyCount('primary') > primaryBaseline).toBe(true);
+      // Resetting takes never lets a stale baseline overtake a cleared counter.
+      signal.reset();
+      expect(signal.homeReadyCount('primary')).toBe(2);
+    } finally {
+      await signal.close();
+    }
+  });
+
+  it('preserves flow marks, raised signals, and published values', async () => {
+    const signal = await startSignalServer();
+    try {
+      expect(await (await fetch(`${signal.url}/signal/crew-add`)).text()).toBe('wait');
+      await fetch(`${signal.url}/set/crew-add`);
+      expect(await (await fetch(`${signal.url}/signal/crew-add`)).text()).toBe('go');
+      await fetch(`${signal.url}/mark/flow-start`);
+      expect(signal.marks.has('flow-start')).toBe(true);
+      signal.values.set('anchor-home-x', '42');
+      expect(await (await fetch(`${signal.url}/value/anchor-home-x`)).text()).toBe('42');
+      signal.reset();
+      expect(signal.marks.size).toBe(0);
+      expect(signal.values.size).toBe(0);
+      expect(await (await fetch(`${signal.url}/signal/crew-add`)).text()).toBe('wait');
+    } finally {
+      await signal.close();
+    }
+  });
+});
+
+describe('capture session cleanup before a cold launch', () => {
+  it('waits for ending the live session before permitting the next launch', async () => {
+    const session = { open: true };
+    let finishEnd: (() => void) | undefined;
+    const ending = new Promise<void>((resolveEnd) => {
+      finishEnd = resolveEnd;
+    });
+    const closeSession = vi.fn(async () => {
+      await ending;
+      session.open = false;
+    });
+    let mayRelaunch = false;
+    const boundary = ensureCaptureSessionClosed(session, closeSession).then(() => {
+      mayRelaunch = true;
+    });
+    await Promise.resolve();
+    expect(closeSession).toHaveBeenCalledOnce();
+    expect(mayRelaunch).toBe(false);
+    expect(session.open).toBe(true);
+    finishEnd?.();
+    await boundary;
+    expect(session.open).toBe(false);
+    expect(mayRelaunch).toBe(true);
+  });
+
+  it('blocks the next launch when ending was unconfirmed or failed', async () => {
+    const session = { open: true };
+    await expect(ensureCaptureSessionClosed(session, async () => {})).rejects.toThrow('preserving its app state');
+    expect(session.open).toBe(true);
+    await expect(
+      ensureCaptureSessionClosed(session, async () => {
+        throw new Error('backend refused');
+      }),
+    ).rejects.toThrow('backend refused');
+    expect(session.open).toBe(true);
+  });
+
+  it('does not run session teardown when no live session exists', async () => {
+    const closeSession = vi.fn(async () => {});
+    await ensureCaptureSessionClosed({ open: false }, closeSession);
+    expect(closeSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps teardown in the live JS context when screenshot mode skips persisted restore', () => {
+    const persistence = readFileSync(
+      new URL('../../packages/mobile/src/providers/queue/use-queue-persistence.ts', import.meta.url),
+      'utf8',
+    );
+    expect(persistence).toContain("if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' || !ownerReady) return;");
+    const recorder = readFileSync(new URL('../showcase-video-record.ts', import.meta.url), 'utf8');
+    const cleanup = recorder.slice(
+      recorder.indexOf('async function endSession('),
+      recorder.indexOf('async function endStraySession('),
+    );
+    expect(cleanup).not.toContain('await relaunch(');
+    expect(cleanup).toContain('await runFlow(context, flow,');
+    const shadeCollapse = cleanup.indexOf(
+      'collapseCaptureNotificationShade(context.primary.platform, context.primary.device.udid, adb)',
+    );
+    const teardownFlow = cleanup.indexOf('await runFlow(context, flow,');
+    expect(shadeCollapse).toBeGreaterThan(-1);
+    expect(shadeCollapse).toBeLessThan(teardownFlow);
+    expect(cleanup).not.toContain('force-stop');
+    const flow = readFileSync(showcaseFlowPath('session-end.yaml'), 'utf8');
+    expect(flow.indexOf("text: '${SHOWCASE_CLOSE_LABEL}'")).toBeLessThan(flow.indexOf('- openLink:'));
+    expect(flow).toContain('optional: true');
+  });
+});
+
+describe('observed native crew queue fallback', () => {
+  const kilterResolved = '[screenshot] board[0] "Marco\'s Board" -> "Marco\'s Board" (L8 S25 @35°, kilter)';
+  const tensionResolved = '[screenshot] board[0] "Tension" -> "Tension" (L7 S12 @40°, tension)';
+
+  it('enables the observed iOS first-slot target only for a verified Kilter capture', () => {
+    expect(crewQueueFallbackPoint('kilter', 'ios', kilterResolved)).toBe('10%,84%');
+    expect(crewQueueFallbackPoint('default', 'ios', kilterResolved)).toBe('10%,84%');
+    expect(crewQueueFallbackPoint('kilter', 'android', kilterResolved)).toBe('');
+    for (const kind of SHOWCASE_VARIANT_KINDS.filter((kind) => kind !== 'default' && kind !== 'kilter')) {
+      expect(crewQueueFallbackPoint(kind, 'ios', kilterResolved), kind).toBe('');
+    }
+  });
+
+  it('rejects a mismatched, unknown, or newer non-Kilter board resolution', () => {
+    expect(crewQueueFallbackPoint('kilter', 'ios', tensionResolved)).toBe('');
+    expect(crewQueueFallbackPoint('default', 'ios', '')).toBe('');
+    expect(crewQueueFallbackPoint('default', 'ios', kilterResolved.replace('board[0]', 'board[1]'))).toBe('');
+    expect(crewQueueFallbackPoint('default', 'ios', `${kilterResolved}\n${tensionResolved}`)).toBe('');
+    expect(crewQueueFallbackPoint('default', 'ios', `${kilterResolved}\n[screenshot] WARN board[0] no wall`)).toBe('');
+  });
+
+  it('prefers accessibility and gates coordinates before the queue-open mark', () => {
+    const source = readFileSync(showcaseFlowPath('crew.yaml'), 'utf8');
+    const labelBranch = source.indexOf("visible: '${SHOWCASE_QUEUE_LABEL}'");
+    const fallbackBranch = source.indexOf("true: ${!output.queueOpened && SHOWCASE_CREW_QUEUE_FALLBACK_POINT !== ''}");
+    const openedProof = source.indexOf('- assertTrue: ${output.queueOpened}');
+    expect(labelBranch).toBeGreaterThan(-1);
+    expect(fallbackBranch).toBeGreaterThan(labelBranch);
+    expect(openedProof).toBeGreaterThan(fallbackBranch);
+    expect(openedProof).toBeLessThan(source.indexOf("'/mark/queue-open'"));
+    expect(parseAllDocuments(source).every((document) => document.errors.length === 0)).toBe(true);
+  });
+});
+
+describe('crew peer row targeting', () => {
+  it.each(SHOWCASE_LOCALES)('matches only attributed rows in %s', (locale) => {
+    const catalog = JSON.parse(readFileSync(`packages/shared/i18n/locales/${locale}/session.json`, 'utf8')) as {
+      mobile: { queue: { addedByAria: string; positionLabel: string } };
+    };
+    const label = catalog.mobile.queue.addedByAria;
+    const positionLabel = catalog.mobile.queue.positionLabel.replace('{{position}}', '2');
+    const pattern = new RegExp(crewPeerRowPattern(label, positionLabel));
+    expect(pattern.test(`Guessing Games, ${positionLabel}, ${label.replace('{{name}}', 'Crew friend')}`)).toBe(true);
+    expect(pattern.test('Guessing Games, V4')).toBe(false);
+    expect(pattern.test(`Guessing Games, ${positionLabel}, ${label.replace('{{name}}', '')}`)).toBe(false);
+    expect(pattern.test(`Old row, ${positionLabel.replace('2', '1')}, ${label.replace('{{name}}', 'Friend')}`)).toBe(
+      false,
+    );
+  });
+
+  it('escapes catalog punctuation and rejects missing or repeated placeholders', () => {
+    const pattern = new RegExp(crewPeerRowPattern('Added (by) [{{name}}].', 'position 2'));
+    expect(pattern.test('Climb, position 2, Added (by) [Friend].')).toBe(true);
+    expect(pattern.test('Added by Friend!')).toBe(false);
+    expect(() => crewPeerRowPattern('Added by', 'position 2')).toThrow('one {{name}} placeholder');
+    expect(() => crewPeerRowPattern('{{name}} {{name}}', 'position 2')).toThrow('one {{name}} placeholder');
+  });
+
+  it('only enables the observed peer row for verified iOS Kilter', () => {
+    const log = '[screenshot] board[0] "Kilter" -> "Kilter" (L8 S25 @35°, kilter)';
+    expect(crewPeerRowFallbackPoint('kilter', 'ios', log)).toBe('50%,78%');
+    expect(crewPeerRowFallbackPoint('default', 'ios', log)).toBe('50%,78%');
+    expect(crewPeerRowFallbackPoint('kilter', 'android', log)).toBe('');
+    expect(crewPeerRowFallbackPoint('tension', 'ios', log)).toBe('');
+    expect(crewPeerRowFallbackPoint('kilter', 'ios', '')).toBe('');
+    expect(crewPeerRowFallbackPoint('kilter', 'ios', log.replace('kilter)', 'tension)'))).toBe('');
+  });
+
+  it('requires the peer avatar before trying the attributed row or measured point', () => {
+    const source = readFileSync(showcaseFlowPath('crew.yaml'), 'utf8');
+    const avatarProof = source.indexOf('- assertTrue: ${output.peerAvatarY');
+    const labelBranch = source.indexOf("visible: '${SHOWCASE_CREW_PEER_ROW_LABEL}'");
+    const fallbackBranch = source.indexOf(
+      "true: ${!output.peerRowPressed && SHOWCASE_CREW_PEER_ROW_FALLBACK_POINT !== ''}",
+    );
+    expect(avatarProof).toBeGreaterThan(-1);
+    expect(labelBranch).toBeGreaterThan(avatarProof);
+    expect(fallbackBranch).toBeGreaterThan(labelBranch);
+    expect(source).not.toContain('|| 252');
+    expect(parseAllDocuments(source).every((document) => document.errors.length === 0)).toBe(true);
+  });
+});
+
+describe('warm capture cleanup notification shade', () => {
+  it('collapses the Android primary shade without stopping its live app', () => {
+    const executeAdb = vi.fn(() => ({ status: 0, stderr: '' }));
+    collapseCaptureNotificationShade('android', 'emulator-primary', executeAdb);
+    expect(executeAdb).toHaveBeenCalledOnce();
+    expect(executeAdb).toHaveBeenCalledWith(['-s', 'emulator-primary', 'shell', 'cmd', 'statusbar', 'collapse']);
+  });
+
+  it('does not call Android tools for an iOS capture', () => {
+    const executeAdb = vi.fn(() => ({ status: 0, stderr: '' }));
+    collapseCaptureNotificationShade('ios', 'ios-primary', executeAdb);
+    expect(executeAdb).not.toHaveBeenCalled();
+  });
+
+  it('blocks further cleanup when the shade cannot be dismissed', () => {
+    expect(() =>
+      collapseCaptureNotificationShade('android', 'emulator-primary', () => ({
+        status: 1,
+        stderr: ' device offline\n',
+      })),
+    ).toThrow('Android notification shade did not collapse: device offline');
+    expect(() =>
+      collapseCaptureNotificationShade('android', 'emulator-primary', () => ({ status: 2, stderr: '' })),
+    ).toThrow('adb exit 2');
   });
 });
