@@ -131,6 +131,25 @@ MoonBoard's different BLE protocol works. Spray walls have no native hardware
 control capability and receive no Live Activity Next scene. Never substitute a
 Kilter card under another family's source identity.
 
+A genuine Tension card can use the approved Kilter-presenting Aurora development
+controller after accepting the actual serial mismatch. Keep `boardFamily` as
+`tension` and `controller.presentedBoardFamily` as `kilter`. This exception
+requires reviewed native Next navigation and received LED payload evidence,
+`physicalWallLightingVerified: false`, and explicit controller metadata:
+
+```json
+"compatibility": {
+  "protocol": "aurora-uart",
+  "targetBoardFamily": "tension",
+  "serialMismatchAccepted": true,
+  "verification": "native-next-and-received-led-payload"
+}
+```
+
+This describes the controller used to capture Tension's actual native card; it
+does not allow a Kilter card to stand in for Tension or MoonBoard pixels. Other
+family mismatches and incomplete compatibility evidence remain rejected.
+
 WDA screenshots can contain partial redraws even after an accessibility snapshot
 has settled. Reject blank frames and missing title/count/control pixels. For
 video, preserve timestamps and document any rejected captures and nearest clean

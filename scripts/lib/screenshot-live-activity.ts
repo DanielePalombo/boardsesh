@@ -51,6 +51,13 @@ export interface LiveActivityFixture {
     presentedBoardFamily: LiveActivityBoardFamily;
     description: string;
     physicalWallLightingVerified: boolean;
+    /** Reviewed development controller used with a different Aurora board family. */
+    compatibility?: {
+      protocol: 'aurora-uart';
+      targetBoardFamily: 'tension';
+      serialMismatchAccepted: true;
+      verification: 'native-next-and-received-led-payload';
+    };
   };
   review: {
     reviewedAt: string;
@@ -91,6 +98,23 @@ function text(candidate: unknown): candidate is string {
 }
 function timestamp(candidate: unknown): candidate is string {
   return text(candidate) && Number.isFinite(Date.parse(candidate));
+}
+
+function controllerMatchesCapture(controller: Record<string, unknown>, boardFamily: LiveActivityBoardFamily): boolean {
+  const compatibility = controller.compatibility;
+  if (compatibility === undefined) return controller.presentedBoardFamily === boardFamily;
+  // Keep the advertised identity honest. Only the reviewed Tension capture on
+  // our Kilter-presenting Aurora development controller has navigation proof.
+  return (
+    boardFamily === 'tension' &&
+    controller.presentedBoardFamily === 'kilter' &&
+    controller.physicalWallLightingVerified === false &&
+    record(compatibility) &&
+    compatibility.protocol === 'aurora-uart' &&
+    compatibility.targetBoardFamily === 'tension' &&
+    compatibility.serialMismatchAccepted === true &&
+    compatibility.verification === 'native-next-and-received-led-payload'
+  );
 }
 
 /** Validate identity before reading pixels; another family or locale is never a fallback. */
@@ -136,7 +160,7 @@ export function validateLiveActivityFixture(
     content.nextEnabled !== content.currentIndex < content.totalClimbs ||
     !record(controller) ||
     controller.connection !== 'real-ble' ||
-    controller.presentedBoardFamily !== boardFamily ||
+    !controllerMatchesCapture(controller, boardFamily) ||
     !text(controller.description) ||
     typeof controller.physicalWallLightingVerified !== 'boolean' ||
     !record(review) ||
@@ -198,9 +222,19 @@ export function validateLiveActivityFixture(
     },
     controller: {
       connection: 'real-ble',
-      presentedBoardFamily: boardFamily,
+      presentedBoardFamily: controller.presentedBoardFamily as LiveActivityBoardFamily,
       description: controller.description,
       physicalWallLightingVerified: controller.physicalWallLightingVerified,
+      ...(record(controller.compatibility)
+        ? {
+            compatibility: {
+              protocol: 'aurora-uart' as const,
+              targetBoardFamily: 'tension' as const,
+              serialMismatchAccepted: true as const,
+              verification: 'native-next-and-received-led-payload' as const,
+            },
+          }
+        : {}),
     },
     review: {
       reviewedAt: review.reviewedAt,

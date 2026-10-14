@@ -165,6 +165,73 @@ describe('reviewed native Live Activity fixtures', () => {
       validateLiveActivityFixture({ ...provenance(), appLocale: 'es', widgetLocale: 'en' }, 'kilter', 'es'),
     ).toMatchObject({ appLocale: 'es', widgetLocale: 'en' });
   });
+  const reviewedAuroraCompatibility = {
+    protocol: 'aurora-uart',
+    targetBoardFamily: 'tension',
+    serialMismatchAccepted: true,
+    verification: 'native-next-and-received-led-payload',
+  } as const;
+  it('preserves the advertised Kilter identity on a reviewed native Tension capture', () => {
+    const checked = validateLiveActivityFixture(
+      {
+        ...provenance(),
+        boardFamily: 'tension',
+        controller: { ...provenance().controller, compatibility: reviewedAuroraCompatibility },
+      },
+      'tension',
+      'en-US',
+    );
+    expect(checked.boardFamily).toBe('tension');
+    expect(checked.controller).toMatchObject({
+      presentedBoardFamily: 'kilter',
+      physicalWallLightingVerified: false,
+      compatibility: reviewedAuroraCompatibility,
+    });
+  });
+  it.each([
+    undefined,
+    { ...reviewedAuroraCompatibility, protocol: 'moonboard' },
+    { ...reviewedAuroraCompatibility, targetBoardFamily: 'kilter' },
+    { ...reviewedAuroraCompatibility, serialMismatchAccepted: false },
+    { ...reviewedAuroraCompatibility, verification: 'connection-only' },
+  ])('rejects mismatched controller identity without complete Aurora proof %j', (compatibility) => {
+    expect(() =>
+      validateLiveActivityFixture(
+        { ...provenance(), boardFamily: 'tension', controller: { ...provenance().controller, compatibility } },
+        'tension',
+        'en-US',
+      ),
+    ).toThrow('Invalid native');
+  });
+  it('does not turn reviewed controller compatibility into a family fallback or wall-lighting claim', () => {
+    for (const boardFamily of ['kilter', 'moonboard'] as const)
+      expect(() =>
+        validateLiveActivityFixture(
+          {
+            ...provenance(),
+            boardFamily,
+            controller: { ...provenance().controller, compatibility: reviewedAuroraCompatibility },
+          },
+          boardFamily,
+          'en-US',
+        ),
+      ).toThrow('Invalid native');
+    expect(() =>
+      validateLiveActivityFixture(
+        {
+          ...provenance(),
+          boardFamily: 'tension',
+          controller: {
+            ...provenance().controller,
+            compatibility: reviewedAuroraCompatibility,
+            physicalWallLightingVerified: true,
+          },
+        },
+        'tension',
+        'en-US',
+      ),
+    ).toThrow('Invalid native');
+  });
   it('strips private capture dumps and unrelated notification metadata before saving provenance', () => {
     const checked = validateLiveActivityFixture(
       {
