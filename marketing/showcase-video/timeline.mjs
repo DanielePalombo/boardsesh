@@ -182,6 +182,26 @@ function buildLiveActivityCard(layer, zIndex, take) {
   return { rig, img, shadow, nativeCardWidth: width };
 }
 
+/** Clip unchanged source pixels to the reviewed native app card, without a phone shell. */
+function buildNativeAppCard(layer, zIndex, take) {
+  const crop = take.sourceCrop;
+  if (!crop) throw new Error('Native app card is missing reviewed sourceCrop');
+  const width = 1120;
+  const scale = width / crop.width;
+  const height = crop.height * scale;
+  const shadow = el('div', { class: 'phone-shadow' }, layer);
+  const rig = el('div', { class: 'phone-rig search-native-app-card' }, layer);
+  setVars(rig, { z: zIndex, 'phone-w': width, 'phone-h': height });
+  const img = el('img', { alt: '', decoding: 'sync' }, rig);
+  Object.assign(img.style, {
+    width: `${take.screen.width * scale}px`,
+    height: `${take.screen.height * scale}px`,
+    left: `${-crop.x * scale}px`,
+    top: `${-crop.y * scale}px`,
+  });
+  return { rig, img, shadow, nativeCardWidth: width };
+}
+
 // --- geometry -------------------------------------------------------------------
 
 const projection = () => ({ perspective: data.perspective, originX: data.width / 2, originY: data.height / 2 });
@@ -726,7 +746,9 @@ function initSearchStage() {
       takeId,
       ...(data.takes[takeId].presentation === 'live-activity-card'
         ? buildLiveActivityCard(layer, phoneIndex + 1, data.takes[takeId])
-        : buildPhone(layer, phoneIndex + 1)),
+        : data.takes[takeId].presentation === 'native-app-card'
+          ? buildNativeAppCard(layer, phoneIndex + 1, data.takes[takeId])
+          : buildPhone(layer, phoneIndex + 1)),
     }));
     return { scene, layer, caption, words, phones };
   });

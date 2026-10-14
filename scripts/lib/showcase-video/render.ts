@@ -1517,11 +1517,42 @@ export type StageTake = Readonly<{
   /** Store-search repeated takes select a separate real source range per caption. */
   segmentsByCaption?: Readonly<Record<string, readonly FootageRange[]>>;
   screen: Readonly<{ width: number; height: number }>;
-  presentation?: 'live-activity-card';
+  presentation?: 'live-activity-card' | 'native-app-card';
+  /** Clip the original frame; this never changes the source image or its hash. */
+  sourceCrop?: Readonly<{ x: number; y: number; width: number; height: number }>;
   editorialStartSeconds?: number;
   nativeMaskUrl?: string;
   anchors: Partial<Record<ShowcaseCalloutName, readonly ShowcaseAnchorSample[]>>;
 }>;
+
+/** Only the reviewed MoonBoard CSV entry may use a cropped native app card. */
+export function nativeAppCardCropProblems(
+  metadata: Readonly<{ presentation?: string; sourceCrop?: unknown; kind?: string; boardKind?: string }>,
+  takeId: ShowcaseTakeId,
+  variant: string,
+  screen: Readonly<{ width: number; height: number }>,
+): string[] {
+  const appCard = metadata.presentation === 'native-app-card';
+  if (takeId !== 'moonboard-import')
+    return appCard || metadata.sourceCrop !== undefined ? ['native app crop is only allowed for moonboard-import'] : [];
+  if (!appCard) return ['MoonBoard CSV entry requires native-app-card presentation'];
+  if (variant !== 'moonboard' || metadata.kind !== 'moonboard' || metadata.boardKind !== 'moonboard')
+    return ['native app card must show the actual MoonBoard CSV entry'];
+  const crop = metadata.sourceCrop;
+  if (typeof crop !== 'object' || crop === null) return ['MoonBoard CSV entry is missing reviewed sourceCrop'];
+  const { x, y, width, height } = crop as Record<string, unknown>;
+  if (
+    ![x, y, width, height].every((coordinate) => typeof coordinate === 'number' && Number.isSafeInteger(coordinate)) ||
+    Number(x) < 0 ||
+    Number(y) < 0 ||
+    Number(width) <= 0 ||
+    Number(height) <= 0 ||
+    Number(x) + Number(width) > screen.width ||
+    Number(y) + Number(height) > screen.height
+  )
+    return ['MoonBoard CSV sourceCrop is outside the original native frame'];
+  return [];
+}
 
 // --- full-bleed (App Preview) ------------------------------------------------------
 

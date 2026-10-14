@@ -9,7 +9,7 @@ described as a native iPhone 16 Pro screenshot.
 Fixtures live in `app-stores/apple/live-activity-captures/`. `manifest.json`
 records each crop's SHA-256, original full PNG SHA-256, measured crop rectangle,
 physical device and native screen size, installed build, board/controller family,
-capture surface, actual app and widget languages, and human review. Full phone
+capture surface, actual app and widget languages, and visual review. Full phone
 screenshots, notifications, account credentials, and accessibility dumps remain
 outside the repository.
 
@@ -68,7 +68,7 @@ checks its dimensions and identity, and saves only the native card plus manifest
 entry. It never draws a widget, fills missing
 text, resizes the native fixture, or fabricates a translation. Use
 `--output-root <private-directory>` to review a candidate before replacing the
-committed fixture. A human must verify the review statements; passing a JSON
+committed fixture. A reviewer must verify the review statements; passing a JSON
 schema cannot establish that a capture is genuine.
 
 Example provenance for a reviewed English Kilter card (replace timestamps,

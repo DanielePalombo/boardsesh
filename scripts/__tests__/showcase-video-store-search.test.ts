@@ -16,6 +16,7 @@ import {
   SHOWCASE_PHONE,
   screenToCanvas,
   footageAt,
+  nativeAppCardCropProblems,
 } from '../lib/showcase-video/render';
 import {
   creativeVideoProblems,
@@ -46,6 +47,39 @@ const validMedia: ProbedMedia = {
 };
 
 describe('Apple search video', () => {
+  it('requires reviewed in-frame MoonBoard CSV card bounds without family substitution', () => {
+    const metadata = {
+      kind: 'moonboard',
+      boardKind: 'moonboard',
+      presentation: 'native-app-card',
+      sourceCrop: { x: 28, y: 330, width: 744, height: 296 },
+    };
+    const screen = { width: 800, height: 1738 };
+    expect(nativeAppCardCropProblems(metadata, 'moonboard-import', 'moonboard', screen)).toEqual([]);
+    for (const override of [
+      { presentation: undefined },
+      { presentation: 'live-activity-card' },
+      { boardKind: 'kilter' },
+      { kind: 'kilter' },
+      { sourceCrop: undefined },
+      { sourceCrop: { ...metadata.sourceCrop, x: -1 } },
+      { sourceCrop: { ...metadata.sourceCrop, y: 330.5 } },
+      { sourceCrop: { ...metadata.sourceCrop, width: 0 } },
+      { sourceCrop: { ...metadata.sourceCrop, width: 800 } },
+      { sourceCrop: { ...metadata.sourceCrop, height: 1738 } },
+      { sourceCrop: { ...metadata.sourceCrop, height: Number.NaN } },
+    ])
+      expect(
+        nativeAppCardCropProblems({ ...metadata, ...override }, 'moonboard-import', 'moonboard', screen),
+      ).not.toEqual([]);
+    expect(nativeAppCardCropProblems(metadata, 'moonboard-import', 'kilter', screen)).not.toEqual([]);
+    expect(nativeAppCardCropProblems(metadata, 'boards-moonboard', 'moonboard', screen)).not.toEqual([]);
+    expect(
+      nativeAppCardCropProblems({ sourceCrop: metadata.sourceCrop }, 'boards-moonboard', 'moonboard', screen),
+    ).not.toEqual([]);
+    expect(nativeAppCardCropProblems({}, 'boards-moonboard', 'moonboard', screen)).toEqual([]);
+  });
+
   it('uses High level 5.0, exactly 30 fps, and no audio', () => {
     const args = buildStoreSearchArgs('input.mkv', 'output.mp4');
     expect(args[args.indexOf('-profile:v') + 1]).toBe('high');

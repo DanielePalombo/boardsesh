@@ -774,8 +774,21 @@ source ranges by caption, so repeating a take cannot overwrite its earlier edit.
 
 MoonBoard uses 90 frames of its native board, 90 of the real CSV entry, 120 of
 loaded grade controls, then 150 of its actual hold map. CSV entry is captioned
-“Have your CSV? / Start here.”; it claims no completed import, result count or
-hardware control. A missing or unvalidated CSV/filter take stops the render;
+“Import your CSV. / Start here.”; it claims no completed import, result count or
+hardware control. The CSV beat shows only its genuine native MoonBoard card,
+including the import explanation, Import data and Request your data controls.
+It uses `presentation: native-app-card` and a separately reviewed `sourceCrop`
+rectangle in the original frame's pixels; the stage clips the unchanged full
+JPEG inside that rectangle. There is no phone shell or Live Activity fixture.
+Full source frames and their hashes remain unchanged. Other manufacturers and
+linked account details stay outside the crop. Missing, fractional or out-of-frame
+bounds stop the render, as does assigning this presentation to another take or
+board family. Measure and review each locale's actual native card separately.
+For an editorial review bundle, copy the producer's marks and anchors before
+adding approved bounds to the copied import marks; never alter producer metadata
+or mark a failed recording as validated. English's reviewed 800×1738 frame uses
+`{x:28,y:330,width:744,height:296}`; this is not a fallback for other locales.
+A missing or unvalidated CSV/filter take stops the render;
 these beats cannot silently disappear. The ending has no crew dependency.
 Tension uses 105 frames of its native board, 150 of its actual logbook, 105 of
 a freshly validated crew and 90 of the matched native Tension hold map. The

@@ -15,7 +15,7 @@
   "sends": "Track every\n*send.*",
   "gymBoards": "Gym boards\n*too.*",
   "sprayNext": "Next climb.\nSame *wall.*",
-  "moonboardCsv": "Have your CSV?\n*Start here.*",
+  "moonboardCsv": "Import your CSV.\n*Start here.*",
   "moonboardGrade": "Filter by\n*grade.*",
   "climbHolds": "See the climb.\nEvery *hold.*"
 }

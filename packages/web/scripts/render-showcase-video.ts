@@ -115,6 +115,7 @@ import {
   buildWebMp4PassArgs,
   buildWebmPassArgs,
   footageTakeDir,
+  nativeAppCardCropProblems,
   layoutSceneCallouts,
   parseRenderArgs,
   placeholderAnchorsFile,
@@ -566,6 +567,8 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     if (problems.length) throw new Error(`${takeId}: ${problems.join('; ')}. Re-record this locale and board.`);
     const { width, height } = await sharp(resolve(directory, '00001.jpg')).metadata();
     if (!width || !height) throw new Error(`${takeId}: unreadable first native frame`);
+    const cropProblems = nativeAppCardCropProblems(marks, takeId, search.variant, { width, height });
+    if (cropProblems.length) throw new Error(`${takeId}: ${cropProblems.join('; ')}. Review the native card bounds.`);
     if (
       marks.editorialStartSeconds !== undefined &&
       (!Number.isFinite(marks.editorialStartSeconds) ||
@@ -589,6 +592,7 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
       segments: [[SHOWCASE_FPS, frameCount]],
       screen: { width, height },
       ...(marks.presentation ? { presentation: marks.presentation } : {}),
+      ...(marks.sourceCrop ? { sourceCrop: marks.sourceCrop } : {}),
       ...(marks.editorialStartSeconds !== undefined ? { editorialStartSeconds: marks.editorialStartSeconds } : {}),
       ...(nativeFixture ? { nativeMaskUrl: pathToFileURL(nativeFixture.maskPath).href } : {}),
       anchors: {},
@@ -604,7 +608,7 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     phone: showcasePhone(
       'ios',
       await footageAspect(
-        [...available].filter((takeId) => takes[takeId]?.presentation !== 'live-activity-card'),
+        [...available].filter((takeId) => takes[takeId]?.presentation === undefined),
         source.dirs,
       ),
     ),
