@@ -14,6 +14,8 @@
     "types": ["node"]
   },
   "include": [
+    "import-live-activity-capture.ts",
+    "__tests__/screenshot-live-activity.test.ts",
     "record-ios-campaign-privacy.ts",
     "__tests__/record-ios-campaign-privacy.test.ts",
     "posthog/**/*.ts",

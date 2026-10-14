@@ -4,11 +4,12 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findOffenders } from './assert-screenshot-dimensions';
+import { findOffenders, readPngDimensions } from './assert-screenshot-dimensions';
 import { DEFAULT_MIN_BYTES } from './assert-screenshot-content';
 import { CPP_MANIFEST_PATH, CPP_TARGETS, isCppTarget, readCppPage, type CppSelection } from './lib/screenshot-cpp';
 import { captionLocaleForStore } from './lib/screenshot-presentation';
 import { readFixtureSnapshotReference } from './lib/screenshot-fixture-snapshot';
+import { loadLiveActivityFixture, validateLiveActivityFixture } from './lib/screenshot-live-activity';
 
 const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const STORE_LOCALES = ['en-US', 'es-ES', 'es-MX', 'fr-FR', 'de-DE'];
@@ -55,6 +56,35 @@ export function assertCppScreenshots(selection: CppSelection, repoRoot = REPO_RO
           const metadata = (presentation.files as Record<string, unknown>)[recipe.output];
           if (!object(metadata) || metadata.framedSha256 !== digest(buffer))
             throw new Error(`CPP ${target}/${storeLocale}/${device}/${recipe.output} differs from its manifest`);
+          if (recipe.liveActivity) {
+            const locale = captionLocaleForStore('ios', storeLocale);
+            const native = loadLiveActivityFixture(
+              recipe.liveActivity.boardFamily,
+              locale,
+              join(repoRoot, 'app-stores/apple/live-activity-captures'),
+            );
+            const activity = metadata.liveActivity;
+            const canvas = readPngDimensions(buffer);
+            if (
+              !object(activity) ||
+              activity.manifestSha256 !== native.manifestSha256 ||
+              !object(activity.outputCanvas) ||
+              activity.outputCanvas.width !== canvas.width ||
+              activity.outputCanvas.height !== canvas.height ||
+              metadata.rawSha256 !== native.provenance.sha256 ||
+              metadata.rawBytes !== native.pixels.length ||
+              metadata.sources !== undefined
+            )
+              throw new Error(`CPP ${target}/${recipe.output} has altered or missing native Live Activity provenance`);
+            const presentedFixture = validateLiveActivityFixture(
+              activity.fixture,
+              recipe.liveActivity.boardFamily,
+              locale,
+            );
+            if (JSON.stringify(presentedFixture) !== JSON.stringify(native.provenance))
+              throw new Error(`CPP ${target}/${recipe.output} has altered native Live Activity identity`);
+            return { name: recipe.output, buffer };
+          }
           const sources = recipe.sources.length > 1 ? metadata.sources : { [recipe.sources[0]]: metadata };
           if (!object(sources) || Object.keys(sources).sort().join('\n') !== [...recipe.sources].sort().join('\n'))
             throw new Error(`CPP ${target}/${recipe.output} is missing composite source provenance`);

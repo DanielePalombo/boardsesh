@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  validateLiveActivityFixture,
+  type LiveActivityFixture,
+  type LiveActivityBoardFamily,
+} from './screenshot-live-activity';
 
 export const PRESENTATION_VERSION = 1;
 export const PRESENTATION_MANIFEST = 'presentation.json';
@@ -32,6 +37,8 @@ export const CAPTION_IDS = [
   'storeMoreBoards',
   'storeIsland',
   'cppIsland',
+  'storeLiveActivity',
+  'cppLiveActivity',
   'cppKilterGrade',
   'cppKilterLayouts',
   'cppKilterLogbookImport',
@@ -134,13 +141,16 @@ export type ScreenshotLayout =
   | 'store-spray'
   | 'store-queue'
   | 'store-wall'
-  | 'store-island';
+  | 'store-island'
+  | 'store-live-activity';
 export interface ScreenshotRecipe {
   output: string;
   caption: CaptionId;
   layout: ScreenshotLayout;
   /** Actual native captures, in their compositing order. */
   sources: readonly string[];
+  /** Reviewed physical-device card pixels, separate from this run's native phone captures. */
+  liveActivity?: { boardFamily: LiveActivityBoardFamily };
   /** Printed outside the native trio, in exactly the same order as sources. */
   boardLabels?: readonly string[];
 }
@@ -172,7 +182,6 @@ export const IOS_CAMPAIGN_CAPTURE_NAMES = [
   '14-spray-board-view.png',
   '15-crew-queue.png',
   '16-wall-status.png',
-  '17-dynamic-island.png',
 ] as const;
 
 const IOS_CAMPAIGN_RECIPES: readonly ScreenshotRecipe[] = [
@@ -194,10 +203,11 @@ const IOS_CAMPAIGN_RECIPES: readonly ScreenshotRecipe[] = [
   { output: '05-one-logbook.png', caption: 'crossBoardLogbook', layout: 'screen', sources: ['08-logbook.png'] },
   { output: '06-session-plan.png', caption: 'workout', layout: 'screen', sources: ['05-workout-generator.png'] },
   {
-    output: '07-dynamic-island.png',
-    caption: 'storeIsland',
-    layout: 'store-island',
-    sources: ['17-dynamic-island.png'],
+    output: '07-live-activity.png',
+    caption: 'storeLiveActivity',
+    layout: 'store-live-activity',
+    sources: [],
+    liveActivity: { boardFamily: 'kilter' },
   },
   { output: '08-next-project.png', caption: 'climbs', layout: 'screen', sources: ['03-climbs.png'] },
 ];
@@ -362,6 +372,11 @@ export interface PresentedScreenshot {
   /** Composite provenance. rawBytes is the smallest source, so a blank peer cannot hide behind a detailed image. */
   sources?: Record<string, { rawBytes: number; rawSha256: string }>;
   boardLabels?: readonly string[];
+  liveActivity?: {
+    fixture: LiveActivityFixture;
+    manifestSha256: string;
+    outputCanvas: { width: number; height: number };
+  };
 }
 export interface PresentationManifest {
   version: typeof PRESENTATION_VERSION;
@@ -455,6 +470,34 @@ export function readPresentationManifest(directory: string): PresentationManifes
       Object.keys(presented.sources ?? {}).length,
     );
     if (boardLabels) presented.boardLabels = boardLabels;
+    if (entry.liveActivity !== undefined) {
+      const activity = entry.liveActivity;
+      if (
+        !isRecord(activity) ||
+        !isRecord(activity.fixture) ||
+        !['kilter', 'tension', 'moonboard'].includes(String(activity.fixture.boardFamily)) ||
+        typeof activity.manifestSha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(activity.manifestSha256) ||
+        !isRecord(activity.outputCanvas) ||
+        !Number.isSafeInteger(activity.outputCanvas.width) ||
+        !Number.isSafeInteger(activity.outputCanvas.height) ||
+        Number(activity.outputCanvas.width) <= 0 ||
+        Number(activity.outputCanvas.height) <= 0
+      )
+        throw new Error(`Invalid Live Activity presentation provenance: ${filename}: ${name}`);
+      const fixture = validateLiveActivityFixture(
+        activity.fixture,
+        activity.fixture.boardFamily as LiveActivityBoardFamily,
+        parsed.locale as CaptionLocale,
+      );
+      if (fixture.sha256 !== presented.rawSha256 || presented.sources)
+        throw new Error(`Live Activity presentation source does not match: ${filename}: ${name}`);
+      presented.liveActivity = {
+        fixture,
+        manifestSha256: activity.manifestSha256,
+        outputCanvas: { width: Number(activity.outputCanvas.width), height: Number(activity.outputCanvas.height) },
+      };
+    }
     files[name] = presented;
   }
   return { version: PRESENTATION_VERSION, locale: parsed.locale as CaptionLocale, files };

@@ -177,7 +177,7 @@ export function resolveTimeline(
   }));
   const kept = planned.filter(({ scene, optional }) => {
     const missing =
-      (optional || SHOWCASE_SKIPPABLE_SCENES.includes(scene.id)) && scene.takes.some((take) => !available.has(take));
+      (optional ?? SHOWCASE_SKIPPABLE_SCENES.includes(scene.id)) && scene.takes.some((take) => !available.has(take));
     if (missing) skipped.push(scene.id);
     return !missing;
   });

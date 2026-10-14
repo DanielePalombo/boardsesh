@@ -33,6 +33,12 @@ the moment the app changes.
   all land on it; a full disk shows up as Postgres or Maestro failing, not as a
   clear error.
 
+For parallel recording jobs, set `SHOWCASE_SIMULATOR_NAME_SUFFIX=Remaining`
+to use `Boardsesh Showcase [Remaining]` and `Boardsesh Showcase 2 [Remaining]`.
+Each worktree owns its own device pair, and occupied Metro ports remain untouched.
+Coordinate account usage before recording live sessions: separate simulators do
+not isolate sessions on a shared account.
+
 ### Credentials
 
 The default backend is **prod**, for real content. Two accounts sign in:
@@ -141,6 +147,15 @@ takes, including its named log flow. Kilter and spray also record the mixed
 board pile; Tension and MoonBoard keep their own opening board. Feature takes
 selected with `--only wall,crew,workouts` activate the named screenshot slot
 and verify the actual resolved board type.
+Spray's progress take shows the genuine **All boards** activity calendar: the
+current app includes spray ticks in global totals but does not offer a Spray row
+in its progress filter. The localized All boards control and calendar must be
+visible, and `scrolled` marks the settled calendar. Its capture provenance must
+name that global scope rather than claiming a Spray-only filter.
+The optional MoonBoard grade take opens the existing native filter scene with
+`screenshotCppScene=search-grade` and `screenshotOpenFilters=1`. It supplies no
+grade range or invented results; loaded controls must be visible before its
+`grade-filter-shown` mark is accepted.
 The session prime opens a real climb on that board before navigating to Record.
 Variant footage lives in `work/boards/<kind>/<locale>/{raw,footage,anchors,marks}`;
 Android adds `/android` before those directories. Marks record `takeId`,
@@ -394,6 +409,40 @@ target it renders and leaves out `homepage`, whose files always keep it (with a
 warning; asking for `--target homepage` with it fails instead).
 
 ## Targets
+
+### Whole native Lock Screen endings
+
+Kilter, Tension and default `store-search` cuts end with **Next climb. Outside
+of the app.** Their required `lock-screen` take is the complete physical iPhone
+13 Pro Lock Screen, identified by `presentation: "native-lock-screen"`. Preserve
+its actual clock, wallpaper, notch, Live Activity and native controls. Clear
+unrelated notifications on the phone before capture; do not remove them by
+repainting footage. A Notification Center card crop cannot substitute.
+
+The renderer requires reviewed `captureFraming: "full-screen"` fixtures with
+`captureSurface: "lock-screen"` and actual locked-screen context. Recording
+`nativeFixtureSourcePngSha256` must match that locale/family fixture's unchanged
+source PNG hash. Video dimensions must be 1170×2532, corresponding to the real
+390×844-point screen. A separate 416×870 frame fits the whole phone inside the
+safe area beside the caption. It adds no camera overlay, gloss or controls from
+a newer iPhone. Other scene geometry and the hero spring entrance/exit/loop
+stay unchanged. No exterior alpha mask or Live Activity card crop is used.
+
+Supply `activity-ready` and `next-tapped` in the original native 30 fps timeline.
+`editorialStartSeconds` is an optional edit boundary, not a native event. The
+selected beat must include at least 0.4 seconds before actual Next and 0.8 seconds
+after it before the spring exit; missing or out-of-range events stop rendering.
+Independently review the changed name, thumbnail and queue position to confirm
+that the native redraw has settled, rather than treating tap timing as proof.
+Record source timestamps, rejected partial redraws and clean-frame holds when
+converting device MJPEG samples to 30 fps. The physical TestFlight build has
+independent provenance from simulator app footage; never label it as current
+`main` when its source commit is unknown.
+
+See [Native Live Activity capture fixtures](live-activity-creative-captures.md)
+for the committed card pixels, CI screenshot reuse, and local regeneration.
+These requirements apply to the Kilter search ending; other targets retain
+their existing source contracts.
 
 `vp run video:render -- --target <name>` renders one target from the same
 recorded takes; `--target all` renders every one, and `--target` repeats or
@@ -715,3 +764,48 @@ How the rendered files reach the homepage (`packages/web/app/components/home/hom
 **Analytics.** `Showcase Video Progress` fires once per quartile per page view with `{ quartile: 25 | 50 | 75 | 100, placement: 'hero', cut: '9x16-lite', autoplayed }`. `autoplayed` is false when the reader pressed play. Quartile 100 fires at 97% of the duration, because a looping video may never report its exact end.
 
 **SEO.** `page.tsx` renders `VideoObject` JSON-LD next to the site JSON-LD, English only. Its `duration` (`PT54.8S`) must equal `SHOWCASE_TOTAL_FRAMES / SHOWCASE_FPS`. It is a literal in `packages/web/app/lib/showcase-video.ts` because the timeline module pulls in Node imports a client bundle can't take; `scripts/__tests__/showcase-video-web-duration.test.ts` fails when they drift. After changing the timeline, update the literal and bump `/` in the sitemap static entries.
+
+### Native endings in Apple search cuts
+
+Kilter keeps its five three-second beats ending on the reviewed native Live
+Activity. The default cut has four five-second beats: boards, spray wall, crew,
+and that genuine Kilter Lock Screen. Only the default `lock-screen` take may retain
+`kind: kilter`, `boardKind: kilter` and `presentation: native-lock-screen`; the
+locale and validation must still match. Supply that unchanged reviewed take in
+the default review bundle (a symlink is sufficient). All other default takes
+must retain `kind: default`. Crew footage must report the actual family: Kilter
+for default/Kilter cuts, Tension for Tension. Global All boards calendar footage
+keeps its global scope. No Kilter recording is relabeled as another family.
+
+Spray uses five three-second beats. The opening and photo beats hold an actual
+settled Black Pearl frame before the first Next. Its finale reserves the actual
+second Next, Teal Heel → Sunny Side, starting two seconds before `next-2` and
+continuing through the native result. Both ordered marks and at least 0.8 seconds
+of genuine settled footage after the second mark are required. The stage stores
+source ranges by caption, so repeating a take cannot overwrite its earlier edit.
+
+MoonBoard uses 90 frames of its native board, 90 of genuine MoonBoard-filtered
+logged history, 120 of loaded grade controls, then 150 of its actual hold map.
+The history beat says “Bring your logbook.” and requires the actual native
+`filter-moonboard` mark, matching MoonBoard recording identity and exact locale.
+A generic All boards calendar or CSV import entry cannot substitute for it.
+A missing or unvalidated log/filter take stops the render; these beats cannot
+silently disappear. The ending has no crew dependency or hardware-control claim.
+CSV import remains available as a separate explicit recorder/help feature; its
+entry card has no place in the final MoonBoard search cut.
+Tension uses 105 frames of its native board, 150 of its actual logbook, 105 of
+a freshly validated crew and 90 of its matched, complete native Lock Screen.
+Its final caption is “Next climb. / Outside the app.” and requires genuine
+Tension Next proof and that exact locale's reviewed full-screen fixture. A
+Kilter recording or old card crop cannot substitute. Controller advertising
+identity remains separate from the actual widget board family; development
+controller navigation does not establish physical wall illumination. All
+header/showcase cuts remain unchanged.
+
+The MoonBoard filter take checks the actual localized title, name, difficulty,
+grade-range label and a genuine grade-rail accessibility control. It retains an
+already complete presentation. An incomplete sheet gets one real Close → settled
+Climbs list → Filters reopen; the complete controls must then become visible
+before `grade-filter-shown`. If reopening stays blank, the flow fails and the
+take remains unvalidated. The recorder reads labels from all four real catalogs;
+it supplies no grade endpoints, synthetic result count or app-code overlay.

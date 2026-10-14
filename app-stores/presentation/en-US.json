@@ -197,5 +197,15 @@
   "cppTensionSearch": {
     "headline": "Straight to\nyour grade",
     "description": "Then hide the ones you’ve sent."
+  },
+  "storeLiveActivity": {
+    "headline": "Next climb.\nOutside the app.",
+    "description": "Change the climb without opening the app.",
+    "emphasis": "Outside the app."
+  },
+  "cppLiveActivity": {
+    "headline": "Next climb.\nOutside the app.",
+    "description": "Change the climb without opening the app.",
+    "emphasis": "Outside the app."
   }
 }

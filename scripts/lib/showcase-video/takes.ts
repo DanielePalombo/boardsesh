@@ -386,7 +386,7 @@ export const SHOWCASE_TAKES: readonly ShowcaseTake[] = [
   take({
     id: 'moonboard-filter',
     summary: 'The native grade filter on MoonBoard, showing its real loaded grade controls.',
-    primeLinks: ['home', 'climbs?screenshotBoardIndex=2&screenshotOpenFilters=1'],
+    primeLinks: ['home', 'climbs?screenshotBoardIndex=2&screenshotOpenFilters=1&screenshotCppScene=search-grade'],
     flow: 'moonboard-filter.yaml',
     trimSeconds: 6,
     board: { slot: 2, kind: 'moonboard' },

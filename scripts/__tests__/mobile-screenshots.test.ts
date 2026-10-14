@@ -430,15 +430,15 @@ describe('iOS campaign capture', () => {
     },
   );
 
-  it('captures all eighteen sources without optional skipping of campaign images', () => {
+  it('captures all seventeen runtime sources without optional skipping of campaign images', () => {
     const legacy = readFileSync('packages/mobile/.maestro/app-store.yaml', 'utf8');
     const campaign = readFileSync('packages/mobile/.maestro/app-store-campaign.yaml', 'utf8');
     const documents = parseAllDocuments(campaign);
     for (const document of documents) expect(document.errors).toEqual([]);
     const names = [...`${legacy}\n${campaign}`.matchAll(/takeScreenshot: ([^\n]+)/g)].map((match) => `${match[1]}.png`);
     expect([...new Set(names)].sort()).toEqual([...IOS_CAMPAIGN_CAPTURE_NAMES].sort());
-    expect(names).toContain('17-dynamic-island.png');
-    expect(campaign).toContain("visible: 'Next climb'");
+    expect(names).not.toContain('17-dynamic-island.png');
+    expect(campaign).not.toContain("visible: 'Next climb'");
     function assertUnconditionalCaptures(node: unknown, conditional = false): void {
       if (Array.isArray(node)) {
         for (const child of node) assertUnconditionalCaptures(child, conditional);

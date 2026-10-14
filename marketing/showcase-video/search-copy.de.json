@@ -2,8 +2,7 @@
   "boards": "Jedes Board.\nEine *App.*",
   "spray": "Deine Spraywall\n*auch.*",
   "crew": "Deine Crew.\nEine *Warteschlange.*",
-  "island": "Nächster Boulder.\nAuf der *Island.*",
-  "outro": "Weniger Handy.\nMehr *Wand.*",
+  "island": "Nächster Boulder.\nAußerhalb der *App.*",
   "kilter": "Kompatibel mit\n*Kilter.*",
   "kilterLog": "Importiere dein\n*Routenbuch.*",
   "friends": "Die Crew wählt\n*deinen Boulder.*",
@@ -11,10 +10,12 @@
   "tensionLog": "Importiere dein\n*Routenbuch.*",
   "tensionFriends": "Tension mit\ndeiner *Crew.*",
   "moonboard": "Kompatibel mit\n*MoonBoard.*",
-  "moonboardLog": "Importiere dein\n*Routenbuch.*",
-  "grade": "Boulder in\ndeinem *Grad.*",
   "spraySet": "Schraube deine\n*Spraywall.*",
   "photo": "Griffe auf\ndeinem *Foto.*",
   "sends": "Jede Begehung\n*festhalten.*",
-  "gymBoards": "Hallenboards\n*auch.*"
+  "gymBoards": "Hallenboards\n*auch.*",
+  "sprayNext": "Nächster Boulder.\nGleiche *Wand.*",
+  "moonboardGrade": "Filtern nach\n*Grad.*",
+  "climbHolds": "Sieh den Boulder.\nJeder *Griff.*",
+  "moonboardLog": "Bring dein\n*Routenbuch mit.*"
 }

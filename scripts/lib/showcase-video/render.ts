@@ -116,8 +116,11 @@ export type ShowcasePhone = Readonly<{
   rim: number;
   /** Outer corner radius; the bezel and screen corners follow it inward. */
   bodyRadius: number;
-  /** The iPhone's Dynamic Island, or the Pixel's centred punch-hole camera. */
-  camera: Readonly<{ kind: 'island' }> | Readonly<{ kind: 'punch-hole'; diameter: number; top: number }>;
+  /** Captured native screens already contain their real camera cutout. */
+  camera:
+    | Readonly<{ kind: 'none' }>
+    | Readonly<{ kind: 'island' }>
+    | Readonly<{ kind: 'punch-hole'; diameter: number; top: number }>;
   /** Side buttons: which edge, top and length in px. */
   buttons: ReadonlyArray<Readonly<{ side: 'left' | 'right'; top: number; height: number }>>;
 }>;
@@ -141,6 +144,21 @@ export const SHOWCASE_PHONE: ShowcasePhone = {
     { side: 'right', top: 300, height: 136 },
     { side: 'right', top: 588, height: 84 },
   ],
+};
+
+/** Native iPhone 13 Pro Lock Screen: keep its captured notch and wallpaper unchanged. */
+export const NATIVE_LOCK_SCREEN_PHONE: ShowcasePhone = {
+  platform: 'ios',
+  width: 416,
+  height: 870,
+  screenWidth: 390,
+  screenHeight: 844,
+  screenInset: 13,
+  rim: 3,
+  bodyRadius: 60,
+  camera: { kind: 'none' },
+  // No synthetic controls from a different phone generation.
+  buttons: [],
 };
 
 /** The Android recording's screen: a Pixel 9-class emulator, 1080x2424 px (412x923 dp at 420 dpi). */
@@ -1514,7 +1532,11 @@ export type StageTake = Readonly<{
   frameCount: number;
   /** Footage ranges the take's scene plays (`takeSegments`). */
   segments: readonly FootageRange[];
+  /** Store-search repeated takes select a separate real source range per caption. */
+  segmentsByCaption?: Readonly<Record<string, readonly FootageRange[]>>;
   screen: Readonly<{ width: number; height: number }>;
+  presentation?: 'live-activity-card' | 'native-lock-screen';
+  editorialStartSeconds?: number;
   anchors: Partial<Record<ShowcaseCalloutName, readonly ShowcaseAnchorSample[]>>;
 }>;
 
@@ -1597,12 +1619,15 @@ export type ShowcaseStageData = Readonly<{
     variant: string;
     crossfadeFrames: number;
     crewPhonePose?: ShowcasePose;
+    nativeLockScreenPhone?: ShowcasePhone;
+    nativeLockScreenPose?: ShowcasePose;
     captions: Readonly<Record<string, string>>;
     sources?: readonly Readonly<{
       takeId: ShowcaseTakeId;
       footage: string;
       framesSha256: string;
       marksSha256: string;
+      nativeFixtureSourcePngSha256?: string;
     }>[];
   }>;
   width: number;

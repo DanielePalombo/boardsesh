@@ -197,5 +197,15 @@
   "cppTensionSearch": {
     "headline": "Directo a\ntu grado",
     "description": "Y oculta los que ya encadenaste."
+  },
+  "storeLiveActivity": {
+    "headline": "Siguiente bloque.\nFuera de la app.",
+    "description": "Cambia de bloque sin abrir la app.",
+    "emphasis": "Fuera de la app."
+  },
+  "cppLiveActivity": {
+    "headline": "Siguiente bloque.\nFuera de la app.",
+    "description": "Cambia de bloque sin abrir la app.",
+    "emphasis": "Fuera de la app."
   }
 }

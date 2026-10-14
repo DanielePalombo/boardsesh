@@ -2226,26 +2226,28 @@ export function renderCppMaestroFlow(
           },
         ]
       : []),
-    ...['search', 'workout', 'status', 'queue', 'logbook', 'led', 'island'].map((scene) => ({
-      command:
-        target !== 'spray' && ipad && scene === 'island'
-          ? 'kiosk'
-          : target !== 'spray' && ipad && scene === 'status'
-            ? 'status-ipad'
-            : scene,
-      filename: [
-        '02-search',
-        '03-logbook',
-        target === 'spray' ? '04-setting' : '04-led',
-        '05-queue',
-        '06-workout',
-        target === 'spray' ? '07-playlist' : '07-status',
-        target === 'spray' ? '08-holds' : ipad ? '08-kiosk' : '08-island',
-      ][['search', 'logbook', 'led', 'queue', 'workout', 'status', 'island'].indexOf(scene)],
-      ready: coverage.scenes[scene].readyTextByLocale?.[locale] ?? coverage.scenes[scene].readyText,
-      wallEditor: false,
-      variant: undefined,
-    })),
+    ...['search', 'workout', 'status', 'queue', 'logbook', 'led', 'island']
+      .filter((scene) => scene !== 'island' || ipad || !page.recipes.phone.some((recipe) => recipe.liveActivity))
+      .map((scene) => ({
+        command:
+          target !== 'spray' && ipad && scene === 'island'
+            ? 'kiosk'
+            : target !== 'spray' && ipad && scene === 'status'
+              ? 'status-ipad'
+              : scene,
+        filename: [
+          '02-search',
+          '03-logbook',
+          target === 'spray' ? '04-setting' : '04-led',
+          '05-queue',
+          '06-workout',
+          target === 'spray' ? '07-playlist' : '07-status',
+          target === 'spray' ? '08-holds' : ipad ? '08-kiosk' : '08-island',
+        ][['search', 'logbook', 'led', 'queue', 'workout', 'status', 'island'].indexOf(scene)],
+        ready: coverage.scenes[scene].readyTextByLocale?.[locale] ?? coverage.scenes[scene].readyText,
+        wallEditor: false,
+        variant: undefined,
+      })),
   ];
   const commands: string[] = [];
   const gradeFilter = coverage.scenes.search.gradeFilter;

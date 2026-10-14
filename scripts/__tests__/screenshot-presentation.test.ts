@@ -91,7 +91,7 @@ describe('board-specific CPP openings', () => {
           'cppKilterGrade',
           'cppKilterLogbookImport',
           'cppQueue',
-          island,
+          device.startsWith('ipad-') ? 'cppKiosk' : 'cppLiveActivity',
           'cppSearch',
           'cppWorkout',
           'cppStatus',

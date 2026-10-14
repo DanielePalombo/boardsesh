@@ -197,5 +197,15 @@
   "cppTensionSearch": {
     "headline": "Direkt zu\ndeinem Grad",
     "description": "Dann blende getoppte Boulder aus."
+  },
+  "storeLiveActivity": {
+    "headline": "Nächster Boulder.\nAußerhalb der App.",
+    "description": "Wechsle den Boulder, ohne die App zu öffnen.",
+    "emphasis": "Außerhalb der App."
+  },
+  "cppLiveActivity": {
+    "headline": "Nächster Boulder.\nAußerhalb der App.",
+    "description": "Wechsle den Boulder, ohne die App zu öffnen.",
+    "emphasis": "Außerhalb der App."
   }
 }

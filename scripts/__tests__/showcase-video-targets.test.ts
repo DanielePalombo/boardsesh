@@ -76,11 +76,11 @@ describe('the target registry', () => {
         expect(target.scenes.length, target.name).toBeGreaterThan(0);
         for (const step of target.scenes) expect(storyboard.has(step.id), `${target.name}/${step.id}`).toBe(true);
         expect(new Set(target.scenes.map((step) => step.id)).size, target.name).toBe(target.scenes.length);
-        // The loop: every motion cut opens on the boards trio (the poster, and where
-        // the closer lands), goes straight to the spray wall, and closes on the outro.
+        // The loop opens on the boards trio and continues to the spray wall.
+        // Search ends on its native card; the other targets retain their outro.
         expect(target.scenes[0].id, target.name).toBe('boards');
         expect(target.scenes[1].id, target.name).toBe('spray');
-        expect(target.scenes.at(-1)?.id, target.name).toBe('outro');
+        expect(target.scenes.at(-1)?.id, target.name).toBe(target.storeSearch ? 'lock-screen' : 'outro');
       } else {
         expect(target.scenes, target.name).toEqual([]);
         expect(target.clips.length, target.name).toBeGreaterThan(0);
