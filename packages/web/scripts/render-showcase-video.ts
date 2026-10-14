@@ -3,6 +3,7 @@ import {
   storeSearchCopyPath,
   storeSearchCopyProblems,
   storeSearchRecordingProblems,
+  storeSearchNativeLockScreenProblems,
   storeSearchTakeIds,
   storeSearchRequiredFootageProblems,
   storeSearchTakeSegments,
@@ -100,6 +101,7 @@ import {
   renderWorkDirs,
   showcasePhone,
   storeSearchCrewPhonePose,
+  NATIVE_LOCK_SCREEN_PHONE,
   buildBoardRenderUrl,
   buildClimbSearchRequest,
   buildAppPreviewArgs,
@@ -115,7 +117,6 @@ import {
   buildWebMp4PassArgs,
   buildWebmPassArgs,
   footageTakeDir,
-  nativeAppCardCropProblems,
   layoutSceneCallouts,
   parseRenderArgs,
   placeholderAnchorsFile,
@@ -567,8 +568,6 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     if (problems.length) throw new Error(`${takeId}: ${problems.join('; ')}. Re-record this locale and board.`);
     const { width, height } = await sharp(resolve(directory, '00001.jpg')).metadata();
     if (!width || !height) throw new Error(`${takeId}: unreadable first native frame`);
-    const cropProblems = nativeAppCardCropProblems(marks, takeId, search.variant, { width, height });
-    if (cropProblems.length) throw new Error(`${takeId}: ${cropProblems.join('; ')}. Review the native card bounds.`);
     if (
       marks.editorialStartSeconds !== undefined &&
       (!Number.isFinite(marks.editorialStartSeconds) ||
@@ -577,24 +576,21 @@ async function loadSearchFootage(source: FootageSource, target: ShowcaseTarget):
     )
       throw new Error(`${takeId}: editorial selection is outside the native capture`);
     const nativeFixture =
-      marks.presentation === 'live-activity-card' &&
+      marks.presentation === 'native-lock-screen' &&
       (marks.boardKind === 'kilter' || marks.boardKind === 'tension' || marks.boardKind === 'moonboard')
         ? loadLiveActivityFixture(marks.boardKind, search.locale)
         : undefined;
-    if (
-      nativeFixture &&
-      (width !== nativeFixture.provenance.cropRect.width || height !== nativeFixture.provenance.cropRect.height)
-    )
-      throw new Error(`${takeId}: native footage does not match the reviewed card mask dimensions`);
+    if (nativeFixture) {
+      const fixtureProblems = storeSearchNativeLockScreenProblems(marks, { width, height }, nativeFixture.provenance);
+      if (fixtureProblems.length) throw new Error(`${takeId}: ${fixtureProblems.join('; ')}`);
+    }
     takes[takeId] = {
       frameUrlBase: `${pathToFileURL(directory).href}/`,
       frameCount,
       segments: [[SHOWCASE_FPS, frameCount]],
       screen: { width, height },
       ...(marks.presentation ? { presentation: marks.presentation } : {}),
-      ...(marks.sourceCrop ? { sourceCrop: marks.sourceCrop } : {}),
       ...(marks.editorialStartSeconds !== undefined ? { editorialStartSeconds: marks.editorialStartSeconds } : {}),
-      ...(nativeFixture ? { nativeMaskUrl: pathToFileURL(nativeFixture.maskPath).href } : {}),
       anchors: {},
     };
   }
@@ -674,6 +670,9 @@ function prepareCut(footage: Footage, target: ShowcaseTarget, donationLine: bool
         .sort()) {
         framesHash.update(name).update(readFileSync(resolve(directory, name)));
       }
+      const sourceMarks = JSON.parse(
+        readFileSync(marksFilePath(takeId, footage.source.dirs), 'utf8'),
+      ) as ShowcaseMarksFile;
       return {
         takeId,
         footage: relative(REPO_ROOT, directory),
@@ -681,6 +680,9 @@ function prepareCut(footage: Footage, target: ShowcaseTarget, donationLine: bool
         marksSha256: createHash('sha256')
           .update(readFileSync(marksFilePath(takeId, footage.source.dirs)))
           .digest('hex'),
+        ...(sourceMarks.nativeFixtureSourcePngSha256
+          ? { nativeFixtureSourcePngSha256: sourceMarks.nativeFixtureSourcePngSha256 }
+          : {}),
       };
     });
     const boards = planBoards(
@@ -784,6 +786,12 @@ function stageData(prepared: Prepared, rendition: ShowcaseRendition, measure: bo
           storeSearch: {
             ...prepared.storeSearch,
             crewPhonePose: storeSearchCrewPhonePose(prepared.phone, { width, height }, rendition.safeArea),
+            nativeLockScreenPhone: NATIVE_LOCK_SCREEN_PHONE,
+            nativeLockScreenPose: storeSearchCrewPhonePose(
+              NATIVE_LOCK_SCREEN_PHONE,
+              { width, height },
+              rendition.safeArea,
+            ),
           },
         }
       : {}),

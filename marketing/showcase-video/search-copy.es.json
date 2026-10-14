@@ -15,7 +15,7 @@
   "sends": "Cada encadene\n*cuenta.*",
   "gymBoards": "Plafones del\n*rocódromo.*",
   "sprayNext": "Siguiente bloque.\nMismo *muro.*",
-  "moonboardCsv": "Importa tu CSV.\n*Empieza aquí.*",
   "moonboardGrade": "Filtra por\n*grado.*",
-  "climbHolds": "Mira el bloque.\nCada *presa.*"
+  "climbHolds": "Mira el bloque.\nCada *presa.*",
+  "moonboardLog": "Trae tu\n*registro.*"
 }

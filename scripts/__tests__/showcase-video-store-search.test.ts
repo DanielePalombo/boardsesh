@@ -14,9 +14,9 @@ import {
   parseHeadline,
   storeSearchCrewPhonePose,
   SHOWCASE_PHONE,
+  NATIVE_LOCK_SCREEN_PHONE,
   screenToCanvas,
   footageAt,
-  nativeAppCardCropProblems,
 } from '../lib/showcase-video/render';
 import {
   creativeVideoProblems,
@@ -33,6 +33,7 @@ import {
   storeSearchCopyProblems,
   storeSearchPlan,
   storeSearchRecordingProblems,
+  storeSearchNativeLockScreenProblems,
   storeSearchRequiredFootageProblems,
   storeSearchTakeSegments,
   storeSearchTakeIds,
@@ -47,39 +48,6 @@ const validMedia: ProbedMedia = {
 };
 
 describe('Apple search video', () => {
-  it('requires reviewed in-frame MoonBoard CSV card bounds without family substitution', () => {
-    const metadata = {
-      kind: 'moonboard',
-      boardKind: 'moonboard',
-      presentation: 'native-app-card',
-      sourceCrop: { x: 28, y: 330, width: 744, height: 296 },
-    };
-    const screen = { width: 800, height: 1738 };
-    expect(nativeAppCardCropProblems(metadata, 'moonboard-import', 'moonboard', screen)).toEqual([]);
-    for (const override of [
-      { presentation: undefined },
-      { presentation: 'live-activity-card' },
-      { boardKind: 'kilter' },
-      { kind: 'kilter' },
-      { sourceCrop: undefined },
-      { sourceCrop: { ...metadata.sourceCrop, x: -1 } },
-      { sourceCrop: { ...metadata.sourceCrop, y: 330.5 } },
-      { sourceCrop: { ...metadata.sourceCrop, width: 0 } },
-      { sourceCrop: { ...metadata.sourceCrop, width: 800 } },
-      { sourceCrop: { ...metadata.sourceCrop, height: 1738 } },
-      { sourceCrop: { ...metadata.sourceCrop, height: Number.NaN } },
-    ])
-      expect(
-        nativeAppCardCropProblems({ ...metadata, ...override }, 'moonboard-import', 'moonboard', screen),
-      ).not.toEqual([]);
-    expect(nativeAppCardCropProblems(metadata, 'moonboard-import', 'kilter', screen)).not.toEqual([]);
-    expect(nativeAppCardCropProblems(metadata, 'boards-moonboard', 'moonboard', screen)).not.toEqual([]);
-    expect(
-      nativeAppCardCropProblems({ sourceCrop: metadata.sourceCrop }, 'boards-moonboard', 'moonboard', screen),
-    ).not.toEqual([]);
-    expect(nativeAppCardCropProblems({}, 'boards-moonboard', 'moonboard', screen)).toEqual([]);
-  });
-
   it('uses High level 5.0, exactly 30 fps, and no audio', () => {
     const args = buildStoreSearchArgs('input.mkv', 'output.mp4');
     expect(args[args.indexOf('-profile:v') + 1]).toBe('high');
@@ -154,24 +122,21 @@ describe('Apple search video', () => {
     }
   });
 
-  it('requires actual MoonBoard CSV entry and loaded filters without a crew dependency', () => {
-    const available = new Set<import('../lib/showcase-video/contract').ShowcaseTakeId>([
-      'boards-moonboard',
-      'moonboard-import',
-    ]);
+  it('requires actual MoonBoard logged history and loaded filters without a crew dependency', () => {
+    const available = new Set<import('../lib/showcase-video/contract').ShowcaseTakeId>(['boards-moonboard', 'log']);
     expect(storeSearchRequiredFootageProblems('moonboard', available)).toEqual([
       'Missing required native take: moonboard-filter',
     ]);
     const plan = storeSearchPlan('moonboard');
     expect(plan.map((scene) => [scene.caption, scene.frames])).toEqual([
       ['moonboard', 90],
-      ['moonboardCsv', 90],
+      ['moonboardLog', 90],
       ['moonboardGrade', 120],
       ['climbHolds', 150],
     ]);
     expect(plan.flatMap((scene) => scene.takes ?? [])).toEqual([
       'boards-moonboard',
-      'moonboard-import',
+      'log',
       'moonboard-filter',
       'boards-moonboard',
     ]);
@@ -179,6 +144,40 @@ describe('Apple search video', () => {
     expect(() =>
       storeSearchTakeSegments('moonboard', 'moonboardGrade', 'moonboard-filter', 120, { frameCount: 300 }, {}),
     ).toThrow('grade-filter-shown');
+  });
+
+  it('keeps the MoonBoard history beat on its real family filter and exact locale', () => {
+    const metadata = {
+      takeId: 'log',
+      locale: 'es',
+      kind: 'moonboard',
+      platform: 'ios',
+      validated: true,
+      recordedAt: '2026-10-14T00:00:00Z',
+    };
+    expect(storeSearchRecordingProblems(metadata, 'log', 'es', 'moonboard')).toEqual([]);
+    expect(storeSearchRecordingProblems({ ...metadata, kind: 'kilter' }, 'log', 'es', 'moonboard')).not.toEqual([]);
+    expect(storeSearchRecordingProblems({ ...metadata, boardKind: 'kilter' }, 'log', 'es', 'moonboard')).not.toEqual(
+      [],
+    );
+    expect(storeSearchRecordingProblems({ ...metadata, locale: 'en-US' }, 'log', 'es', 'moonboard')).not.toEqual([]);
+    expect(
+      storeSearchRecordingProblems({ ...metadata, presentation: 'native-app-card' }, 'log', 'es', 'moonboard'),
+    ).not.toEqual([]);
+    expect(storeSearchTakeIds('moonboard')).toContain('log');
+    expect(storeSearchTakeIds('moonboard')).not.toContain('moonboard-import');
+    expect(
+      storeSearchRequiredFootageProblems(
+        'moonboard',
+        new Set(['boards-moonboard', 'moonboard-filter', 'moonboard-import']),
+      ),
+    ).toEqual(['Missing required native take: log']);
+    expect(() =>
+      storeSearchTakeSegments('moonboard', 'moonboardLog', 'log', 90, { frameCount: 300 }, { scrolled: 2 }),
+    ).toThrow('filter-moonboard');
+    expect(
+      storeSearchTakeSegments('moonboard', 'moonboardLog', 'log', 90, { frameCount: 300 }, { 'filter-moonboard': 2 }),
+    ).toEqual([[48, 300]]);
   });
 
   it('rejects a wrong native family even when the named take and locale claim MoonBoard', () => {
@@ -221,26 +220,26 @@ describe('Apple search video', () => {
     expect(storeSearchPlan('default').map((scene) => scene.frames)).toEqual([150, 150, 150, 150]);
     expect(storeSearchPlan('spray').at(-1)).toMatchObject({ id: 'spray', caption: 'sprayNext', frames: 90 });
     expect(storeSearchPlan('tension').at(-1)).toMatchObject({
-      id: 'boards',
-      caption: 'climbHolds',
+      id: 'lock-screen',
+      caption: 'island',
       frames: 90,
-      takes: ['boards-tension'],
     });
   });
 
-  it('requires fresh Tension crew and keeps its ending on the actual Tension hold map', () => {
+  it('requires fresh Tension crew and its matched complete native Lock Screen', () => {
     const plan = storeSearchPlan('tension');
     expect(plan.map((scene) => [scene.caption, scene.frames])).toEqual([
       ['tension', 105],
       ['tensionLog', 150],
       ['tensionFriends', 105],
-      ['climbHolds', 90],
+      ['island', 90],
     ]);
     expect(storeSearchRequiredFootageProblems('tension', new Set(['boards-tension', 'log']))).toEqual([
       'Missing required native take: crew',
+      'Missing required native take: lock-screen',
     ]);
-    expect(storeSearchTakeIds('tension')).not.toContain('lock-screen');
-    expect(plan.some((scene) => scene.caption === 'island')).toBe(false);
+    expect(storeSearchTakeIds('tension')).toContain('lock-screen');
+    expect(plan.some((scene) => scene.caption === 'island')).toBe(true);
     const metadata = {
       takeId: 'boards-tension',
       locale: 'fr',
@@ -263,7 +262,8 @@ describe('Apple search video', () => {
       locale: 'fr',
       kind: 'kilter',
       boardKind: 'kilter',
-      presentation: 'live-activity-card',
+      presentation: 'native-lock-screen',
+      nativeFixtureSourcePngSha256: 'a'.repeat(64),
       platform: 'ios',
       validated: true,
       recordedAt: '2026-10-14T00:00:00Z',
@@ -273,6 +273,8 @@ describe('Apple search video', () => {
       { kind: 'default' },
       { boardKind: 'moonboard' },
       { presentation: undefined },
+      { presentation: 'live-activity-card' },
+      { nativeFixtureSourcePngSha256: undefined },
       { locale: 'en-US' },
       { validated: false },
     ])
@@ -319,18 +321,92 @@ describe('Apple search video', () => {
       platform: 'ios',
       recordedAt: '2026-10-14T00:00:00Z',
       validated: true,
-      presentation: 'live-activity-card',
+      presentation: 'native-lock-screen',
+      nativeFixtureSourcePngSha256: 'a'.repeat(64),
       boardKind: 'kilter',
     };
     expect(storeSearchRecordingProblems(metadata, 'lock-screen', 'en-US', 'kilter')).toEqual([]);
     expect(
       storeSearchRecordingProblems({ ...metadata, presentation: undefined }, 'lock-screen', 'en-US', 'kilter'),
-    ).toContain('Kilter ending requires a native Live Activity card crop');
+    ).toContain('Ending requires a complete native Lock Screen');
     expect(
       storeSearchRecordingProblems({ ...metadata, boardKind: 'tension' }, 'lock-screen', 'en-US', 'kilter'),
-    ).toContain('Live Activity must show the actual Kilter board');
+    ).toContain('Live Activity must show the actual kilter board');
     const timeline = resolveTimeline(new Set(['boards-kilter', 'log', 'crew']), storeSearchPlan('kilter'));
     expect(timeline.skipped).not.toContain('lock-screen');
+  });
+
+  it('binds the full native phone to its reviewed fixture, family, locale and source hash', () => {
+    const metadata = { boardKind: 'tension', locale: 'fr', nativeFixtureSourcePngSha256: 'a'.repeat(64) };
+    const screen = { width: 1170, height: 2532 };
+    const fixture: Parameters<typeof storeSearchNativeLockScreenProblems>[2] = {
+      captureFraming: 'full-screen',
+      captureSurface: 'lock-screen',
+      lockScreenContext: {
+        wallpaper: 'Actual mountain photograph',
+        deviceLocked: true,
+        unrelatedNotificationsDismissed: true,
+        liveActivityRect: { x: 30, y: 714, width: 1110, height: 435 },
+      },
+      boardFamily: 'tension',
+      appLocale: 'fr',
+      sourcePngSha256: 'a'.repeat(64),
+      device: 'iPhone13Pro',
+      nativePixels: screen,
+      screenPoints: { width: 390, height: 844 },
+      cropRect: { x: 0, y: 0, ...screen },
+    };
+    expect(storeSearchNativeLockScreenProblems(metadata, screen, fixture)).toEqual([]);
+    for (const override of [
+      { captureFraming: undefined },
+      { captureSurface: 'notification-center' as const },
+      { lockScreenContext: undefined },
+      { boardFamily: 'kilter' as const },
+      { appLocale: 'en-US' as const },
+      { sourcePngSha256: 'b'.repeat(64) },
+      { device: 'iPhone16ProMax' },
+      { nativePixels: { width: 1320, height: 2868 } },
+      { screenPoints: { width: 440, height: 956 } },
+      { cropRect: { x: 30, y: 714, width: 1110, height: 435 } },
+    ])
+      expect(storeSearchNativeLockScreenProblems(metadata, screen, { ...fixture, ...override })).not.toEqual([]);
+    expect(storeSearchNativeLockScreenProblems(metadata, { width: 1110, height: 435 }, fixture)).not.toEqual([]);
+    for (const override of [{ nativeFixtureSourcePngSha256: undefined }, { boardKind: 'kilter' }, { locale: 'es' }])
+      expect(storeSearchNativeLockScreenProblems({ ...metadata, ...override }, screen, fixture)).not.toEqual([]);
+  });
+
+  it('keeps actual native Next timing and a readable changed climb inside the whole-phone ending', () => {
+    const take = { frameCount: 240, presentation: 'native-lock-screen' as const, editorialStartSeconds: 2 };
+    const marks = { 'activity-ready': 1, 'next-tapped': 3 };
+    const segments = storeSearchTakeSegments('tension', 'island', 'lock-screen', 90, take, marks);
+    expect(segments).toEqual([[60, 150]]);
+    expect(footageAt(segments, 0, take.frameCount)).toBe(60);
+    expect(footageAt(segments, 30, take.frameCount)).toBe(90);
+    expect(footageAt(segments, 77, take.frameCount)).toBe(137);
+    for (const badMarks of [
+      { 'activity-ready': 1 },
+      { ...marks, 'next-tapped': 5 },
+      { ...marks, 'activity-ready': 4 },
+      { ...marks, 'next-tapped': NaN },
+    ])
+      expect(() => storeSearchTakeSegments('tension', 'island', 'lock-screen', 90, take, badMarks)).toThrow();
+    for (const badTake of [
+      { ...take, presentation: 'live-activity-card' as const },
+      { ...take, editorialStartSeconds: 0 },
+      { ...take, editorialStartSeconds: 2.8 },
+      { ...take, frameCount: 110 },
+    ])
+      expect(() => storeSearchTakeSegments('tension', 'island', 'lock-screen', 90, badTake, marks)).toThrow();
+  });
+
+  it('rejects a short Lock Screen capture instead of holding or repeating frames around Next', () => {
+    const take = { frameCount: 149, presentation: 'native-lock-screen' as const, editorialStartSeconds: 2 };
+    const marks = { 'activity-ready': 1, 'next-tapped': 3 };
+    // Before and settled-after frames exist, but the entire real-time beat does not.
+    expect(() => storeSearchTakeSegments('kilter', 'island', 'lock-screen', 90, take, marks)).toThrow();
+    expect(storeSearchTakeSegments('kilter', 'island', 'lock-screen', 90, { ...take, frameCount: 150 }, marks)).toEqual(
+      [[60, 150]],
+    );
   });
 
   it('keeps localized captions brief and manufacturer names out of generic captions', () => {
@@ -340,7 +416,7 @@ describe('Apple search video', () => {
     for (const locale of STORE_SEARCH_LOCALES) {
       const copy = JSON.parse(readFileSync(storeSearchCopyPath(locale), 'utf8')) as StoreSearchCopy;
       expect(Object.keys(copy).sort()).toEqual(expectedKeys);
-      for (const removed of ['outro', 'moonboardLog', 'grade']) expect(copy).not.toHaveProperty(removed);
+      for (const removed of ['outro', 'moonboardCsv', 'grade']) expect(copy).not.toHaveProperty(removed);
       expect(storeSearchCopyProblems(copy), locale).toEqual([]);
       const islandWords = parseHeadline(copy.island).flat();
       expect(
@@ -396,6 +472,30 @@ describe('store search crew framing', () => {
       expect(rect.x).toBeGreaterThan(120 + 740);
       expect(rect.x + rect.width).toBeLessThanOrEqual(canvas.width - safeArea.right);
     }
+  });
+
+  it('fits the complete 13 Pro Lock Screen with no synthetic camera or newer-generation controls', () => {
+    const phone = NATIVE_LOCK_SCREEN_PHONE;
+    expect(phone).toMatchObject({
+      width: 416,
+      height: 870,
+      screenWidth: 390,
+      screenHeight: 844,
+      screenInset: 13,
+      camera: { kind: 'none' },
+      buttons: [],
+    });
+    expect(phone.screenWidth / phone.screenHeight).toBe(1170 / 2532);
+    const pose = storeSearchCrewPhonePose(phone, canvas, safeArea);
+    expect(pose).toEqual({ cx: 1420, cy: 640, scale: 1040 / 870, rx: 0, ry: 0, rz: 0 });
+    expect(pose.cy - (phone.height * pose.scale) / 2).toBe(120);
+    expect(pose.cy + (phone.height * pose.scale) / 2).toBe(1160);
+    const timeline = readFileSync(new URL('../../marketing/showcase-video/timeline.mjs', import.meta.url), 'utf8');
+    expect(timeline).toContain("if (!nativeScreen) el('div', { class: 'gloss' }, screen)");
+    expect(timeline).toContain("if (phone.camera.kind !== 'none')");
+    expect(timeline).toContain('nativeLockScreen ? data.storeSearch.nativeLockScreenPhone : data.phone');
+    expect(timeline).toContain('? data.storeSearch.nativeLockScreenPose');
+    expect(timeline).not.toContain('buildLiveActivityCard');
   });
 
   it('fits every crew caption while keeping non-crew framing and loop painting unchanged', () => {

@@ -15,7 +15,7 @@
   "sends": "Jede Begehung\n*festhalten.*",
   "gymBoards": "Hallenboards\n*auch.*",
   "sprayNext": "Nächster Boulder.\nGleiche *Wand.*",
-  "moonboardCsv": "Dein CSV-Import.\n*Starte hier.*",
   "moonboardGrade": "Filtern nach\n*Grad.*",
-  "climbHolds": "Sieh den Boulder.\nJeder *Griff.*"
+  "climbHolds": "Sieh den Boulder.\nJeder *Griff.*",
+  "moonboardLog": "Bring dein\n*Routenbuch mit.*"
 }

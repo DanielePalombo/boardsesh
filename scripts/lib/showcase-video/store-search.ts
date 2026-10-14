@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { SHOWCASE_FPS, SHOWCASE_STAGE_DIR, type ShowcaseTakeId } from './contract';
 import type { FootageRange, StageTake } from './render';
 import type { ShowcaseScenePlan } from './timeline';
+import type { LiveActivityFixture } from '../screenshot-live-activity';
 
 export const STORE_SEARCH_LOCALES = ['en-US', 'es', 'fr', 'de'] as const;
 export type StoreSearchLocale = (typeof STORE_SEARCH_LOCALES)[number];
@@ -66,12 +67,12 @@ export function storeSearchPlan(variant: StoreSearchVariant): readonly ShowcaseS
       beat('boards', 'tension', 105, ['boards-tension']),
       beat('log', 'tensionLog', 150),
       beat('crew', 'tensionFriends', 105),
-      beat('boards', 'climbHolds', 90, ['boards-tension']),
+      beat('lock-screen', 'island', 90),
     ];
   if (variant === 'moonboard')
     return [
       beat('boards', 'moonboard', 90, ['boards-moonboard']),
-      beat('log', 'moonboardCsv', 90, ['moonboard-import']),
+      beat('log', 'moonboardLog', 90, ['log']),
       beat('wall', 'moonboardGrade', 120, ['moonboard-filter']),
       beat('boards', 'climbHolds', 150, ['boards-moonboard']),
     ];
@@ -103,6 +104,7 @@ export function storeSearchRecordingProblems(
     recordedAt?: string;
     validated?: boolean;
     presentation?: string;
+    nativeFixtureSourcePngSha256?: string;
     boardKind?: string;
   }>,
   takeId: ShowcaseTakeId,
@@ -117,6 +119,18 @@ export function storeSearchRecordingProblems(
   if (metadata.kind !== sourceKind)
     problems.push(`recording variant ${metadata.kind ?? 'missing'}, expected ${sourceKind}`);
   if (metadata.platform !== 'ios') problems.push('Apple creative requires a native iOS recording');
+  if (
+    metadata.presentation !== undefined &&
+    (metadata.presentation !== 'native-lock-screen' || takeId !== 'lock-screen')
+  )
+    problems.push(`unsupported native presentation ${metadata.presentation}`);
+  if (
+    takeId === 'log' &&
+    variant === 'moonboard' &&
+    metadata.boardKind !== undefined &&
+    metadata.boardKind !== 'moonboard'
+  )
+    problems.push('MoonBoard history must not claim another native board family');
   const crewFamily =
     takeId === 'crew'
       ? variant === 'default' || variant === 'kilter'
@@ -135,13 +149,61 @@ export function storeSearchRecordingProblems(
   if (boardFamily && metadata.boardKind !== boardFamily)
     problems.push(`native board ${metadata.boardKind ?? 'missing'}, expected ${boardFamily}`);
 
-  if (takeId === 'lock-screen' && (variant === 'kilter' || variant === 'default')) {
-    if (metadata.presentation !== 'live-activity-card')
-      problems.push('Kilter ending requires a native Live Activity card crop');
-    if (metadata.boardKind !== 'kilter') problems.push('Live Activity must show the actual Kilter board');
+  if (takeId === 'lock-screen') {
+    if (metadata.presentation !== 'native-lock-screen') problems.push('Ending requires a complete native Lock Screen');
+    const family = variant === 'default' ? 'kilter' : variant;
+    if (metadata.boardKind !== family) problems.push(`Live Activity must show the actual ${family} board`);
+    if (!/^[a-f0-9]{64}$/.test(metadata.nativeFixtureSourcePngSha256 ?? ''))
+      problems.push('Missing reviewed full-screen fixture source hash');
   }
   if (!metadata.recordedAt || !Number.isFinite(Date.parse(metadata.recordedAt)))
     problems.push('missing recording timestamp');
+  return problems;
+}
+
+/** Reviewed still and native video must refer to the same full phone capture context. */
+export function storeSearchNativeLockScreenProblems(
+  metadata: Readonly<{ nativeFixtureSourcePngSha256?: string; boardKind?: string; locale?: string }>,
+  screen: Readonly<{ width: number; height: number }>,
+  fixture: Pick<
+    LiveActivityFixture,
+    | 'captureFraming'
+    | 'captureSurface'
+    | 'lockScreenContext'
+    | 'boardFamily'
+    | 'appLocale'
+    | 'sourcePngSha256'
+    | 'device'
+    | 'nativePixels'
+    | 'screenPoints'
+    | 'cropRect'
+  >,
+): string[] {
+  const problems: string[] = [];
+  if (
+    fixture.captureFraming !== 'full-screen' ||
+    fixture.captureSurface !== 'lock-screen' ||
+    !fixture.lockScreenContext
+  )
+    problems.push('Native ending requires a reviewed complete, locked phone fixture');
+  if (fixture.boardFamily !== metadata.boardKind || fixture.appLocale !== metadata.locale)
+    problems.push('Native ending fixture family or app locale mismatch');
+  if (metadata.nativeFixtureSourcePngSha256 !== fixture.sourcePngSha256)
+    problems.push('Native ending fixture source hash mismatch');
+  if (
+    fixture.device !== 'iPhone13Pro' ||
+    fixture.nativePixels.width !== 1170 ||
+    fixture.nativePixels.height !== 2532 ||
+    fixture.screenPoints.width !== 390 ||
+    fixture.screenPoints.height !== 844 ||
+    screen.width !== 1170 ||
+    screen.height !== 2532 ||
+    fixture.cropRect.x !== 0 ||
+    fixture.cropRect.y !== 0 ||
+    fixture.cropRect.width !== screen.width ||
+    fixture.cropRect.height !== screen.height
+  )
+    problems.push('Native ending requires unchanged iPhone 13 Pro 1170x2532 footage');
   return problems;
 }
 
@@ -189,22 +251,41 @@ export function storeSearchTakeSegments(
     if (frameCount <= SHOWCASE_FPS) throw new Error(`${variant}: native hold map is unavailable`);
     return [[SHOWCASE_FPS, SHOWCASE_FPS + 1, sceneFrames]];
   }
+  if (takeId === 'lock-screen') {
+    if (take.presentation !== 'native-lock-screen') throw new Error('lock-screen: complete native phone required');
+    const ready = marked('activity-ready');
+    const next = marked('next-tapped');
+    const from = Math.round((take.editorialStartSeconds ?? Math.max(ready, next - 1)) * SHOWCASE_FPS);
+    // Preserve native timing, with a readable changed climb before the spring exit.
+    const settledEnd = next + 0.8;
+    if (
+      !Number.isInteger(from) ||
+      from < 0 ||
+      ready > next ||
+      from / SHOWCASE_FPS < ready ||
+      from / SHOWCASE_FPS > next - 0.4 ||
+      settledEnd * SHOWCASE_FPS >= frameCount ||
+      settledEnd * SHOWCASE_FPS > from + sceneFrames - 8 ||
+      from + sceneFrames > frameCount
+    )
+      throw new Error('lock-screen: native before, actual Next and settled result must fit the selected beat');
+    return [[from, from + sceneFrames]];
+  }
   let mark: string | undefined;
   if (takeId === 'log')
-    mark = variant === 'kilter' ? 'filter-kilter' : variant === 'tension' ? 'filter-tension' : 'scrolled';
-  if (takeId === 'lock-screen')
-    mark = take.presentation === 'live-activity-card' ? 'activity-ready' : 'island-expanded';
+    mark =
+      variant === 'kilter'
+        ? 'filter-kilter'
+        : variant === 'tension'
+          ? 'filter-tension'
+          : variant === 'moonboard'
+            ? 'filter-moonboard'
+            : 'scrolled';
   if (takeId === 'crew') mark = 'row-landed';
   if (takeId === 'spray') mark = 'next-1';
-  if (takeId === 'moonboard-import') mark = 'csv-import-entry';
   if (takeId === 'moonboard-filter') mark = 'grade-filter-shown';
   const seconds = mark ? marked(mark) : undefined;
-  const from =
-    take.presentation === 'live-activity-card' && take.editorialStartSeconds !== undefined
-      ? Math.round(take.editorialStartSeconds * SHOWCASE_FPS)
-      : seconds !== undefined
-        ? Math.max(0, Math.round((seconds - 0.4) * SHOWCASE_FPS))
-        : SHOWCASE_FPS;
+  const from = seconds !== undefined ? Math.max(0, Math.round((seconds - 0.4) * SHOWCASE_FPS)) : SHOWCASE_FPS;
   if (!Number.isInteger(from) || from < 0 || from >= frameCount)
     throw new Error(`${takeId}: unavailable native selection`);
   return [[from, frameCount]];

@@ -15,7 +15,7 @@
   "sends": "Garde chaque\n*croix.*",
   "gymBoards": "Les boards en\n*salle aussi.*",
   "sprayNext": "Bloc suivant.\nMême *mur.*",
-  "moonboardCsv": "Importe ton CSV.\n*Commence ici.*",
   "moonboardGrade": "Filtre par\n*cotation.*",
-  "climbHolds": "Regarde le bloc.\nChaque *prise.*"
+  "climbHolds": "Regarde le bloc.\nChaque *prise.*",
+  "moonboardLog": "Retrouve ton\n*carnet.*"
 }

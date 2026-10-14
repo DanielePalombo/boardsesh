@@ -206,10 +206,10 @@ export type ShowcaseMarksFile = Readonly<{
   /** False if the flow, content, board, or anchor self-check failed. */
   validated?: boolean;
   boardKind?: string;
-  /** A genuine native widget or app card, rather than a complete phone screen. */
-  presentation?: 'live-activity-card' | 'native-app-card';
-  /** Reviewed editorial bounds in the unchanged original frame's pixels. */
-  sourceCrop?: ShowcaseAnchorRect;
+  /** Explicit physical capture framing; never infer Lock Screen from an app screenshot. */
+  presentation?: 'live-activity-card' | 'native-lock-screen';
+  /** Binds physical video to the reviewed, unchanged full-screen fixture source. */
+  nativeFixtureSourcePngSha256?: string;
   /** Editorial selection in the original capture's timeline; it is not a native event. */
   editorialStartSeconds?: number;
   marks: Readonly<Record<string, number>>;

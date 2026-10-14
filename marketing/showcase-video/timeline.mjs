@@ -148,58 +148,32 @@ function buildWords(container, headline) {
  * sizes are stage variables (`init`), its camera the iPhone's Dynamic Island
  * or the Pixel's punch-hole, its side buttons wherever that phone has them.
  */
-function buildPhone(layer, zIndex) {
+function buildPhone(layer, zIndex, phone = data.phone, nativeScreen = false) {
   const shadow = el('div', { class: 'phone-shadow' }, layer);
   const rig = el('div', { class: 'phone-rig' }, layer);
-  setVars(rig, { z: zIndex });
+  setVars(rig, {
+    z: zIndex,
+    'phone-w': phone.width,
+    'phone-h': phone.height,
+    'screen-w': phone.screenWidth,
+    'screen-h': phone.screenHeight,
+    'phone-r': phone.bodyRadius,
+    rim: phone.rim,
+    bezel: phone.screenInset - phone.rim,
+  });
   const body = el('div', { class: 'phone-body' }, rig);
   const bezel = el('div', { class: 'bezel' }, body);
   const screen = el('div', { class: 'screen' }, bezel);
   const img = el('img', { alt: '', decoding: 'sync' }, screen);
-  el('div', { class: 'gloss' }, screen);
-  el('div', { class: data.phone.camera.kind === 'island' ? 'island' : 'punch-hole' }, screen);
-  for (const { side, top, height } of data.phone.buttons) {
+  if (!nativeScreen) el('div', { class: 'gloss' }, screen);
+  if (phone.camera.kind !== 'none')
+    el('div', { class: phone.camera.kind === 'island' ? 'island' : 'punch-hole' }, screen);
+  for (const { side, top, height } of phone.buttons) {
     const button = el('i', { class: `phone-btn ${side}` }, rig);
     button.style.top = `${top}px`;
     button.style.height = `${height}px`;
   }
   return { rig, img, shadow };
-}
-
-/** Display only the captured native card; surrounding notifications stay cropped out. */
-function buildLiveActivityCard(layer, zIndex, take) {
-  const width = 1120;
-  const height = (width * take.screen.height) / take.screen.width;
-  const shadow = el('div', { class: 'phone-shadow' }, layer);
-  const rig = el('div', { class: 'phone-rig search-live-activity' }, layer);
-  setVars(rig, { z: zIndex, 'phone-w': width, 'phone-h': height });
-  const img = el('img', { alt: '', decoding: 'sync' }, rig);
-  if (take.nativeMaskUrl) {
-    img.style.maskImage = `url(${take.nativeMaskUrl})`;
-    img.style.maskSize = '100% 100%';
-    img.style.maskMode = 'alpha';
-  }
-  return { rig, img, shadow, nativeCardWidth: width };
-}
-
-/** Clip unchanged source pixels to the reviewed native app card, without a phone shell. */
-function buildNativeAppCard(layer, zIndex, take) {
-  const crop = take.sourceCrop;
-  if (!crop) throw new Error('Native app card is missing reviewed sourceCrop');
-  const width = 1120;
-  const scale = width / crop.width;
-  const height = crop.height * scale;
-  const shadow = el('div', { class: 'phone-shadow' }, layer);
-  const rig = el('div', { class: 'phone-rig search-native-app-card' }, layer);
-  setVars(rig, { z: zIndex, 'phone-w': width, 'phone-h': height });
-  const img = el('img', { alt: '', decoding: 'sync' }, rig);
-  Object.assign(img.style, {
-    width: `${take.screen.width * scale}px`,
-    height: `${take.screen.height * scale}px`,
-    left: `${-crop.x * scale}px`,
-    top: `${-crop.y * scale}px`,
-  });
-  return { rig, img, shadow, nativeCardWidth: width };
 }
 
 // --- geometry -------------------------------------------------------------------
@@ -742,14 +716,21 @@ function initSearchStage() {
           word.node.style.fontSize = `${152 * scale}px`;
         });
     }
-    const phones = scene.takes.map((takeId, phoneIndex) => ({
-      takeId,
-      ...(data.takes[takeId].presentation === 'live-activity-card'
-        ? buildLiveActivityCard(layer, phoneIndex + 1, data.takes[takeId])
-        : data.takes[takeId].presentation === 'native-app-card'
-          ? buildNativeAppCard(layer, phoneIndex + 1, data.takes[takeId])
-          : buildPhone(layer, phoneIndex + 1)),
-    }));
+    const phones = scene.takes.map((takeId, phoneIndex) => {
+      const nativeLockScreen = data.takes[takeId].presentation === 'native-lock-screen';
+      if (nativeLockScreen && (!data.storeSearch.nativeLockScreenPhone || !data.storeSearch.nativeLockScreenPose))
+        throw new Error('Native Lock Screen requires its own reviewed phone geometry and safe pose');
+      return {
+        takeId,
+        nativeLockScreen,
+        ...buildPhone(
+          layer,
+          phoneIndex + 1,
+          nativeLockScreen ? data.storeSearch.nativeLockScreenPhone : data.phone,
+          nativeLockScreen,
+        ),
+      };
+    });
     return { scene, layer, caption, words, phones };
   });
   renderSearchAt(0);
@@ -777,8 +758,8 @@ function paintSearchScene(entry, frame, loopFrame = null) {
     const count = phones.length;
     const single = count === 1;
     const centre = single ? 1420 : 1390 + (index - (count - 1) / 2) * 240;
-    const slot = phone.nativeCardWidth
-      ? { cx: 1240, cy: 760, scale: 1, rx: 0, ry: 0, rz: 0 }
+    const slot = phone.nativeLockScreen
+      ? data.storeSearch.nativeLockScreenPose
       : searchPhonePose(
           phone.takeId,
           count,

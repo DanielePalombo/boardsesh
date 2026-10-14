@@ -410,22 +410,34 @@ warning; asking for `--target homepage` with it fails instead).
 
 ## Targets
 
-### Native Live Activity ending for Kilter search
+### Whole native Lock Screen endings
 
-The Kilter `store-search` cut ends with **Next climb. Outside the app.** instead
-of an empty end card. Its required `lock-screen` take is a genuine cropped
-physical-device Live Activity, identified by `presentation: "live-activity-card"`
-and `boardKind: "kilter"`. The renderer verifies the exact variant and app locale,
-requires reviewed fixture dimensions, and uses the committed fixture's exterior
-alpha to keep native video pixels while removing wallpaper outside the card.
-The card uses the hero's spring entrance and exit without a decorative phone.
+Kilter, Tension and default `store-search` cuts end with **Next climb. Outside
+of the app.** Their required `lock-screen` take is the complete physical iPhone
+13 Pro Lock Screen, identified by `presentation: "native-lock-screen"`. Preserve
+its actual clock, wallpaper, notch, Live Activity and native controls. Clear
+unrelated notifications on the phone before capture; do not remove them by
+repainting footage. A Notification Center card crop cannot substitute.
 
-`editorialStartSeconds` selects a point in the original capture timeline; it is
-an edit boundary, not a native event. Preserve the observed Next change and a
-readable hold afterwards. Record source timestamps, rejected partial redraws,
-and any clean-frame holds when converting device MJPEG samples to 30 fps.
-The physical TestFlight build has independent provenance from simulator app
-footage; never label it as current `main` when its source commit is unknown.
+The renderer requires reviewed `captureFraming: "full-screen"` fixtures with
+`captureSurface: "lock-screen"` and actual locked-screen context. Recording
+`nativeFixtureSourcePngSha256` must match that locale/family fixture's unchanged
+source PNG hash. Video dimensions must be 1170×2532, corresponding to the real
+390×844-point screen. A separate 416×870 frame fits the whole phone inside the
+safe area beside the caption. It adds no camera overlay, gloss or controls from
+a newer iPhone. Other scene geometry and the hero spring entrance/exit/loop
+stay unchanged. No exterior alpha mask or Live Activity card crop is used.
+
+Supply `activity-ready` and `next-tapped` in the original native 30 fps timeline.
+`editorialStartSeconds` is an optional edit boundary, not a native event. The
+selected beat must include at least 0.4 seconds before actual Next and 0.8 seconds
+after it before the spring exit; missing or out-of-range events stop rendering.
+Independently review the changed name, thumbnail and queue position to confirm
+that the native redraw has settled, rather than treating tap timing as proof.
+Record source timestamps, rejected partial redraws and clean-frame holds when
+converting device MJPEG samples to 30 fps. The physical TestFlight build has
+independent provenance from simulator app footage; never label it as current
+`main` when its source commit is unknown.
 
 See [Native Live Activity capture fixtures](live-activity-creative-captures.md)
 for the committed card pixels, CI screenshot reuse, and local regeneration.
@@ -757,8 +769,8 @@ How the rendered files reach the homepage (`packages/web/app/components/home/hom
 
 Kilter keeps its five three-second beats ending on the reviewed native Live
 Activity. The default cut has four five-second beats: boards, spray wall, crew,
-and that genuine Kilter card. Only the default `lock-screen` take may retain
-`kind: kilter`, `boardKind: kilter` and `presentation: live-activity-card`; the
+and that genuine Kilter Lock Screen. Only the default `lock-screen` take may retain
+`kind: kilter`, `boardKind: kilter` and `presentation: native-lock-screen`; the
 locale and validation must still match. Supply that unchanged reviewed take in
 the default review bundle (a symlink is sufficient). All other default takes
 must retain `kind: default`. Crew footage must report the actual family: Kilter
@@ -772,31 +784,23 @@ continuing through the native result. Both ordered marks and at least 0.8 second
 of genuine settled footage after the second mark are required. The stage stores
 source ranges by caption, so repeating a take cannot overwrite its earlier edit.
 
-MoonBoard uses 90 frames of its native board, 90 of the real CSV entry, 120 of
-loaded grade controls, then 150 of its actual hold map. CSV entry is captioned
-“Import your CSV. / Start here.”; it claims no completed import, result count or
-hardware control. The CSV beat shows only its genuine native MoonBoard card,
-including the import explanation, Import data and Request your data controls.
-It uses `presentation: native-app-card` and a separately reviewed `sourceCrop`
-rectangle in the original frame's pixels; the stage clips the unchanged full
-JPEG inside that rectangle. There is no phone shell or Live Activity fixture.
-Full source frames and their hashes remain unchanged. Other manufacturers and
-linked account details stay outside the crop. Missing, fractional or out-of-frame
-bounds stop the render, as does assigning this presentation to another take or
-board family. Measure and review each locale's actual native card separately.
-For an editorial review bundle, copy the producer's marks and anchors before
-adding approved bounds to the copied import marks; never alter producer metadata
-or mark a failed recording as validated. English's reviewed 800×1738 frame uses
-`{x:28,y:330,width:744,height:296}`; this is not a fallback for other locales.
-A missing or unvalidated CSV/filter take stops the render;
-these beats cannot silently disappear. The ending has no crew dependency.
+MoonBoard uses 90 frames of its native board, 90 of genuine MoonBoard-filtered
+logged history, 120 of loaded grade controls, then 150 of its actual hold map.
+The history beat says “Bring your logbook.” and requires the actual native
+`filter-moonboard` mark, matching MoonBoard recording identity and exact locale.
+A generic All boards calendar or CSV import entry cannot substitute for it.
+A missing or unvalidated log/filter take stops the render; these beats cannot
+silently disappear. The ending has no crew dependency or hardware-control claim.
+CSV import remains available as a separate explicit recorder/help feature; its
+entry card has no place in the final MoonBoard search cut.
 Tension uses 105 frames of its native board, 150 of its actual logbook, 105 of
-a freshly validated crew and 90 of the matched native Tension hold map. The
-ending uses the same generic “See the climb. / Every hold.” caption as MoonBoard.
-There is no outside-app or controller claim; a Kilter card cannot replace this
-matched-family source. A reviewed Tension Live Activity can be considered later
-only after genuine device capture and navigation proof. All header/showcase cuts
-remain unchanged.
+a freshly validated crew and 90 of its matched, complete native Lock Screen.
+Its final caption is “Next climb. / Outside the app.” and requires genuine
+Tension Next proof and that exact locale's reviewed full-screen fixture. A
+Kilter recording or old card crop cannot substitute. Controller advertising
+identity remains separate from the actual widget board family; development
+controller navigation does not establish physical wall illumination. All
+header/showcase cuts remain unchanged.
 
 The MoonBoard filter take checks the actual localized title, name, difficulty,
 grade-range label and a genuine grade-rail accessibility control. It retains an

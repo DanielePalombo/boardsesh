@@ -818,18 +818,6 @@ svg.layer {
   transform: none;
   opacity: 1;
 }
-.search-live-activity > img {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.search-native-app-card {
-  overflow: hidden;
-}
-.search-native-app-card > img {
-  position: absolute;
-  max-width: none;
-}
 #stage[data-format='3x2'] .search-caption .line {
   display: block;
   white-space: nowrap;

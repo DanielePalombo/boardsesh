@@ -116,8 +116,11 @@ export type ShowcasePhone = Readonly<{
   rim: number;
   /** Outer corner radius; the bezel and screen corners follow it inward. */
   bodyRadius: number;
-  /** The iPhone's Dynamic Island, or the Pixel's centred punch-hole camera. */
-  camera: Readonly<{ kind: 'island' }> | Readonly<{ kind: 'punch-hole'; diameter: number; top: number }>;
+  /** Captured native screens already contain their real camera cutout. */
+  camera:
+    | Readonly<{ kind: 'none' }>
+    | Readonly<{ kind: 'island' }>
+    | Readonly<{ kind: 'punch-hole'; diameter: number; top: number }>;
   /** Side buttons: which edge, top and length in px. */
   buttons: ReadonlyArray<Readonly<{ side: 'left' | 'right'; top: number; height: number }>>;
 }>;
@@ -141,6 +144,21 @@ export const SHOWCASE_PHONE: ShowcasePhone = {
     { side: 'right', top: 300, height: 136 },
     { side: 'right', top: 588, height: 84 },
   ],
+};
+
+/** Native iPhone 13 Pro Lock Screen: keep its captured notch and wallpaper unchanged. */
+export const NATIVE_LOCK_SCREEN_PHONE: ShowcasePhone = {
+  platform: 'ios',
+  width: 416,
+  height: 870,
+  screenWidth: 390,
+  screenHeight: 844,
+  screenInset: 13,
+  rim: 3,
+  bodyRadius: 60,
+  camera: { kind: 'none' },
+  // No synthetic controls from a different phone generation.
+  buttons: [],
 };
 
 /** The Android recording's screen: a Pixel 9-class emulator, 1080x2424 px (412x923 dp at 420 dpi). */
@@ -1517,42 +1535,10 @@ export type StageTake = Readonly<{
   /** Store-search repeated takes select a separate real source range per caption. */
   segmentsByCaption?: Readonly<Record<string, readonly FootageRange[]>>;
   screen: Readonly<{ width: number; height: number }>;
-  presentation?: 'live-activity-card' | 'native-app-card';
-  /** Clip the original frame; this never changes the source image or its hash. */
-  sourceCrop?: Readonly<{ x: number; y: number; width: number; height: number }>;
+  presentation?: 'live-activity-card' | 'native-lock-screen';
   editorialStartSeconds?: number;
-  nativeMaskUrl?: string;
   anchors: Partial<Record<ShowcaseCalloutName, readonly ShowcaseAnchorSample[]>>;
 }>;
-
-/** Only the reviewed MoonBoard CSV entry may use a cropped native app card. */
-export function nativeAppCardCropProblems(
-  metadata: Readonly<{ presentation?: string; sourceCrop?: unknown; kind?: string; boardKind?: string }>,
-  takeId: ShowcaseTakeId,
-  variant: string,
-  screen: Readonly<{ width: number; height: number }>,
-): string[] {
-  const appCard = metadata.presentation === 'native-app-card';
-  if (takeId !== 'moonboard-import')
-    return appCard || metadata.sourceCrop !== undefined ? ['native app crop is only allowed for moonboard-import'] : [];
-  if (!appCard) return ['MoonBoard CSV entry requires native-app-card presentation'];
-  if (variant !== 'moonboard' || metadata.kind !== 'moonboard' || metadata.boardKind !== 'moonboard')
-    return ['native app card must show the actual MoonBoard CSV entry'];
-  const crop = metadata.sourceCrop;
-  if (typeof crop !== 'object' || crop === null) return ['MoonBoard CSV entry is missing reviewed sourceCrop'];
-  const { x, y, width, height } = crop as Record<string, unknown>;
-  if (
-    ![x, y, width, height].every((coordinate) => typeof coordinate === 'number' && Number.isSafeInteger(coordinate)) ||
-    Number(x) < 0 ||
-    Number(y) < 0 ||
-    Number(width) <= 0 ||
-    Number(height) <= 0 ||
-    Number(x) + Number(width) > screen.width ||
-    Number(y) + Number(height) > screen.height
-  )
-    return ['MoonBoard CSV sourceCrop is outside the original native frame'];
-  return [];
-}
 
 // --- full-bleed (App Preview) ------------------------------------------------------
 
@@ -1633,12 +1619,15 @@ export type ShowcaseStageData = Readonly<{
     variant: string;
     crossfadeFrames: number;
     crewPhonePose?: ShowcasePose;
+    nativeLockScreenPhone?: ShowcasePhone;
+    nativeLockScreenPose?: ShowcasePose;
     captions: Readonly<Record<string, string>>;
     sources?: readonly Readonly<{
       takeId: ShowcaseTakeId;
       footage: string;
       framesSha256: string;
       marksSha256: string;
+      nativeFixtureSourcePngSha256?: string;
     }>[];
   }>;
   width: number;
