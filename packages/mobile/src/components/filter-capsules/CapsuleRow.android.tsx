@@ -10,11 +10,11 @@
 //                           a Compose FilterChip eats the long-press (#3319, #3322).
 // Active chips take the brand fill with on-fill text (filterChipBrandColors).
 
-import { Fragment, memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import { Host } from '@expo/ui';
-import { Row, HorizontalDivider, Spacer } from '@expo/ui/jetpack-compose';
-import { fillMaxWidth, horizontalScroll, padding, width } from '@expo/ui/jetpack-compose/modifiers';
+import { Row, HorizontalDivider } from '@expo/ui/jetpack-compose';
+import { fillMaxWidth, horizontalScroll, padding } from '@expo/ui/jetpack-compose/modifiers';
 import { useTheme } from '../../providers/theme-provider';
 import { spacing } from '../../theme/tokens';
 import { filterChipBrandColors } from '../../theme/expo-ui-modifiers';
@@ -116,21 +116,15 @@ function CapsuleRowComponent({ capsules }: CapsuleRowProps) {
       <Row
         modifiers={[fillMaxWidth(), horizontalScroll(), padding(spacing[4], spacing[2], spacing[4], spacing[2])]}
         verticalAlignment="center"
+        horizontalArrangement={{ spacedBy: spacing[3] }}
       >
-        {/* An explicit Spacer, not `horizontalArrangement={{ spacedBy }}`: on device the
-            arrangement left the chips touching. */}
-        {capsules.map((capsule, index) => (
-          <Fragment key={capsule.key}>
-            {index > 0 ? <Spacer modifiers={CHIP_GAP} /> : null}
-            <CapsuleChip capsule={capsule} colors={colors} errorColor={brandColors.error} />
-          </Fragment>
+        {capsules.map((capsule) => (
+          <CapsuleChip key={capsule.key} capsule={capsule} colors={colors} errorColor={brandColors.error} />
         ))}
       </Row>
     </Host>
   );
 }
-
-const CHIP_GAP = [width(spacing[3])];
 
 const styles = StyleSheet.create({
   host: {

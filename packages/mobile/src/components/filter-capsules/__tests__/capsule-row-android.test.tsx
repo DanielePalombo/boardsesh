@@ -71,14 +71,12 @@ vi.mock('@expo/ui/jetpack-compose', () => {
         children,
       ),
     HorizontalDivider: () => createElement('hr'),
-    Spacer: () => createElement('span', { 'data-spacer': true }),
   };
 });
 vi.mock('@expo/ui/jetpack-compose/modifiers', () => ({
   fillMaxWidth: () => ({}),
   horizontalScroll: () => ({}),
   padding: () => ({}),
-  width: () => ({}),
   semantics: (arg: unknown) => ({ modifier: 'semantics', arg }),
 }));
 vi.mock('react-native', () => ({
