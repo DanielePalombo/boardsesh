@@ -319,6 +319,18 @@ vi.mock('../../../lib/spray/use-create-spray-wall', () => ({
   },
 }));
 
+vi.mock('../../board-discovery/BoardMetaFields', () => ({
+  SprayTrainingConsentField: ({ value, onValueChange }: { value: boolean; onValueChange: (next: boolean) => void }) =>
+    createElement(
+      'button',
+      { 'data-testid': 'builder-consent', 'aria-pressed': value, onClick: () => onValueChange(!value) },
+      'training consent',
+    ),
+}));
+vi.mock('../SprayWallTrainingConsentRow', () => ({
+  SprayWallTrainingConsentRow: ({ wallUuid, isOwner }: { wallUuid: string; isOwner: boolean }) =>
+    isOwner ? createElement('div', { 'data-testid': 'server-consent' }, wallUuid) : null,
+}));
 vi.mock('../../Text', () => ({
   Text: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
     createElement('span', { 'data-testid': testID }, children),
@@ -347,6 +359,19 @@ vi.mock('../SprayScanPhoto', () => ({
   SprayScanPhoto: ({ message, resumeHint }: { message: string; resumeHint?: string }) =>
     createElement('div', { 'data-testid': 'scan-photo' }, message, resumeHint ? ` ${resumeHint}` : null),
 }));
+/** Who is driving the flow. The fixtures' walls belong to `me`. */
+const viewer = vi.hoisted(() => ({ userId: 'me' as string | null }));
+vi.mock('../../../hooks/use-viewer-user-id', () => ({ useViewerUserId: () => viewer.userId }));
+/** The walls with a training switch flip on the wire, as the mutation cache would answer. */
+const consentFlips = vi.hoisted(() => ({ savingFor: new Set<string>() }));
+vi.mock('../../../lib/spray/use-spray-wall-training-consent', () => {
+  const isSaving = (wallUuid: string | null) => wallUuid != null && consentFlips.savingFor.has(wallUuid);
+  return {
+    // What a render sees, and what a press reads at the moment it lands.
+    useSprayWallTrainingConsentSaving: isSaving,
+    isSprayWallTrainingConsentSaving: (_queryClient: unknown, wallUuid: string | null) => isSaving(wallUuid),
+  };
+});
 // Online throughout: the upload-notice wording has its own suite (#5960).
 vi.mock('../../../lib/connectivity/use-connectivity', () => ({ useConnectivityField: () => connectivity.reason }));
 vi.mock('../../../lib/connectivity/connectivity-store', () => ({ getConnectivitySnapshot: () => ({ reason: null }) }));
@@ -389,7 +414,7 @@ const UNFINISHED_WALL = {
   uuid: 'wall-1',
   layoutId: 7,
   viewerCanEdit: true,
-  board: { name: 'Garage wall' },
+  board: { name: 'Garage wall', ownerId: 'me' },
   currentVersion: null,
 };
 
@@ -451,14 +476,16 @@ beforeEach(() => {
   resetSourceMock.mockReset();
   // Once-queued answers must not leak from one case into the next.
   resetWallMock.mockReset();
+  createWallMock.mockReset();
   fetchVersionsMock.mockReset();
   guard.confirmLeave = null;
+  viewer.userId = 'me';
+  consentFlips.savingFor.clear();
   editorProps.last = null;
   lookProps.last = null;
   nameSheet.last = null;
   camera.available = false;
   connectivity.reason = null;
-  createWallMock.mockReset();
   updateDetailsMock.mockReset();
   publishMock.mockReset();
   // A publish that never answers: the run stays on the publish step.
@@ -567,6 +594,172 @@ describe('resume freshness', () => {
   });
 });
 
+describe('the photo step and Help train hold finding', () => {
+  function mountAtNewWallForm() {
+    setWalls({ data: [], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    return mountWizard();
+  }
+
+  it('shows an enabled switch before picking a new wall photo', () => {
+    const { getByText, queryByTestId } = mountAtNewWallForm();
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(screen.getByTestId('builder-consent').getAttribute('aria-pressed')).toBe('true');
+    expect(queryByTestId('server-consent')).toBeNull();
+  });
+
+  it('turns training off on the photo step', () => {
+    const { getByText, getByTestId } = mountAtNewWallForm();
+    act(() => getByTestId('builder-consent').click());
+
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(getByTestId('builder-consent').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it("puts a resumed wall's own switch on the photo step", async () => {
+    fetchVersionsMock.mockResolvedValue({ ...UNFINISHED_WALL, versions: [] });
+    setWalls({ data: [UNFINISHED_WALL], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    const { getByText, getByTestId } = mountWizard();
+    await act(async () => lastAlertButton('sprayWizard.resume.pickUp').onPress());
+
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(getByTestId('server-consent').textContent).toBe('wall-1');
+  });
+
+  // On Android a tap anywhere on the switch's row flips it and saves at once.
+  // Above the buttons, the row arriving late slid "Choose photo" out from under
+  // a thumb and took the tap itself. It holds its place now, and stays down here.
+  it('draws that switch last on the step, clear of everything else that can be tapped', async () => {
+    fetchVersionsMock.mockResolvedValue({ ...UNFINISHED_WALL, versions: [] });
+    setWalls({ data: [UNFINISHED_WALL], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    const view = mountWizard();
+    await act(async () => lastAlertButton('sprayWizard.resume.pickUp').onPress());
+
+    const consentRow = () => view.getByTestId('server-consent');
+    const drawnBeforeTheRow = (element: Element) =>
+      (element.compareDocumentPosition(consentRow()) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(drawnBeforeTheRow(view.getByText('sprayWizard.photo.helpLink'))).toBe(true);
+    expect(drawnBeforeTheRow(view.getByTestId('spray-photo-tile'))).toBe(true);
+
+    // With a photo picked, the preview and its crop button come before it too.
+    await pickLibraryPhoto(view.getByText);
+    expect(drawnBeforeTheRow(view.getByText('sprayWizard.photo.change'))).toBe(true);
+    expect(drawnBeforeTheRow(view.getByText('sprayWizard.photo.adjust'))).toBe(true);
+    const buttons = [...view.container.querySelectorAll('button')];
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every(drawnBeforeTheRow)).toBe(true);
+  });
+
+  it('hides the switch from somebody finishing a wall they can edit but do not own', async () => {
+    fetchVersionsMock.mockResolvedValue({
+      ...UNFINISHED_WALL,
+      board: { name: 'Garage wall', ownerId: 'the-owner' },
+      versions: [],
+    });
+    const { getByText, queryByTestId } = render(<SprayWallWizardScreen returnTo="/(tabs)/climbs" wallUuid="wall-1" />);
+    await act(async () => {});
+
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(queryByTestId('server-consent')).toBeNull();
+
+    expect(queryByTestId('builder-consent')).toBeNull();
+    // Photo is now the first step, so its leading action closes the flow.
+    expect(header.leading?.kind).toBe('close');
+  });
+
+  it('hides the switch while it is not yet known who is signed in', async () => {
+    viewer.userId = null;
+    fetchVersionsMock.mockResolvedValue({ ...UNFINISHED_WALL, versions: [] });
+    setWalls({ data: [UNFINISHED_WALL], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    const { getByText, queryByTestId } = mountWizard();
+    await act(async () => lastAlertButton('sprayWizard.resume.pickUp').onPress());
+
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(queryByTestId('server-consent')).toBeNull();
+  });
+
+  it('hides the switch when the wall comes back without an owner', async () => {
+    fetchVersionsMock.mockResolvedValue({
+      ...UNFINISHED_WALL,
+      board: { name: 'Garage wall', ownerId: null },
+      versions: [],
+    });
+    const { getByText, queryByTestId } = render(<SprayWallWizardScreen returnTo="/(tabs)/climbs" wallUuid="wall-1" />);
+    await act(async () => {});
+
+    expect(getByText('sprayWizard.photo.heroTitleLibrary')).toBeTruthy();
+    expect(queryByTestId('server-consent')).toBeNull();
+  });
+});
+
+describe('the photo step while a training choice saves', () => {
+  async function resumePhoto() {
+    fetchVersionsMock.mockResolvedValue({ ...UNFINISHED_WALL, versions: [] });
+    setWalls({ data: [UNFINISHED_WALL], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    const view = mountWizard();
+    await act(async () => lastAlertButton('sprayWizard.resume.pickUp').onPress());
+    await pickLibraryPhoto(view.getByText);
+    alertMock.mockClear();
+    hardwareBack.focusEffect?.();
+    return view;
+  }
+
+  it('disables Next and the X while the resumed wall choice saves, then restores them', async () => {
+    const view = await resumePhoto();
+    consentFlips.savingFor.add('wall-1');
+    view.rerenderWizard();
+    expect(header.trailing).toMatchObject({ label: 'sprayWizard.next', disabled: true, loading: true });
+    expect(header.leading).toMatchObject({ kind: 'close', disabled: true });
+    expect(hardwareBack.handler?.()).toBe(true);
+    consentFlips.savingFor.clear();
+    view.rerenderWizard();
+    expect(header.trailing).toMatchObject({ disabled: false, loading: false });
+    expect(header.leading).toMatchObject({ kind: 'close', disabled: false });
+    expect(hardwareBack.handler?.()).toBe(false);
+  });
+
+  it('holds a stale Next, X, crop and photo picker callback until the save answers', async () => {
+    const view = await resumePhoto();
+    const next = header.trailing?.onPress;
+    const close = header.leading?.onPress;
+    const crop = view.getByText('sprayWizard.photo.adjust');
+    const change = view.getByText('sprayWizard.photo.change');
+    const wallPhoto = await import('../../../lib/spray/wall-photo');
+    vi.mocked(wallPhoto.pickWallPhotoFromLibrary).mockClear();
+    consentFlips.savingFor.add('wall-1');
+    // No rerender: these callbacks still come from before the mutation started.
+    act(() => {
+      next?.();
+      close?.();
+      crop.click();
+      change.click();
+    });
+    expect(view.queryByTestId('crop')).toBeNull();
+    expect(view.getByTestId('spray-photo-tile')).toBeTruthy();
+    expect(routerMock.back).not.toHaveBeenCalled();
+    expect(routerMock.dismissTo).not.toHaveBeenCalled();
+    expect(wallPhoto.pickWallPhotoFromLibrary).not.toHaveBeenCalled();
+    expect(hardwareBack.handler?.()).toBe(true);
+    consentFlips.savingFor.clear();
+    act(() => next?.());
+    expect(view.queryByTestId('spray-photo-tile')).toBeNull();
+  });
+
+  it('asks before native navigation leaves a training choice still saving', async () => {
+    await resumePhoto();
+    consentFlips.savingFor.add('wall-1');
+    const onConfirm = vi.fn();
+    act(() => guard.confirmLeave?.(onConfirm));
+    expect(alertMock).toHaveBeenCalledExactlyOnceWith(
+      'sprayWizard.leave.title',
+      'sprayWizard.leave.body',
+      expect.any(Array),
+    );
+    expect(onConfirm).not.toHaveBeenCalled();
+    act(() => lastAlertButton('sprayWizard.leave.go').onPress());
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
+});
+
 describe('native back guard', () => {
   async function resumeIntoEditor() {
     fetchVersionsMock.mockResolvedValue(WALL_WITH_SAVED_DRAFT);
@@ -661,7 +854,7 @@ describe('a reset (`resetOf`)', () => {
     viewerCanEdit: true,
     currentVersion: null,
     resetOfWallUuid: 'old-wall',
-    board: { name: 'Garage wall' },
+    board: { name: 'Garage wall', ownerId: 'me' },
   };
   const CLONE_WITH_PHOTO = {
     ...CLONE,
@@ -686,6 +879,8 @@ describe('a reset (`resetOf`)', () => {
     expect(getByText('sprayWizard.reset.heroTitleLibrary')).toBeTruthy();
     // Said under the tile: the reset keeps what the old wall was called.
     expect(getByText('sprayWizard.reset.photoNote')).toBeTruthy();
+    expect(screen.getByTestId('server-consent').textContent).toBe('clone-1');
+    expect(screen.queryByTestId('builder-consent')).toBeNull();
     expect(listEnabled.walls.every((enabled) => enabled === false)).toBe(true);
   });
 
@@ -1360,7 +1555,35 @@ describe('creating the wall at the upload', () => {
       latitude: undefined,
       longitude: undefined,
       gymUuid: undefined,
+      trainingConsent: true,
     });
+  });
+
+  it('creates the wall with training off when the photo-step switch was turned off', async () => {
+    createWallMock.mockResolvedValue({
+      uuid: 'wall-9',
+      layoutId: 9,
+      viewerCanEdit: true,
+      board: {
+        uuid: 'wall-9',
+        name: "Marco's spray wall",
+        ownerId: 'me',
+        angle: 40,
+        isPublic: false,
+        isUnlisted: false,
+      },
+    });
+    uploadPhotoMock.mockImplementation(() => new Promise(() => {}));
+    setWalls({ data: [], isFetching: false, dataUpdatedAt: AFTER_MOUNT() });
+    const view = mountWizard();
+    act(() => view.getByTestId('builder-consent').click());
+    await pickLibraryPhoto(view.getByText);
+    // The choice survives picking the photo and moving through the corners.
+    expect(view.getByTestId('builder-consent').getAttribute('aria-pressed')).toBe('false');
+    act(() => header.trailing?.onPress());
+    await act(async () => header.trailing?.onPress());
+    expect(createWallMock).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ trainingConsent: false }));
+    expect(uploadPhotoMock).toHaveBeenCalledOnce();
   });
 
   it('offers no Try again for a wall-cap refusal, which would only say the same', async () => {

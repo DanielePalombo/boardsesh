@@ -44,7 +44,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { SHARED_EVENTS, sprayHoldsReviewed, sprayWallPhotoPicked, sprayWallUploadFinished } from '@boardsesh/analytics';
 import { trackSprayEvent } from '../../lib/spray/spray-telemetry';
-import type { UserBoard, SprayDetectionCandidate } from '@boardsesh/shared-schema';
+import type { UserBoard } from '@boardsesh/shared-schema';
 import { Text } from '../Text';
 import { Button } from '../Button';
 import { ActivityIndicator } from '../ActivityIndicator';
@@ -57,6 +57,8 @@ import {
   type SprayEditorNotice,
   type SprayHoldSaveSummary,
 } from '../outline-editor/SprayHoldEditorScreen';
+import type { SprayHoldCandidate } from '../outline-editor/spray-hold-editor-types';
+import { SprayTrainingConsentField } from '../board-discovery/BoardMetaFields';
 import { useSprayWallBuilder } from '../board-discovery/use-spray-wall-builder';
 import { Icon } from '../Icon';
 import type { IconName } from '../icon-map';
@@ -109,6 +111,13 @@ import {
   useUpdateSprayWallVisibility,
   type CreatedSprayWall,
 } from '../../lib/spray/use-create-spray-wall';
+import {
+  isSprayWallTrainingConsentSaving,
+  useSprayWallTrainingConsentSaving,
+} from '../../lib/spray/use-spray-wall-training-consent';
+import { SprayWallTrainingConsentRow } from './SprayWallTrainingConsentRow';
+import { viewerOwnsSprayWall } from '../board-discovery/spray-detail-rows';
+import { useViewerUserId } from '../../hooks/use-viewer-user-id';
 import { uploadSprayWallPhoto } from '../../lib/spray/spray-wall-photo-upload';
 import { wallCreatedEventProperties, type WallCreatedMeta } from './wall-created-event';
 import { SprayDetectionStep } from './SprayDetectionStep';
@@ -291,6 +300,13 @@ export function SprayWallWizardScreen({
     { skipsDetails: isReset, blocksOnResume: isReset || !!wallUuid },
     initialWizardState,
   );
+  const wizardWallUuid = state.wall?.wallUuid ?? null;
+  const consentSaving = useSprayWallTrainingConsentSaving(wizardWallUuid);
+  const busy = isBusy(state) || consentSaving;
+  const consentSavingNow = useCallback(
+    () => isSprayWallTrainingConsentSaving(queryClient, wizardWallUuid),
+    [queryClient, wizardWallUuid],
+  );
   // Offline mode, said on the photo step before an upload tries and fails
   // (#5960). Only `reason` is subscribed, not the whole connectivity snapshot.
   const connectivityReason = useConnectivityField(selectConnectivityReason);
@@ -305,7 +321,7 @@ export function SprayWallWizardScreen({
    * wait: a photo picked or a crop started now would be overtaken by the answer.
    */
   const [resumeDeciding, setResumeDeciding] = useState(false);
-  const photoControlsBusy = pickerBusy || resumeDeciding;
+  const photoControlsBusy = pickerBusy || resumeDeciding || consentSaving;
 
   const createWall = useCreateSprayWall();
   const createVersion = useCreateSprayWallVersion();
@@ -342,6 +358,20 @@ export function SprayWallWizardScreen({
    * resume check already fetched.
    */
   const boardRef = useRef<UserBoard | null>(null);
+  /**
+   * Who owns that wall, for the one control that is its owner's alone: the
+   * training switch. State where the board is a ref, because this is rendered
+   * from. A wall this run created and a reset's clone are the viewer's by
+   * construction; a targeted open only promises edit access, so a gym admin
+   * finishing somebody's wall is not shown a switch the server would refuse.
+   */
+  const [wallOwnerId, setWallOwnerId] = useState<string | null>(null);
+  const keepBoard = useCallback((board: UserBoard) => {
+    boardRef.current = board;
+    setWallOwnerId(board.ownerId);
+  }, []);
+  const viewerUserId = useViewerUserId();
+  const viewerOwnsWall = state.wall != null && viewerOwnsSprayWall({ ownerId: wallOwnerId }, viewerUserId);
 
   /**
    * The details step's answers, read when the climber pressed Save — or null
@@ -533,7 +563,7 @@ export function SprayWallWizardScreen({
         showTargetUnavailable();
         return;
       }
-      if (full.board) boardRef.current = full.board;
+      if (full.board) keepBoard(full.board);
 
       if (choice === 'startOver') {
         const plan = startOverPlan(resumable, full.versions ?? []);
@@ -569,7 +599,7 @@ export function SprayWallWizardScreen({
         dispatch({ type: 'RESUMED_AT_PHOTO', wall: target.wall });
       }
     },
-    [discardDraftAsync, t, wallUuid, versionId, finish, showTargetUnavailable, hydrateDetails],
+    [discardDraftAsync, t, wallUuid, versionId, finish, showTargetUnavailable, hydrateDetails, keepBoard],
   );
 
   /** The prompt's answer, with the photo controls held until it has been acted on. */
@@ -701,7 +731,7 @@ export function SprayWallWizardScreen({
     let fetched: CreatedSprayWall | null;
     try {
       const created = await resetWallAsync(resetOfWallUuid);
-      boardRef.current = created.board;
+      keepBoard(created.board);
       fetched = await fetchSprayWallVersions(created.uuid);
     } catch (error) {
       resetInFlightRef.current = false;
@@ -721,7 +751,7 @@ export function SprayWallWizardScreen({
       return;
     }
     const clone = fetched;
-    if (clone.board) boardRef.current = clone.board;
+    if (clone.board) keepBoard(clone.board);
     const versions = clone.versions ?? [];
     const target = resumeTargetFor(clone, versions);
     if (target.at === 'photo') {
@@ -754,7 +784,7 @@ export function SprayWallWizardScreen({
       { text: t('sprayWizard.resume.startOver'), style: 'destructive', onPress: () => void startOver() },
       { text: t('sprayWizard.resume.pickUp'), onPress: pickUp },
     ]);
-  }, [resetOfWallUuid, resetWallAsync, discardDraftAsync, t]);
+  }, [resetOfWallUuid, resetWallAsync, discardDraftAsync, t, keepBoard]);
   const startResetRef = useRef(startReset);
   startResetRef.current = startReset;
 
@@ -784,7 +814,7 @@ export function SprayWallWizardScreen({
 
   const pickPhoto = useCallback(
     async (source: 'library' | 'camera') => {
-      if (photoControlsBusy) return;
+      if (photoControlsBusy || consentSavingNow()) return;
       setPickerBusy(true);
       hapticSelection();
       try {
@@ -804,7 +834,7 @@ export function SprayWallWizardScreen({
         setPickerBusy(false);
       }
     },
-    [photoControlsBusy, showToast, t],
+    [photoControlsBusy, consentSavingNow, showToast, t],
   );
 
   /** The empty tile's tap: the camera where this binary and phone have one, the library otherwise. */
@@ -822,9 +852,11 @@ export function SprayWallWizardScreen({
   const [adjustFailed, setAdjustFailed] = useState(false);
 
   const openAdjust = useCallback(() => {
+    // The crop takes over the photo step's body, the training switch with it.
+    if (consentSavingNow()) return;
     setAdjustFailed(false);
     dispatch({ type: 'ADJUST_OPENED' });
-  }, []);
+  }, [consentSavingNow]);
 
   const applyPhotoEdit = useCallback(
     async (edit: WallPhotoEdit) => {
@@ -861,7 +893,7 @@ export function SprayWallWizardScreen({
   // ============================================
 
   const runDetection = useCallback(() => dispatch({ type: 'DETECTION_STARTED' }), []);
-  const detectionCompleted = useCallback((candidates: SprayDetectionCandidate[]) => {
+  const detectionCompleted = useCallback((candidates: SprayHoldCandidate[]) => {
     dispatch({ type: 'DETECTION_FINISHED', candidates });
   }, []);
   const useManualEditor = useCallback(() => dispatch({ type: 'DETECTION_UNAVAILABLE' }), []);
@@ -916,7 +948,7 @@ export function SprayWallWizardScreen({
         // `input` is non-null here — the guard above returns when both are.
         const created = await createWallAsync(input!);
         wall = { wallUuid: created.uuid, layoutId: created.layoutId, viewerCanEdit: created.viewerCanEdit };
-        boardRef.current = created.board;
+        keepBoard(created.board);
         // Recorded BEFORE the upload, so a failure here still leaves the flow
         // pointing at the wall that exists rather than minting another on retry.
         dispatch({ type: 'WALL_CREATED', wall });
@@ -993,6 +1025,7 @@ export function SprayWallWizardScreen({
     uploadNoticeMessage,
     hydrateDetails,
     t,
+    keepBoard,
   ]);
 
   /**
@@ -1270,7 +1303,7 @@ export function SprayWallWizardScreen({
    */
   const confirmLeave = useCallback(
     (onConfirm: () => void) => {
-      const decision = leaveDecision(state, readEditorLeaveState());
+      const decision = leaveDecision(state, readEditorLeaveState(), consentSavingNow());
       if (decision === 'block') return;
       if (decision === 'leave') {
         onConfirm();
@@ -1297,7 +1330,7 @@ export function SprayWallWizardScreen({
         { text: t('sprayWizard.leave.go'), onPress: confirmed },
       ]);
     },
-    [state, t, readEditorLeaveState],
+    [state, t, readEditorLeaveState, consentSavingNow],
   );
 
   // Native dismissal is held while the existing decision and stale-answer
@@ -1305,7 +1338,7 @@ export function SprayWallWizardScreen({
   useSprayWizardLeaveGuard(confirmLeave);
 
   const goBack = useCallback(() => {
-    if (isBusy(state)) return;
+    if (isBusy(state) || consentSavingNow()) return;
     // The photo step is the first, and `review`, `background` and `publish`
     // have no step behind them — the draft is on the server by then — so back
     // means leaving, which keeps the draft.
@@ -1314,7 +1347,7 @@ export function SprayWallWizardScreen({
       return;
     }
     dispatch({ type: 'BACK' });
-  }, [state, router]);
+  }, [state, router, consentSavingNow]);
 
   const candidateCount = state.detection.candidates.length;
   const onHoldsCommitted = useCallback(
@@ -1365,7 +1398,10 @@ export function SprayWallWizardScreen({
 
   // The X the layout draws, with the same leave guard behind it: it goes back
   // through the history, which `useSprayWizardLeaveGuard` intercepts.
-  const exitFlow = useCallback(() => exitSprayWizard(router, returnTo), [router, returnTo]);
+  const exitFlow = useCallback(() => {
+    if (consentSavingNow()) return;
+    exitSprayWizard(router, returnTo);
+  }, [consentSavingNow, router, returnTo]);
 
   // Editing and look steps draw their own header actions. The crop detour owns its edit, so
   // it sets Cancel and Done itself; the editor and the look step set their own
@@ -1383,12 +1419,15 @@ export function SprayWallWizardScreen({
   // says so. With the chevron leading there is no X: a German "Überspringen"
   // beside it would not fit at 375 pt. Leaving from those steps is a swipe down
   // through the same leave guard, or back to step 1's X.
-  const busy = isBusy(state);
+  //
+  // The X stays live through the machine's own requests: there, leaving is the
+  // guard's question to ask. A training switch flip holds the X as well, since
+  // it is over in seconds and its answer shows on this step.
   const headerLeading: HeaderLeadingAction | null = childOwnsHeader
     ? null
     : backStaysInFlow
       ? { kind: 'back', onPress: goBack, disabled: busy, accessibilityLabel: t('sprayWizard.back') }
-      : { kind: 'close', onPress: exitFlow };
+      : { kind: 'close', onPress: exitFlow, disabled: consentSaving };
 
   const publishRunning = state.publish.running;
   const detailsSaving = state.details.saving;
@@ -1402,9 +1441,11 @@ export function SprayWallWizardScreen({
     headerTrailing = {
       kind: 'forward',
       label: t('sprayWizard.next'),
-      onPress: () => dispatch({ type: 'PHOTO_CONFIRMED' }),
-      disabled: !photoPicked || waitingForResume,
-      loading: photoPicked && waitingForResume && resumeError == null,
+      onPress: () => {
+        if (!consentSavingNow()) dispatch({ type: 'PHOTO_CONFIRMED' });
+      },
+      disabled: !photoPicked || waitingForResume || busy,
+      loading: consentSaving || (photoPicked && waitingForResume && resumeError == null),
       prominent: true,
     };
   } else if (state.step === 'anchors' && state.photo) {
@@ -1472,8 +1513,10 @@ export function SprayWallWizardScreen({
   const hardwareBackRef = useRef<() => boolean>(() => false);
   // On the crop detour it is the header's Cancel (the same `goBack` the crop
   // step's Cancel calls), never a way out of the flow. A tap while busy is
-  // swallowed: `goBack` refuses, and the stack must not pop either.
+  // swallowed: `goBack` refuses, and the stack must not pop either. A training
+  // switch flip swallows it on the X's steps too, as it holds the X.
   hardwareBackRef.current = () => {
+    if (consentSavingNow()) return true;
     if (!backStaysInFlow && state.step !== 'adjust') return false;
     goBack();
     return true;
@@ -1602,7 +1645,7 @@ export function SprayWallWizardScreen({
         invalid={state.anchorRejection != null}
         // A new wall's frame IS its first photo (version 1 defines it).
         qualityFrame={state.photo}
-        canClear={state.anchors != null && !isBusy(state)}
+        canClear={state.anchors != null && !busy}
         onClear={() => dispatch({ type: 'ANCHORS_CLEARED' })}
       />
     );
@@ -1862,6 +1905,12 @@ export function SprayWallWizardScreen({
                 </Text>
               </PressableSurface>
             </>
+          )}
+          {/* Keep the choice below photo controls before the first upload. */}
+          {state.wall ? (
+            <SprayWallTrainingConsentRow wallUuid={state.wall.wallUuid} isOwner={viewerOwnsWall} />
+          ) : (
+            <SprayTrainingConsentField value={builder.trainingConsent} onValueChange={builder.setTrainingConsent} />
           )}
         </>
       ) : null}
