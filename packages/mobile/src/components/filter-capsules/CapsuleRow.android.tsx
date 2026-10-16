@@ -13,7 +13,7 @@
 import { memo, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import { Host } from '@expo/ui';
-import { Row, HorizontalDivider } from '@expo/ui/jetpack-compose';
+import { Row, HorizontalDivider, Spacer } from '@expo/ui/jetpack-compose';
 import { fillMaxWidth, horizontalScroll, padding } from '@expo/ui/jetpack-compose/modifiers';
 import { useTheme } from '../../providers/theme-provider';
 import { spacing } from '../../theme/tokens';
@@ -116,11 +116,14 @@ function CapsuleRowComponent({ capsules }: CapsuleRowProps) {
       <Row
         modifiers={[fillMaxWidth(), horizontalScroll(), padding(spacing[4], spacing[2], spacing[4], spacing[2])]}
         verticalAlignment="center"
-        horizontalArrangement={{ spacedBy: spacing[3] }}
       >
-        {capsules.map((capsule) => (
-          <CapsuleChip key={capsule.key} capsule={capsule} colors={colors} errorColor={brandColors.error} />
-        ))}
+        {/* A padded Spacer between chips (the SwitcherForm / MoreForm pattern): on device
+            `horizontalArrangement={{ spacedBy }}` left the chips touching, and a
+            `width()`-sized Spacer broke the app. */}
+        {capsules.flatMap((capsule, index) => [
+          ...(index > 0 ? [<Spacer key={`${capsule.key}:gap`} modifiers={[padding(spacing[3], 0, 0, 0)]} />] : []),
+          <CapsuleChip key={capsule.key} capsule={capsule} colors={colors} errorColor={brandColors.error} />,
+        ])}
       </Row>
     </Host>
   );

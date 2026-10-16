@@ -71,6 +71,7 @@ vi.mock('@expo/ui/jetpack-compose', () => {
         children,
       ),
     HorizontalDivider: () => createElement('hr'),
+    Spacer: () => createElement('span', { 'data-spacer': true }),
   };
 });
 vi.mock('@expo/ui/jetpack-compose/modifiers', () => ({
