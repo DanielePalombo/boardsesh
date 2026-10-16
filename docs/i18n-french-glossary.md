@@ -64,6 +64,15 @@ Use instead:
 
 Every string names the board device **« board »**, feminine: _la board, une board, les boards_, with feminine agreement (_la board connectée_, _une board trouvée_). That is what French board climbers say and how French climbing media writes it (La Fabrique Verticale: « la board », « une Kilterboard ») — it patterns with « la planche », like skate and snowboard French. Do **not** use « planche » (wrong) or « panneau » (translationese) for the device; « panneau » survives only in the UI-panel sense (« Panneau d'administration »). Brand names stay in English (above) and take feminine agreement when an article is needed: _la board Kilter_. One exception: « le Kilter Homewall » stays masculine — it reads as a wall (« le mur »), not a board.
 
+## A spray wall is a **Spraywall**
+
+The same name in English, Spanish, French and German, in every string: **Spraywall**, one word and capitalized, masculine: _le Spraywall, un Spraywall, ce Spraywall_, plural _les Spraywalls_. It patterns with _le mur_, so articles, adjectives and pronouns stay masculine (_Ce Spraywall est archivé_, _Réinitialise-le_). Contractions work as usual: _du Spraywall_, _au Spraywall_.
+
+Never: _spray wall_, _spray-wall_, _spraywall_, _mur de spray_, _mur spray_, _murs de spray_, _murs spray_, _mur de pan_. Never a bare _mur_ / _murs_ for the Spraywall either (_Réinitialiser ce mur_ → _Réinitialiser ce Spraywall_). Hold-detection copy keeps its own words (_prise_, _bloc_); only the name of the wall changes.
+
+- Store `keywords.txt` keeps « pan » so searches still find the app; everything else in `fastlane/metadata` follows this section.
+- `spray-term-consistency.test.ts` in `@boardsesh/i18n` bans the retired names in every French string, and the bare _mur_ in spray-wall strings.
+
 ## Process
 
 - Add every new key to **all** locales (`en-US`, `es`, `fr`, `de`) — the catalog completeness test fails on missing keys.

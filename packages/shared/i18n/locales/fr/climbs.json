@@ -132,7 +132,7 @@
     "title": "Grade Boardsesh",
     "moonboardBody": "Nous n'avons pas encore de données de cotation communautaires pour le MoonBoard. Enregistre tes croix Moon sur Boardsesh pour aider à la débloquer.",
     "woodsBody": "Nous n'avons pas encore de données de cotation communautaires pour le Woods Board. Enregistre tes croix sur le Woods pour aider à la débloquer.",
-    "sprayBody": "Sur une spray wall, la crew cote chaque bloc. La première ascension fixe la cotation, puis la cotation de chaque grimpeur la fait évoluer.",
+    "sprayBody": "Sur une Spraywall, la crew cote chaque bloc. La première ascension fixe la cotation, puis la cotation de chaque grimpeur la fait évoluer.",
     "loadError": "Impossible de charger le grade pour le moment.",
     "byAngle": "Sa difficulté selon l'angle",
     "summaryLocal": "local",
@@ -220,7 +220,7 @@
       "boardConfigIncomplete": "Les détails de la board sont manquants ou invalides. Choisis à nouveau la board pour ouvrir ton bloc.",
       "noUsableBoard": "Choisis d'abord une board, puis ouvre ton bloc.",
       "boardTypeUnsupported": "Cette version de l'app ne permet pas encore d'ouvrir des blocs sur cette board. Choisis une autre board.",
-      "wallArchived": "Ce mur est archivé. Ses blocs et ses croix restent, mais on ne peut plus y ouvrir de bloc."
+      "wallArchived": "Ce Spraywall est archivé. Ses blocs et ses croix restent, mais on ne peut plus y ouvrir de bloc."
     },
     "alerts": {
       "publishDuplicateNamed": "Cette configuration de prises correspond à « {{name}} ». Activez Brouillon pour l'enregistrer sans la publier, ou changez une prise.",
@@ -385,8 +385,8 @@
         "subtitle": "Essayez d'ajuster les paramètres de votre board"
       },
       "unsetWall": {
-        "title": "Personne n’a encore ouvert sur ce mur",
-        "subtitle": "Choisis tes prises, donne-lui un nom, et le mur a son premier bloc.",
+        "title": "Personne n’a encore ouvert sur ce Spraywall",
+        "subtitle": "Choisis tes prises, donne-lui un nom, et le Spraywall a son premier bloc.",
         "cta": "Ouvrir le premier bloc"
       },
       "noMatches": {
@@ -711,15 +711,15 @@
       "deleteClimb": {
         "row": "Supprimer le bloc",
         "title": "Supprimer ce bloc ?",
-        "message": "Il disparaît du spray wall pour tout le monde, avec ses commentaires. Impossible d'annuler.",
+        "message": "Il disparaît du Spraywall pour tout le monde, avec ses commentaires. Impossible d'annuler.",
         "confirm": "Supprimer",
         "cancel": "Le garder",
         "success": "Bloc supprimé.",
-        "hasTicks": "Quelqu'un a déjà fait la croix sur ce bloc, il reste donc sur le spray wall.",
+        "hasTicks": "Quelqu'un a déjà fait la croix sur ce bloc, il reste donc sur le Spraywall.",
         "pendingTick": "Tu as une croix sur ce bloc en attente de synchronisation, il reste donc.",
         "notFound": "Ce bloc n'existe plus.",
-        "notAllowed": "Seuls les blocs d'un spray wall peuvent être supprimés.",
-        "archived": "Ce spray wall est archivé, ses blocs restent tels quels.",
+        "notAllowed": "Seuls les blocs d'un Spraywall peuvent être supprimés.",
+        "archived": "Ce Spraywall est archivé, ses blocs restent tels quels.",
         "offline": "Tu es hors ligne. Supprimer un bloc demande une connexion.",
         "error": "Impossible de supprimer le bloc. Réessaie."
       }
@@ -985,32 +985,32 @@
     "unknownGrade": "Sans cotation",
     "unknownSetter": "un ouvreur inconnu",
     "heading": "{{climbName}} — {{grade}}",
-    "summary": "Sur {{wallName}}, un mur de pan à {{angle}}° avec {{holdCount}} prises.",
+    "summary": "Sur {{wallName}}, un Spraywall à {{angle}}° avec {{holdCount}} prises.",
     "setterLine": "Ouvert par {{setter}}. {{ascents}} croix enregistrées.",
     "ascentsLine": "{{ascents}} croix enregistrées.",
     "setterNotesHeading": "Notes de l’ouvreur",
     "keepLookingHeading": "Continue à chercher",
     "setterLink": "Plus de blocs de {{setter}}",
-    "gymsLink": "Trouver une salle avec des murs",
+    "gymsLink": "Trouver une salle avec des Spraywalls",
     "homeLink": "Accueil Boardsesh",
-    "photoAlt": "{{climbName}}, {{grade}}, allumé sur le mur de pan {{wallName}}",
-    "noPhoto": "Ce mur n’a pas encore de photo à montrer.",
+    "photoAlt": "{{climbName}}, {{grade}}, allumé sur le Spraywall {{wallName}}",
+    "noPhoto": "Ce Spraywall n’a pas encore de photo à montrer.",
     "metadata": {
-      "title": "{{climbName}} {{grade}} sur {{wallName}} | Mur de pan",
-      "description": "{{climbName}}, {{grade}}, sur le mur de pan {{wallName}} à {{angle}}°, ouvert par {{setter}}. Vois les prises sur la photo du mur."
+      "title": "{{climbName}} {{grade}} sur {{wallName}} | Spraywall",
+      "description": "{{climbName}}, {{grade}}, sur le Spraywall {{wallName}} à {{angle}}°, ouvert par {{setter}}. Vois les prises sur la photo du Spraywall."
     },
     "wall": {
-      "summary": "Un mur de pan à {{angle}}° avec {{holdCount}} prises.",
-      "photoAlt": "Le mur de pan {{wallName}}",
-      "openInApp": "Ouvre ce mur dans l’app Boardsesh pour voir ses blocs, ouvrir les tiens et enregistrer tes croix.",
+      "summary": "Un Spraywall à {{angle}}° avec {{holdCount}} prises.",
+      "photoAlt": "Le Spraywall {{wallName}}",
+      "openInApp": "Ouvre ce Spraywall dans l’app Boardsesh pour voir ses blocs, ouvrir les tiens et enregistrer tes croix.",
       "metadata": {
-        "title": "{{wallName}} | Mur de pan",
-        "description": "{{wallName}}, un mur de pan à {{angle}}°. Vois le mur et ouvre-le dans l’app Boardsesh."
+        "title": "{{wallName}} | Spraywall",
+        "description": "{{wallName}}, un Spraywall à {{angle}}°. Vois le Spraywall et ouvre-le dans l’app Boardsesh."
       }
     },
     "install": {
       "heading": "Prends l’app",
-      "body": "Note tes croix sur ce mur et ouvre tes propres blocs."
+      "body": "Note tes croix sur ce Spraywall et ouvre tes propres blocs."
     }
   }
 }

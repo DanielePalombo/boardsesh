@@ -26,7 +26,7 @@
     "feedback": "Bug reports",
     "gymDuplicates": "Duplicate gyms",
     "locationSync": "Location sync freezes",
-    "sprayWalls": "Spray wall training data"
+    "sprayWalls": "Spraywall training data"
   },
   "feedback": {
     "title": "Bug reports & feedback",
@@ -442,7 +442,7 @@
     }
   },
   "sprayTraining": {
-    "title": "Spray wall training data",
+    "title": "Spraywall training data",
     "statusLabel": "Review status",
     "status": {
       "unreviewed": "Unreviewed ({{total}})",
@@ -454,7 +454,7 @@
     "retry": "Retry",
     "loadMore": "Load more",
     "card": {
-      "open": "Review wall version {{version}}",
+      "open": "Review Spraywall version {{version}}",
       "holds": "Holds: {{total}}",
       "edited": "Edited: {{percent}}%",
       "accepted": "Accepted unchecked: {{percent}}%",
@@ -484,15 +484,15 @@
       "PUBLIC": "Visibility: public"
     },
     "review": {
-      "title": "Wall version {{version}}",
+      "title": "Spraywall version {{version}}",
       "close": "Close",
-      "previous": "Previous wall",
-      "next": "Next wall",
+      "previous": "Previous Spraywall",
+      "next": "Next Spraywall",
       "position": "{{current}} of {{total}}",
-      "photoAlt": "Spray wall photo with marked holds",
+      "photoAlt": "Spraywall photo with marked holds",
       "noPhoto": "This photo is no longer available.",
       "photoLoading": "Loading the photo",
-      "loadingNext": "Loading more walls",
+      "loadingNext": "Loading more Spraywalls",
       "unmappable": "Holds we couldn't place on the photo: {{total}}",
       "model": "Detector: {{version}}",
       "showMarks": "Show marks (H)",
@@ -509,9 +509,9 @@
       "rejected": "Rejected",
       "reset": "Back in the unreviewed queue",
       "failed": "Couldn't save the review",
-      "notEligible": "Not saved. This wall is no longer available as training data."
+      "notEligible": "Not saved. This Spraywall is no longer available as training data."
     },
     "backToAdmin": "Back to admin",
-    "noAccess": "Your admin role doesn't cover spray walls. This page needs spray or site-wide admin access."
+    "noAccess": "Your admin role doesn't cover Spraywalls. This page needs Spraywall or site-wide admin access."
   }
 }

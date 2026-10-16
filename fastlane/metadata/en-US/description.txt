@@ -1,10 +1,10 @@
-Climb on Kilter, Tension, MoonBoard and more, plus your spray wall. Keep your climbs, shared queue and logbook in one app.
+Climb on Kilter, Tension, MoonBoard and more, plus your Spraywall. Keep your climbs, shared queue and logbook in one app.
 
 YOUR BOARDS. ONE APP.
 Boardsesh works with Kilter, Tension, MoonBoard, Woods, Decoy, Touchstone, Grasshopper and So iLL. Switch between supported boards and keep your climbing history together.
 
-YOUR SPRAY WALL, TOO
-A home wall, or a spray wall at your gym? Photograph it and Boardsesh suggests holds from the photo. Fix what it missed, then set climbs, queue them and log sends in the same logbook as your other boards. No LEDs needed: the holds are highlighted on your photo. Share the wall by link and your crew can set on it too. Stripped the wall? Reset it with a new photo, and the old wall is archived with its climbs and sends. Swap a single hold and any climb that used it is flagged.
+Your Spraywall, too
+A home Spraywall, or a Spraywall at your gym? Photograph it and Boardsesh suggests holds from the photo. Fix what it missed, then set climbs, queue them and log sends in the same logbook as your other boards. No LEDs needed: the holds are highlighted on your photo. Share the Spraywall by link and your crew can set on it too. Stripped the Spraywall? Reset it with a new photo, and the old Spraywall is archived with its climbs and sends. Swap a single hold and any climb that used it is flagged.
 
 BOARD HISTORY
 Share a board and you lose track of the last climb fast, and someone always wipes it by accident.
@@ -28,6 +28,6 @@ Save your session to Apple Health, and import your past Kilter and Tension logbo
 FIND MORE TO CLIMB
 Follow your crew and setters, search climbers, and pin playlists from Discover.
 
-Supported boards: Kilter, Tension, MoonBoard (2010, 2016, 2024, Masters 2017, Masters 2019), Woods (12x12, 8x10), Decoy, Touchstone, Grasshopper and So iLL. Plus spray walls: any wall you can photograph.
+Supported boards: Kilter, Tension, MoonBoard (2010, 2016, 2024, Masters 2017, Masters 2019), Woods (12x12, 8x10), Decoy, Touchstone, Grasshopper and So iLL. Plus Spraywalls: any Spraywall you can photograph.
 
 Boardsesh is a community effort that works with these boards and is not affiliated with or endorsed by any board manufacturer.

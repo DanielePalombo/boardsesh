@@ -4,7 +4,7 @@
     "running": "Buscando presas en tu foto…",
     "connection": "No podemos acceder al reconocimiento. Inténtalo cuando tengas conexión.",
     "failed": "No pudimos terminar de buscar las presas. Tu foto está guardada.",
-    "resumeHint": "Puedes salir y continuar más tarde. Tu muro publicado no cambia.",
+    "resumeHint": "Puedes salir y continuar más tarde. Tu Spraywall publicado no cambia.",
     "retry": "Intentar de nuevo",
     "manual": "Marcar las presas a mano",
     "queuePosition": "Tu foto está en el puesto {{position}} de la cola de reconocimiento.",
@@ -20,7 +20,7 @@
       "noAccess": "No tienes permiso para editar este plafón",
       "back": "Volver",
       "configLockedHint": "No tienes permiso para cambiar el layout, el tamaño ni los sets de este plafón.",
-      "configLockedHintSpray": "La configuración de un plafón es su foto. Vuelve a fotografiarlo para cambiar las presas.",
+      "configLockedHintSpray": "La configuración de un Spraywall es su foto. Vuelve a fotografiarlo para cambiar las presas.",
       "duplicate": {
         "title": "Ya tienes esta configuración",
         "body": "Con este cambio el plafón queda igual que «{{name}}»: mismo layout, tamaño y sets de presas.",
@@ -75,7 +75,7 @@
       "unfollowConfirm": "Dejar de seguir",
       "edit": "Editar",
       "done": "Listo",
-      "deleteWallTitle": "¿Eliminar el muro de spray?",
+      "deleteWallTitle": "¿Eliminar el Spraywall?",
       "deleteWallMessage": "¿Eliminar \"{{name}}\"? Sus fotos y bloques dejarán de estar disponibles. No se puede deshacer.",
       "deleteSuccess": "\"{{name}}\" eliminado"
     },
@@ -95,7 +95,7 @@
       "gymHint": "Elige el plafón de tu rocódromo",
       "own": "Mi propio plafón",
       "ownHint": "Configura el plafón que tienes en casa",
-      "sprayWall": "Añadir mi muro de spray",
+      "sprayWall": "Añadir mi Spraywall",
       "scan": "Buscar el plafón que tengo delante",
       "scanFootnote": "Los MoonBoard y algunas cajas de Kilter aún no aparecen aquí.",
       "searching": "Buscando plafones cerca de ti…",
@@ -148,7 +148,7 @@
       "unpinAria": "Desfijar {{name}}",
       "pinnedBadgeAria": "Fijado",
       "pinError": "No se pudieron actualizar tus plafones fijados",
-      "addWallTile": "Muro spray"
+      "addWallTile": "Spraywall"
     },
     "create": {
       "screenTitle": "Configura tu plafón",
@@ -228,18 +228,18 @@
         "adjustable": "ajustable"
       },
       "spray": {
-        "kind": "Plafón de presas",
+        "kind": "Spraywall",
         "editHolds": "Editar presas",
-        "editHoldsHint": "Añade, mueve o borra las presas de tu muro.",
-        "resetWall": "Resetear este muro",
+        "editHoldsHint": "Añade, mueve o borra las presas de tu Spraywall.",
+        "resetWall": "Resetear este Spraywall",
         "resetWallHint": "Haz una foto nueva y marca las presas otra vez.",
         "shareLink": "Compartir enlace",
-        "shareLinkPublicHint": "Cualquiera puede abrir este muro.",
+        "shareLinkPublicHint": "Cualquiera puede abrir este Spraywall.",
         "shareLinkUnlistedHint": "Solo quien reciba el enlace."
       },
       "details": "Detalles",
       "detailsAria": "Abrir los detalles de {{name}}",
-      "activeSprayDetails": "{{name}} · detalles del plafón",
+      "activeSprayDetails": "{{name}} · detalles del Spraywall",
       "share": {
         "shareLink": "Compartir enlace",
         "publicHint": "Cualquiera puede abrir este plafón.",
@@ -446,9 +446,9 @@
       "linkError": "No se pudo vincular ese rocódromo. Puede estar demasiado lejos de tu plafón. El resto de cambios sí se guardaron."
     },
     "sprayShare": {
-      "title": "Comparte este plafón",
-      "publicBody": "Este plafón es público: cualquiera puede abrirlo, aparece en la página del rocódromo y sus bloques salen en el feed.",
-      "unlistedBody": "Solo quien reciba este enlace puede abrir el plafón. No aparece en ninguna lista.",
+      "title": "Comparte este Spraywall",
+      "publicBody": "Este Spraywall es público: cualquiera puede abrirlo, aparece en la página del rocódromo y sus bloques salen en el feed.",
+      "unlistedBody": "Solo quien reciba este enlace puede abrir el Spraywall. No aparece en ninguna lista.",
       "copyLink": "Copiar enlace",
       "share": "Compartir",
       "copied": "Enlace copiado",
@@ -475,10 +475,10 @@
       "unlisted": "Solo con enlace",
       "public": "Público",
       "privateHint": "Solo tú puedes verlo, y los miembros de su rocódromo si tiene uno. Con «Ayuda a entrenar la detección de presas» activado, el equipo de Boardsesh puede usar la foto para mejorar la detección de presas.",
-      "unlistedHint": "Cualquiera con el enlace entra. El plafón no aparece en la página del rocódromo y su foto no sale a la web abierta.",
-      "publicHint": "Cualquiera puede encontrar el plafón. Aparece en la página del rocódromo, sus bloques salen en el feed y su foto se publica en la web abierta.",
-      "ownerOnlyError": "Solo quien montó este plafón puede cambiar quién lo ve. El resto de tus cambios se han guardado.",
-      "updateError": "No se pudo cambiar quién ve este plafón. Inténtalo de nuevo."
+      "unlistedHint": "Cualquiera con el enlace entra. El Spraywall no aparece en la página del rocódromo y su foto no sale a la web abierta.",
+      "publicHint": "Cualquiera puede encontrar el Spraywall. Aparece en la página del rocódromo, sus bloques salen en el feed y su foto se publica en la web abierta.",
+      "ownerOnlyError": "Solo quien montó este Spraywall puede cambiar quién lo ve. El resto de tus cambios se han guardado.",
+      "updateError": "No se pudo cambiar quién ve este Spraywall. Inténtalo de nuevo."
     },
     "publicGymWarning": {
       "message": "Tu rocódromo {{name}} es público, así que su ubicación es visible para todo el mundo. Si es tu casa, haz que el rocódromo sea privado.",
@@ -486,7 +486,7 @@
     },
     "sprayTraining": {
       "label": "Ayuda a entrenar la detección de presas",
-      "description": "Usamos la foto de este muro y las presas que marques para enseñar a la app a encontrar presas. Un admin de Boardsesh las revisa antes. La copia de entrenamiento se mantiene privada.",
+      "description": "Usamos la foto de este Spraywall y las presas que marques para enseñar a la app a encontrar presas. Un admin de Boardsesh las revisa antes. La copia de entrenamiento se mantiene privada.",
       "updateError": "No se pudo cambiar «Ayuda a entrenar la detección de presas». Inténtalo de nuevo.",
       "loadError": "No se pudo cargar «Ayuda a entrenar la detección de presas». Cierra esta pantalla y vuelve a abrirla."
     }
@@ -861,7 +861,7 @@
     },
     "startOver": {
       "title": "¿Empezar de nuevo?",
-      "body": "Todas las presas vuelven a como estaban al abrir el muro. Puedes deshacerlo.",
+      "body": "Todas las presas vuelven a como estaban al abrir el Spraywall. Puedes deshacerlo.",
       "confirm": "Empezar de nuevo",
       "cancel": "Seguir editando"
     },
@@ -926,7 +926,7 @@
       "pencil": "El Apple Pencil añade y activa presas. Con los dedos te mueves y eliges una presa."
     },
     "a11y": {
-      "wall": "Foto de tu muro: {{summary}}",
+      "wall": "Foto de tu Spraywall: {{summary}}",
       "holdValue": "Presa {{position}} de {{total}}, {{role}}",
       "noHold": "Ninguna presa elegida",
       "hint": "Desliza hacia arriba o abajo para recorrer las presas. Toca dos veces para activar o desactivar una.",
@@ -945,7 +945,7 @@
       "revealed": "Presas encontradas: {{summary}}",
       "pickHint": "Desliza hacia arriba o abajo hasta una presa y toca dos veces para elegirla."
     },
-    "readOnly": "No puedes editar este muro.",
+    "readOnly": "No puedes editar este Spraywall.",
     "errors": {
       "tooManyHolds": "Has llegado al límite de {{max}} presas. Desactiva algunas para añadir más.",
       "saveFailed": "No se pudieron guardar tus presas. Inténtalo de nuevo.",
@@ -953,8 +953,8 @@
       "strokeTooBig": "Ese trazo es mucho más grande que una presa. Amplía y repasa la presa misma.",
       "strokeTooDetailed": "Ese trazo tiene demasiado detalle para guardarlo. Repasa el contorno de una sola pasada.",
       "strokeTooShort": "Ese trazo es demasiado corto. Dibuja un bucle completo alrededor de la presa.",
-      "someHoldsOffWall_one": "{{count}} presa cae fuera del muro. Devuélvela a la foto o desactívala.",
-      "someHoldsOffWall_other": "{{count}} presas caen fuera del muro. Devuélvelas a la foto o desactívalas.",
+      "someHoldsOffWall_one": "{{count}} presa cae fuera del Spraywall. Devuélvela a la foto o desactívala.",
+      "someHoldsOffWall_other": "{{count}} presas caen fuera del Spraywall. Devuélvelas a la foto o desactívalas.",
       "cornersCross": "Dos lados se cruzan. Toca las esquinas en orden alrededor de la presa.",
       "cornersTooFew": "Esas esquinas están demasiado juntas o en línea. Toca al menos 3 alrededor de la presa.",
       "cornersHollow": "Esa forma es demasiado hueca. Toca las esquinas por el borde exterior de la presa.",
@@ -964,17 +964,17 @@
       "needsOnHold": "Activa la presa primero"
     },
     "empty": {
-      "noPhoto": "Este muro todavía no tiene foto que editar."
+      "noPhoto": "Este Spraywall todavía no tiene foto que editar."
     },
-    "loading": "Cargando tu muro…",
-    "loadStalled": "No pudimos cargar tu muro. Inténtalo de nuevo.",
+    "loading": "Cargando tu Spraywall…",
+    "loadStalled": "No pudimos cargar tu Spraywall. Inténtalo de nuevo.",
     "rail": {
       "label": "Herramientas de edición",
       "grip": "Mover las herramientas al otro lado",
       "mark": "Elegir y activar presas",
       "pencilOnly": "Solo Pencil",
-      "pencilOnlyHint": "Con los dedos eliges presas y te mueves. Solo el Apple Pencil cambia el muro.",
-      "fit": "Ajustar el muro a la pantalla",
+      "pencilOnlyHint": "Con los dedos eliges presas y te mueves. Solo el Apple Pencil cambia el Spraywall.",
+      "fit": "Ajustar el Spraywall a la pantalla",
       "more": "Más opciones"
     },
     "inspector": {
@@ -1014,7 +1014,7 @@
     }
   },
   "sprayWizard": {
-    "screenTitle": "Añadir un muro de spray",
+    "screenTitle": "Añadir un Spraywall",
     "stepCounter": "Paso {{current}} de {{total}}",
     "back": "Atrás",
     "next": "Siguiente",
@@ -1023,19 +1023,19 @@
       "helpLink": "Cómo hacer la foto",
       "helpLinkHint": "Abre la guía de fotos en tu navegador",
       "adjust": "Recortar o girar",
-      "cameraDenied": "Boardsesh necesita tu cámara para fotografiar un muro.",
+      "cameraDenied": "Boardsesh necesita tu cámara para fotografiar un Spraywall.",
       "failed": "Esa foto no se abre. Prueba con otra.",
-      "tip": "Aléjate, ponte de frente al muro y encuadra las cuatro esquinas.",
-      "heroTitle": "Haz una foto de tu muro",
+      "tip": "Aléjate, ponte de frente al Spraywall y encuadra las cuatro esquinas.",
+      "heroTitle": "Haz una foto de tu Spraywall",
       "heroBody": "Toca para abrir la cámara",
-      "heroTitleLibrary": "Elige una foto de tu muro",
+      "heroTitleLibrary": "Elige una foto de tu Spraywall",
       "heroBodyLibrary": "Toca para abrir tus fotos",
       "fromLibrary": "Elegir de tus fotos",
       "retake": "Repetir",
       "change": "Cambiar foto",
-      "tileLabel": "La foto de tu muro",
+      "tileLabel": "La foto de tu Spraywall",
       "howItWorks": {
-        "snap": "Fotografía el muro",
+        "snap": "Fotografía el Spraywall",
         "holds": "Marca las presas",
         "name": "Ponle nombre",
         "step": "{{number}}. {{label}}"
@@ -1043,7 +1043,7 @@
     },
     "adjust": {
       "title": "Recorta y gira",
-      "body": "Recorta hasta los bordes del muro. Gira la foto si salió de lado.",
+      "body": "Recorta hasta los bordes del Spraywall. Gira la foto si salió de lado.",
       "hint": "Arrastra un borde o una esquina. Arrastra dentro del recuadro para moverlo.",
       "small": "Esta foto es pequeña. Las presas pueden verse borrosas al hacer zoom.",
       "failed": "No se pudo recortar esa foto. Inténtalo de nuevo o cancela para dejarla como estaba.",
@@ -1063,16 +1063,16 @@
     },
     "anchors": {
       "title": "Marca las esquinas",
-      "body": "Arrastra los círculos a las esquinas del muro. Así se endereza la foto y se desbloquean Solo el muro y Solo las presas. Puedes saltártelo.",
+      "body": "Arrastra los círculos a las esquinas del Spraywall. Así se endereza la foto y se desbloquean Solo el Spraywall y Solo las presas. Puedes saltártelo.",
       "hint": "Arriba izquierda, arriba derecha, abajo derecha, abajo izquierda.",
-      "crossed": "Esas esquinas se cruzan entre sí. Colócalas alrededor del muro en orden.",
+      "crossed": "Esas esquinas se cruzan entre sí. Colócalas alrededor del Spraywall en orden.",
       "cornerTopLeft": "Esquina superior izquierda",
       "cornerTopRight": "Esquina superior derecha",
       "cornerBottomRight": "Esquina inferior derecha",
       "cornerBottomLeft": "Esquina inferior izquierda",
       "clear": "Restablecer esquinas",
       "quality": {
-        "good": "Bien de frente. El muro se enderezará limpio.",
+        "good": "Bien de frente. El Spraywall se enderezará limpio.",
         "soft": "Un poco inclinada. Repítela de frente para un aspecto más nítido.",
         "fail": "Demasiado inclinada para enderezarla. Tu foto sigue sirviendo, o repítela de frente.",
         "small": "Esta foto es demasiado pequeña para enderezarla. Tu foto sigue sirviendo tal cual."
@@ -1096,125 +1096,125 @@
     "scan": {
       "queued": "Esperando turno…",
       "running": "Buscando presas…",
-      "slow": "Los muros con muchas presas tardan un poco más",
+      "slow": "Los Spraywalls con muchas presas tardan un poco más",
       "resumeHint": "Puedes salir y continuar más tarde."
     },
     "review": {
-      "nothingFound": "No se encontraron presas. Toca el muro para añadirlas.",
-      "detectionFailed": "Esta vez no pudimos encontrar presas. Toca el muro para añadirlas.",
-      "manualOnly": "Toca el muro para añadir tus presas.",
+      "nothingFound": "No se encontraron presas. Toca el Spraywall para añadirlas.",
+      "detectionFailed": "Esta vez no pudimos encontrar presas. Toca el Spraywall para añadirlas.",
+      "manualOnly": "Toca el Spraywall para añadir tus presas.",
       "retry": "Reintentar"
     },
     "look": {
       "title": "¿Cómo se iluminan las presas?",
-      "body": "Desliza para probar un aspecto. Los escaladores verán tu muro así.",
-      "loading": "Cargando tu muro…",
-      "unavailable": "Aquí no se puede mostrar la foto de tu muro, pero puedes elegir el aspecto igualmente.",
+      "body": "Desliza para probar un aspecto. Los escaladores verán tu Spraywall así.",
+      "loading": "Cargando tu Spraywall…",
+      "unavailable": "Aquí no se puede mostrar la foto de tu Spraywall, pero puedes elegir el aspecto igualmente.",
       "saving": "Guardando el aspecto…",
       "failed": "No se pudo guardar el aspecto. Inténtalo de nuevo o sigue sin él.",
       "publishWithout": "Publicar igualmente",
       "continueWithout": "Seguir igualmente",
-      "dimTitle": "Oscurecer el resto del muro",
+      "dimTitle": "Oscurecer el resto del Spraywall",
       "dimOff": "Desactivado",
       "previewPhoto": "La iluminación de las presas se muestra sobre la foto original. Al publicar se usará {{background}}.",
       "failedPublish": "No se pudo guardar el aspecto. Inténtalo de nuevo o publícalo sin él."
     },
     "details": {
-      "title": "Ponle nombre a tu muro",
-      "namePlaceholder": "Mi muro de spray",
-      "defaultName": "Muro de spray de {{name}}",
+      "title": "Ponle nombre a tu Spraywall",
+      "namePlaceholder": "Mi Spraywall",
+      "defaultName": "Spraywall de {{name}}",
       "angle": "Ángulo",
       "angleValue": "{{angle}}°",
       "angleHint": "Queda fijo al publicar.",
       "save": "Guardar",
-      "saving": "Guardando tu muro…",
-      "saveFailed": "No se pudieron guardar los datos del muro. Inténtalo de nuevo.",
+      "saving": "Guardando tu Spraywall…",
+      "saveFailed": "No se pudieron guardar los datos del Spraywall. Inténtalo de nuevo.",
       "name": "Nombre",
-      "renameTitle": "Cambia el nombre del muro",
+      "renameTitle": "Cambia el nombre del Spraywall",
       "renameDone": "Listo",
       "renameHint": "Abre un campo para escribir otro nombre"
     },
     "publish": {
       "title": "Añadiéndolo a tus plafones",
-      "working": "Publicando tu muro…",
-      "failed": "No se pudo publicar el muro.",
-      "stalled": "Tu muro está guardado, pero prepararlo tardó demasiado. Inténtalo de nuevo.",
+      "working": "Publicando tu Spraywall…",
+      "failed": "No se pudo publicar el Spraywall.",
+      "stalled": "Tu Spraywall está guardado, pero prepararlo tardó demasiado. Inténtalo de nuevo.",
       "retry": "Reintentar"
     },
     "done": {
-      "body": "Preparando tu muro…",
+      "body": "Preparando tu Spraywall…",
       "leave": "Volver a escalar"
     },
     "leave": {
-      "title": "¿Dejar este muro por ahora?",
-      "body": "Tu muro y su foto están guardados. Retómalo donde lo dejaste.",
+      "title": "¿Dejar este Spraywall por ahora?",
+      "body": "Tu Spraywall y su foto están guardados. Retómalo donde lo dejaste.",
       "stay": "Seguir",
       "go": "Salir",
       "unsavedTitle": "¿Salir sin publicar?",
-      "unsavedBody": "Tus cambios en las presas no se guardarán. El muro y su foto siguen guardados.",
+      "unsavedBody": "Tus cambios en las presas no se guardarán. El Spraywall y su foto siguen guardados.",
       "discard": "Salir igualmente"
     },
     "resume": {
-      "checking": "Buscando un muro que empezaste…",
-      "title": "Tienes un muro a medias",
+      "checking": "Buscando un Spraywall que empezaste…",
+      "title": "Tienes un Spraywall a medias",
       "body": "«{{name}}» no está terminado. Retómalo donde lo dejaste o empieza de nuevo.",
       "pickUp": "Retomarlo",
       "startOver": "Empezar de nuevo",
-      "checkFailed": "No se pudo comprobar ese muro. Inténtalo otra vez.",
+      "checkFailed": "No se pudo comprobar ese Spraywall. Inténtalo otra vez.",
       "retry": "Reintentar"
     },
     "reset": {
-      "screenTitle": "Resetear este muro",
-      "starting": "Preparando tu muro nuevo…",
+      "screenTitle": "Resetear este Spraywall",
+      "starting": "Preparando tu Spraywall nuevo…",
       "startFailed": "No se pudo empezar el reseteo. Inténtalo otra vez.",
       "resumeTitle": "Tienes un reseteo a medias",
-      "resumeBody": "La foto nueva de «{{name}}» no está terminada. Retómala donde la dejaste o empieza de nuevo. El muro sigue activo hasta que se publique el nuevo.",
-      "archiveNotice": "Cuando este muro se publique, el anterior se archiva. Sus bloques y encadenes se quedan.",
-      "heroTitle": "Haz una foto nueva del muro",
-      "heroTitleLibrary": "Elige una foto nueva del muro",
+      "resumeBody": "La foto nueva de «{{name}}» no está terminada. Retómala donde la dejaste o empieza de nuevo. El Spraywall sigue activo hasta que se publique el nuevo.",
+      "archiveNotice": "Cuando este Spraywall se publique, el anterior se archiva. Sus bloques y encadenes se quedan.",
+      "heroTitle": "Haz una foto nueva del Spraywall",
+      "heroTitleLibrary": "Elige una foto nueva del Spraywall",
       "photoNote": "Mismo nombre y ángulo que antes."
     },
     "background": {
-      "title": "¿Qué debería mostrar el muro?",
-      "body": "Desliza para comparar la foto, solo el muro o solo las presas.",
-      "unsupported": "Ahora solo está disponible la foto. Aún puedes terminar tu muro."
+      "title": "¿Qué debería mostrar el Spraywall?",
+      "body": "Desliza para comparar la foto, solo el Spraywall o solo las presas.",
+      "unsupported": "Ahora solo está disponible la foto. Aún puedes terminar tu Spraywall."
     }
   },
   "sprayResetConfirm": {
-    "title": "¿Resetear este muro?",
-    "body": "Haz una foto nueva y marca las presas desde cero. Cuando el muro nuevo se publique, este se archiva. Sus bloques y encadenes se quedan en los logbooks y las playlists, y ya nadie podrá montar bloques en él.",
+    "title": "¿Resetear este Spraywall?",
+    "body": "Haz una foto nueva y marca las presas desde cero. Cuando el Spraywall nuevo se publique, este se archiva. Sus bloques y encadenes se quedan en los logbooks y las playlists, y ya nadie podrá montar bloques en él.",
     "start": "Empezar el reseteo",
     "cancel": "Ahora no"
   },
   "sprayArchive": {
     "banner": "Archivado el {{date}}. Los bloques y encadenes se quedan, pero aquí ya no se monta nada nuevo.",
     "bannerUndated": "Archivado. Los bloques y encadenes se quedan, pero aquí ya no se monta nada nuevo.",
-    "switchToNew": "Ir al muro nuevo",
-    "openFailed": "No se pudo abrir ese muro. Inténtalo otra vez.",
+    "switchToNew": "Ir al Spraywall nuevo",
+    "openFailed": "No se pudo abrir ese Spraywall. Inténtalo otra vez.",
     "manageHeader": "Archivados",
     "manageRow": "Archivado el {{date}}",
     "manageRowUndated": "Archivado",
     "deleteMessage": "¿Eliminar «{{name}}»? Se elimina su foto, y sus bloques y todos los encadenes registrados en ellos desaparecen de los logbooks y las playlists. No se puede deshacer."
   },
   "sprayWallErrors": {
-    "archived": "Este muro está archivado. Sus bloques y encadenes se quedan, pero ya no se puede montar nada nuevo en él.",
-    "resetRetired": "Ahora los muros se cambian reseteándolos. Actualiza la app y luego resetea el muro.",
-    "resetOwnerOnly": "Solo quien creó el muro puede resetearlo.",
-    "resetSourceUnpublished": "Termina de configurar este muro antes de resetearlo.",
-    "archiveLimitReached": "Puedes guardar {{max}} muros archivados. Borra uno de la sección Archivados para resetear este muro."
+    "archived": "Este Spraywall está archivado. Sus bloques y encadenes se quedan, pero ya no se puede montar nada nuevo en él.",
+    "resetRetired": "Ahora los Spraywalls se cambian reseteándolos. Actualiza la app y luego resetea el Spraywall.",
+    "resetOwnerOnly": "Solo quien creó el Spraywall puede resetearlo.",
+    "resetSourceUnpublished": "Termina de configurar este Spraywall antes de resetearlo.",
+    "archiveLimitReached": "Puedes guardar {{max}} Spraywalls archivados. Borra uno de la sección Archivados para resetear este Spraywall."
   },
   "sprayMaintenance": {
     "screenTitle": "Editar presas",
-    "preparing": "Abriendo tu muro…",
-    "unavailable": "No puedes editar este muro.",
-    "nothingPublished": "Termina de configurar este muro antes de editar sus presas.",
-    "draftUnavailable": "Este borrador ha cambiado. Vuelve a abrir el muro para editar sus presas.",
+    "preparing": "Abriendo tu Spraywall…",
+    "unavailable": "No puedes editar este Spraywall.",
+    "nothingPublished": "Termina de configurar este Spraywall antes de editar sus presas.",
+    "draftUnavailable": "Este borrador ha cambiado. Vuelve a abrir el Spraywall para editar sus presas.",
     "loadFailed": "No se ha podido abrir el editor de presas. Inténtalo de nuevo.",
     "publish": "Publicar presas",
     "publishing": "Publicando tus presas…",
     "publishFailed": "Los cambios de tus presas están guardados. Intenta publicarlos de nuevo.",
-    "refreshing": "Cargando el muro actualizado…",
-    "refreshFailed": "Tus presas están publicadas. Intenta cargar el muro de nuevo.",
+    "refreshing": "Cargando el Spraywall actualizado…",
+    "refreshFailed": "Tus presas están publicadas. Intenta cargar el Spraywall de nuevo.",
     "retry": "Reintentar",
     "temporarilyUnavailable": "La edición de presas no está disponible ahora. Inténtalo más tarde.",
     "leave": {
@@ -1223,7 +1223,7 @@
       "stay": "Seguir editando",
       "discard": "Descartar cambios"
     },
-    "leftoverPhoto": "Este muro tiene una foto nueva sin terminar de una versión anterior de la app. Descártala para editar las presas.",
+    "leftoverPhoto": "Este Spraywall tiene una foto nueva sin terminar de una versión anterior de la app. Descártala para editar las presas.",
     "discardLeftover": "Descartar la foto sin terminar",
     "discardLeftoverFailed": "No se pudo descartar esa foto. Inténtalo otra vez."
   },
@@ -1236,34 +1236,34 @@
     "keep": "Mantener las presas"
   },
   "sprayCaps": {
-    "holds": "En un muro caben hasta {{max}} presas. Descarta algunas y vuelve a guardar.",
-    "versions": "Un muro guarda hasta {{max}} versiones de sus presas, una por cada edición publicada, y este ya las ha gastado todas. Resetea el muro para empezar de cero.",
-    "walls": "Puedes tener {{max}} muros. Borra uno para hacer sitio.",
-    "wallsHint": "Puedes tener hasta {{max}} muros."
+    "holds": "En un Spraywall caben hasta {{max}} presas. Descarta algunas y vuelve a guardar.",
+    "versions": "Un Spraywall guarda hasta {{max}} versiones de sus presas, una por cada edición publicada, y este ya las ha gastado todas. Resetea el Spraywall para empezar de cero.",
+    "walls": "Puedes tener {{max}} Spraywalls. Borra uno para hacer sitio.",
+    "wallsHint": "Puedes tener hasta {{max}} Spraywalls."
   },
   "sprayHidden": {
     "body": "Alguien lo reportó y lo hemos quitado de la vista de los demás. Para ti sigue aquí, y no se ha borrado nada.",
-    "title": "Este muro está oculto"
+    "title": "Este Spraywall está oculto"
   },
   "sprayModeration": {
-    "reportTitle": "Denunciar plafón",
-    "reportHint": "Marcar este plafón para revisión administrativa",
+    "reportTitle": "Denunciar Spraywall",
+    "reportHint": "Marcar este Spraywall para revisión administrativa",
     "submit": "Enviar",
     "reported": "Gracias. Tu denuncia está pendiente de revisión.",
     "reportOffline": "Conéctate a internet para enviar tu denuncia.",
     "reportError": "No se pudo enviar tu denuncia. Inténtalo de nuevo.",
-    "queueTitle": "Denuncias de plafones spray",
-    "hide": "Ocultar plafón",
-    "unhide": "Mostrar plafón",
+    "queueTitle": "Denuncias de Spraywalls",
+    "hide": "Ocultar Spraywall",
+    "unhide": "Mostrar Spraywall",
     "keepVisible": "Mantener visible",
     "hidden": "Oculto",
     "photoLabel": "Foto de {{wall}}",
     "noPhoto": "No hay foto disponible",
-    "review": "Revisar plafón",
+    "review": "Revisar Spraywall",
     "reviewError": "No se guardó la decisión. Inténtalo de nuevo.",
-    "unavailable": "La moderación de plafones spray no está disponible para esta cuenta ahora.",
+    "unavailable": "La moderación de Spraywalls no está disponible para esta cuenta ahora.",
     "loadError": "No se pudieron cargar las denuncias.",
-    "empty": "No hay plafones pendientes de revisión.",
+    "empty": "No hay Spraywalls pendientes de revisión.",
     "reasons": {
       "inappropriate": "Foto o nombre inapropiado",
       "notAWall": "No es un muro de escalada",
@@ -1274,24 +1274,24 @@
     "reportCount_other": "{{count}} denuncias"
   },
   "sprayBackground": {
-    "label": "Fondo del muro",
+    "label": "Fondo del Spraywall",
     "photo": "Foto",
-    "wallCrop": "Solo el muro",
+    "wallCrop": "Solo el Spraywall",
     "holdCutouts": "Solo las presas",
-    "retake": "Resetear el muro con una foto nueva",
+    "retake": "Resetear el Spraywall con una foto nueva",
     "previewLabel": "Vista previa de {{look}}",
     "saveFailed": "No se pudo guardar el fondo. Inténtalo de nuevo.",
     "notAvailable": "Esta foto está demasiado inclinada para ese aspecto. Repítela de frente.",
     "note": {
       "lockedNoPins": "Marca las 4 esquinas para desbloquearlo.",
-      "lockedRetake": "Resetea el muro con una foto de frente para desbloquearlo.",
+      "lockedRetake": "Resetea el Spraywall con una foto de frente para desbloquearlo.",
       "generating": "Generando…",
       "failed": "Ese aspecto no se pudo generar. Guárdalo otra vez para reintentarlo.",
-      "preview": "Así se verá tu muro. Tu foto se ve durante un minuto más o menos después de publicar.",
+      "preview": "Así se verá tu Spraywall. Tu foto se ve durante un minuto más o menos después de publicar.",
       "soft": "Repite la foto de frente para un aspecto más nítido.",
       "volumes": "Los volúmenes todavía no se recortan."
     },
-    "notAvailableNoPins": "Marca primero las 4 esquinas del muro para usar este aspecto.",
+    "notAvailableNoPins": "Marca primero las 4 esquinas del Spraywall para usar este aspecto.",
     "notAvailableSmall": "Esta foto es demasiado pequeña para enderezarla. Repítela con la cámara principal a 1x.",
     "usePhoto": "Usar la foto"
   },
@@ -1306,7 +1306,7 @@
     "offline": "Importando · Conéctate para ver el progreso",
     "open": "Comprobar importación",
     "review": "Revisar presas",
-    "unavailable": "Esta importación ya no existe: su foto se cambió o se descartó, o ya no puedes editar este muro."
+    "unavailable": "Esta importación ya no existe: su foto se cambió o se descartó, o ya no puedes editar este Spraywall."
   },
   "boardShareLink": {
     "metadataTitle": "Te han invitado a un plafón | Boardsesh",

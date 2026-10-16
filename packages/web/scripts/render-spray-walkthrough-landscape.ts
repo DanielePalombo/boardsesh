@@ -61,7 +61,7 @@ const chapters = [
   },
   {
     at: 139,
-    eyebrow: 'SPRAY WALLS',
+    eyebrow: 'Spraywalls',
     title: ['Ready to', 'climb.'],
     body: ['boardsesh.com/help/spray-walls'],
   },
@@ -121,7 +121,7 @@ async function writeCards(): Promise<string[]> {
       <text x="58" y="84" fill="#c9aaff" font-family="Arial, sans-serif" font-size="23" font-weight="800" letter-spacing="3">${xml(chapter.eyebrow)}</text>
       ${title}${body}
       <rect x="645" y="439" width="184" height="212" rx="18" fill="#251a36" stroke="#b893ef" stroke-width="2"/>
-      <text x="58" y="619" fill="#cabfd4" font-family="Arial, sans-serif" font-size="20" font-weight="700">SPRAY WALL WALKTHROUGH</text>
+      <text x="58" y="619" fill="#cabfd4" font-family="Arial, sans-serif" font-size="20" font-weight="700">Spraywall walkthrough</text>
       ${progress}
     </svg>`);
     const path = resolve(workDir, `chapter-${index}.png`);

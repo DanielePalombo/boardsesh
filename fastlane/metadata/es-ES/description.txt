@@ -1,10 +1,10 @@
-Escala en Kilter, Tension, MoonBoard y más plafones, o en tu muro de spray. Tus bloques, la cola compartida y el logbook, en una sola app.
+Escala en Kilter, Tension, MoonBoard y más plafones, o en tu Spraywall. Tus bloques, la cola compartida y el logbook, en una sola app.
 
 TUS PLAFONES. UNA APP.
 Boardsesh es compatible con Kilter, Tension, MoonBoard, Woods, Decoy, Touchstone, Grasshopper y So iLL. Cambia de plafón y conserva tu historial de escalada en un solo sitio.
 
-TU MURO DE SPRAY, TAMBIÉN
-¿Un muro de casa, o un muro de spray en tu rocódromo? Fotografíalo y Boardsesh sugiere presas a partir de la foto. Corrige lo que se le haya pasado y luego monta bloques, ponlos en cola y registra encadenes en el mismo logbook que tus demás plafones. No hacen falta LED: las presas se resaltan sobre tu foto. Comparte el muro por enlace y tu equipo también podrá montar en él. ¿Has desmontado el muro? Resetéalo con una foto nueva y el muro anterior se archiva con sus bloques y encadenes. Cambia una sola presa y cada bloque que la usaba queda marcado.
+Tu Spraywall, también
+¿Un Spraywall en casa o en tu rocódromo? Fotografíalo y Boardsesh sugiere presas a partir de la foto. Corrige lo que se le haya pasado y luego monta bloques, ponlos en cola y registra encadenes en el mismo logbook que tus demás plafones. No hacen falta LED: las presas se resaltan sobre tu foto. Comparte el Spraywall por enlace y tu equipo también podrá montar en él. ¿Has desmontado el Spraywall? Resetéalo con una foto nueva y el Spraywall anterior se archiva con sus bloques y encadenes. Cambia una sola presa y cada bloque que la usaba queda marcado.
 
 HISTORIAL DEL MURO
 Si compartes muro, enseguida pierdes la cuenta del último bloque, y siempre hay alguien que lo borra sin querer.
@@ -28,6 +28,6 @@ Guarda tu sesión en Apple Health e importa tu logbook antiguo de Kilter y Tensi
 ENCUENTRA MÁS PARA ESCALAR
 Sigue a tu equipo y a los aperturistas, busca escaladores y fija playlists desde Discover.
 
-Plafones compatibles: Kilter, Tension, MoonBoard (2010, 2016, 2024, Masters 2017, Masters 2019), Woods (12x12, 8x10), Decoy, Touchstone, Grasshopper y So iLL. Y además muros de spray: cualquier muro que puedas fotografiar.
+Plafones compatibles: Kilter, Tension, MoonBoard (2010, 2016, 2024, Masters 2017, Masters 2019), Woods (12x12, 8x10), Decoy, Touchstone, Grasshopper y So iLL. Y además Spraywalls: cualquier Spraywall que puedas fotografiar.
 
 Boardsesh es un proyecto comunitario que funciona con estos plafones y no está afiliado ni respaldado por ningún fabricante de plafones.

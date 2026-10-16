@@ -5,7 +5,7 @@
     "weekly": "We prepare one snapshot per board each UTC week. Downloads reuse that snapshot until next week.",
     "expiry": "Files expire 14 days after creation. Each download uses a fresh link that lasts 5 minutes.",
     "boardType": "Board type",
-    "sprayWalls": "Spray walls",
+    "sprayWalls": "Spraywalls",
     "format": "File format",
     "boardseshFormat": "Boardsesh JSON",
     "auroraFormat": "Aurora JSON",

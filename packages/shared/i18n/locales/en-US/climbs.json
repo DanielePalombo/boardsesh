@@ -132,7 +132,7 @@
     "title": "Boardsesh grade",
     "moonboardBody": "We don't have community grade data for MoonBoard yet. Log your Moon sends on Boardsesh to help unlock it.",
     "woodsBody": "We don't have community grade data for the Woods Board yet. Log your Woods sends on Boardsesh to help unlock it.",
-    "sprayBody": "On a spray wall the crew grades each climb. The first ascent sets the grade, and every climber's grade after that moves it.",
+    "sprayBody": "On a Spraywall the crew grades each climb. The first ascent sets the grade, and every climber's grade after that moves it.",
     "loadError": "Couldn't load the grade right now.",
     "byAngle": "How it climbs by angle",
     "summaryLocal": "local",
@@ -220,7 +220,7 @@
       "boardConfigIncomplete": "The board details are missing or invalid. Pick the board again to set your climb.",
       "noUsableBoard": "Pick a board first, then set your climb.",
       "boardTypeUnsupported": "This app version can't set climbs on that board yet. Pick another board.",
-      "wallArchived": "This wall is archived. Its climbs and sends stay, but nothing new can be set on it."
+      "wallArchived": "This Spraywall is archived. Its climbs and sends stay, but nothing new can be set on it."
     },
     "alerts": {
       "publishDuplicateNamed": "This hold pattern matches \"{{name}}\". Toggle Draft to save it without publishing, or change a hold.",
@@ -385,8 +385,8 @@
         "subtitle": "Try adjusting your board settings"
       },
       "unsetWall": {
-        "title": "No one's set on this wall yet",
-        "subtitle": "Pick your holds, name it, and the wall has its first climb.",
+        "title": "No one's set on this Spraywall yet",
+        "subtitle": "Pick your holds, name it, and the Spraywall has its first climb.",
         "cta": "Set the first climb"
       },
       "noMatches": {
@@ -711,15 +711,15 @@
       "deleteClimb": {
         "row": "Delete climb",
         "title": "Delete this climb?",
-        "message": "It comes off the spray wall for everyone, with its comments. This can't be undone.",
+        "message": "It comes off the Spraywall for everyone, with its comments. This can't be undone.",
         "confirm": "Delete",
         "cancel": "Keep it",
         "success": "Climb deleted.",
         "hasTicks": "Someone has logged this climb, so it stays on the wall.",
         "pendingTick": "You have a send on this climb waiting to sync, so it stays.",
         "notFound": "This climb is already gone.",
-        "notAllowed": "Only spray wall climbs can be deleted.",
-        "archived": "This spray wall is archived, so its climbs stay as they are.",
+        "notAllowed": "Only Spraywall climbs can be deleted.",
+        "archived": "This Spraywall is archived, so its climbs stay as they are.",
         "offline": "You're offline. Deleting a climb needs a connection.",
         "error": "Couldn't delete the climb. Try again."
       }
@@ -985,7 +985,7 @@
     "unknownGrade": "Ungraded",
     "unknownSetter": "an unknown setter",
     "heading": "{{climbName}} — {{grade}}",
-    "summary": "On {{wallName}}, a spray wall at {{angle}}° with {{holdCount}} holds.",
+    "summary": "On {{wallName}}, a Spraywall at {{angle}}° with {{holdCount}} holds.",
     "setterLine": "Set by {{setter}}. {{ascents}} ascents logged.",
     "ascentsLine": "{{ascents}} ascents logged.",
     "setterNotesHeading": "Setter notes",
@@ -993,24 +993,24 @@
     "setterLink": "More climbs by {{setter}}",
     "gymsLink": "Find a gym with boards",
     "homeLink": "Boardsesh home",
-    "photoAlt": "{{climbName}}, {{grade}}, lit up on the {{wallName}} spray wall",
-    "noPhoto": "This wall has no photo to show yet.",
+    "photoAlt": "{{climbName}}, {{grade}}, lit up on the {{wallName}} Spraywall",
+    "noPhoto": "This Spraywall has no photo to show yet.",
     "metadata": {
-      "title": "{{climbName}} {{grade}} on {{wallName}} | Spray Wall",
-      "description": "{{climbName}}, {{grade}}, on the {{wallName}} spray wall at {{angle}}°, set by {{setter}}. See the holds on the wall photo."
+      "title": "{{climbName}} {{grade}} on {{wallName}} | Spraywall",
+      "description": "{{climbName}}, {{grade}}, on the {{wallName}} Spraywall at {{angle}}°, set by {{setter}}. See the holds on the Spraywall photo."
     },
     "wall": {
-      "summary": "A spray wall at {{angle}}° with {{holdCount}} holds.",
-      "photoAlt": "The {{wallName}} spray wall",
-      "openInApp": "Open this wall in the Boardsesh app to browse its climbs, set your own and log your sends.",
+      "summary": "A Spraywall at {{angle}}° with {{holdCount}} holds.",
+      "photoAlt": "The {{wallName}} Spraywall",
+      "openInApp": "Open this Spraywall in the Boardsesh app to browse its climbs, set your own and log your sends.",
       "metadata": {
-        "title": "{{wallName}} | Spray Wall",
-        "description": "{{wallName}}, a spray wall at {{angle}}°. See the wall and open it in the Boardsesh app."
+        "title": "{{wallName}} | Spraywall",
+        "description": "{{wallName}}, a Spraywall at {{angle}}°. See the Spraywall and open it in the Boardsesh app."
       }
     },
     "install": {
       "heading": "Get the app",
-      "body": "Log your sends on this wall and set climbs of your own."
+      "body": "Log your sends on this Spraywall and set climbs of your own."
     }
   }
 }

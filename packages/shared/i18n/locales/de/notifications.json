@@ -39,7 +39,7 @@
     "gymClaimApprovedGeneric": "Die Halle gehört jetzt dir — deine Anfrage ist durch",
     "default": "Du hast eine neue Benachrichtigung",
     "sprayWallReady": "{{wall}} ist bereit zur Prüfung.",
-    "sprayWallReadyGeneric": "Das Foto deines Boards ist bereit zur Prüfung."
+    "sprayWallReadyGeneric": "Das Foto deiner Spraywall ist bereit zur Prüfung."
   },
   "followRequest": {
     "approve": "Bestätigen",
