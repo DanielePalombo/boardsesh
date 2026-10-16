@@ -13,8 +13,8 @@ type BoardReturnTo = '/(tabs)/discover' | '/(tabs)/climbs';
 // The drawer panel itself now lives in the `user-drawer` transparentModal route
 // (app/user-drawer.tsx). The provider is data + actions only: it opens the route
 // and exposes the RAW navigation/feedback actions. The route is responsible for
-// sequencing them (its animated `close(after)` runs `after` only once the route's
-// view controller has unmounted), so none of these defer on their own.
+// sequencing them (its animated `close(after)` queues `after` following React
+// unmount), so none of these defer on their own.
 type UserDrawerContextValue = {
   openUserDrawer: () => void;
   // Kept for type/back-compat. The route owns the animated close; this is a
@@ -32,7 +32,7 @@ type UserDrawerContextValue = {
   navigateToChangelog: () => void;
   navigateToAbout: () => void;
   openDiscord: () => void;
-  signOutAction: () => void;
+  signOutAction: (signal?: AbortSignal) => Promise<void>;
   setFeedbackMode: (mode: FeedbackSheetMode) => void;
   presentFeedback: () => void;
   /** Crowdsourced QA (tester-only): the list of PR previews this build can load. */
@@ -124,14 +124,13 @@ export function UserDrawerProvider({ children }: { children: ReactNode }) {
     void openDiscordInvite('user-drawer');
   }, []);
 
-  // The drawer row calls this via the route's animated `close(after)`, so the confirm
-  // is raised only once the drawer has slid away and its route popped — on iOS the
-  // dialog is a native Alert, which would otherwise sit over a half-dismissed drawer.
+  // The drawer confirms after closing. iOS Account confirms while mounted so its
+  // modal dismissal cannot race the native confirmation sheet (#6505). The shared
+  // hook owns confirmation, double-tap protection and retry after cancel/failure.
+  // Account can cancel warning probes when it closes, before a dialog is shown.
   // This row used to call `signOut` straight through: one tap discarded the downloaded
   // boards and any unsynced writes with no warning at all (issue #3621).
-  const signOutAction = useCallback(() => {
-    void confirmSignOut();
-  }, [confirmSignOut]);
+  const signOutAction = useCallback((signal?: AbortSignal) => confirmSignOut(signal), [confirmSignOut]);
 
   const presentFeedback = useCallback(() => {
     setFeedbackVisible(true);
