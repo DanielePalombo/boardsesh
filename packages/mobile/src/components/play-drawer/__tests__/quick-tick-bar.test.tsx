@@ -24,9 +24,29 @@ vi.mock('react-native', () => ({
   DynamicColorIOS: (appearances: { light: string }) => appearances.light,
   PlatformColor: (name: string) => name,
   StyleSheet: { create: (styles: unknown) => styles },
+  View: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
 }));
 vi.mock('../../Text', () => ({
-  Text: ({ children }: { children?: ReactNode }) => createElement('span', null, children),
+  Text: ({
+    children,
+    variant,
+    color,
+    numberOfLines,
+  }: {
+    children?: ReactNode;
+    variant?: string;
+    color?: string;
+    numberOfLines?: number;
+  }) =>
+    createElement(
+      'span',
+      {
+        'data-variant': variant,
+        'data-color': color,
+        'data-number-of-lines': numberOfLines ?? '',
+      },
+      children,
+    ),
 }));
 vi.mock('../../../providers/theme-provider', () => ({
   useTheme: () => ({ systemColors: { secondaryLabel: 'secondaryLabel' } }),
@@ -177,21 +197,35 @@ function rowLabels(container: HTMLElement): string[] {
 }
 
 describe('QuickTickBar row order', () => {
-  // Rows run least-used at the top to most-used at the bottom so the controls
-  // people actually reach for land in the thumb zone (#4163). The ordering is
-  // driven by measured interaction rates — tries 28%, stars 24%, grade 6.5%,
-  // note 1.4%, date/time under 1% — so pin it down here rather than let a
-  // future edit quietly shuffle it back.
-  it('runs date, grade, stars, tries, note from top to bottom', () => {
+  it('runs tries, stars, grade, date, note from top to bottom', () => {
     const { container } = renderBar();
 
     expect(rowLabels(container)).toEqual([
-      'mobile.tick.dateLabel',
-      'mobile.tick.gradeLabel',
-      'mobile.tick.starsLabel',
       'mobile.tick.triesLabel',
+      'mobile.tick.starsLabel',
+      'mobile.tick.gradeLabel',
+      'mobile.tick.dateLabel',
       'mobile.tick.noteLabel',
     ]);
+  });
+
+  it('keeps only the divider beneath quality in the create form', () => {
+    const { container } = renderBar();
+    const dividedRows = Array.from(container.querySelectorAll('[data-row][data-separator="true"]')).map((row) =>
+      row.getAttribute('data-row'),
+    );
+    expect(dividedRows).toEqual(['mobile.tick.starsLabel']);
+  });
+
+  it('omits the complete date/time row when the host requests compact fields', () => {
+    const { container, queryByTestId, rerender } = render(
+      createElement(QuickTickBar, { form: makeForm(), showDate: false }),
+    );
+    expect(queryByTestId('tick-date-row')).toBeNull();
+    expect(rowLabels(container)).not.toContain('mobile.tick.dateLabel');
+    rerender(createElement(QuickTickBar, { form: makeForm(), showDate: true }));
+    expect(queryByTestId('tick-date-row')).toBeTruthy();
+    expect(rowLabels(container)).toContain('mobile.tick.dateLabel');
   });
 
   it('puts date and time on a single row, both fields committing through one handler', () => {
@@ -218,10 +252,10 @@ describe('QuickTickBar row order', () => {
     const { container, queryByTestId } = render(createElement(QuickTickBar, { form: makeForm(), showNote: false }));
     expect(queryByTestId('tick-note-field')).toBeNull();
     expect(rowLabels(container)).toEqual([
-      'mobile.tick.dateLabel',
-      'mobile.tick.gradeLabel',
-      'mobile.tick.starsLabel',
       'mobile.tick.triesLabel',
+      'mobile.tick.starsLabel',
+      'mobile.tick.gradeLabel',
+      'mobile.tick.dateLabel',
     ]);
   });
 });
@@ -276,6 +310,25 @@ describe('QuickTickBar first ascent (#5971)', () => {
     const { getByText, queryByText } = renderBar({ firstAscent: true });
     expect(getByText('mobile.tick.firstAscent')).toBeTruthy();
     expect(queryByText('mobile.tick.gradeHelp')).toBeNull();
+  });
+
+  it('keeps first-ascent help muted and fully wrapping like ordinary help', () => {
+    const firstAscent = renderBar({ firstAscent: true });
+    const firstHelp = firstAscent.getByText('mobile.tick.firstAscent');
+    const firstPresentation = {
+      variant: firstHelp.getAttribute('data-variant'),
+      color: firstHelp.getAttribute('data-color'),
+      numberOfLines: firstHelp.getAttribute('data-number-of-lines'),
+    };
+    expect(firstPresentation).toEqual({ variant: 'caption1', color: 'secondaryLabel', numberOfLines: '' });
+    firstAscent.unmount();
+    const ordinary = renderBar();
+    const ordinaryHelp = ordinary.getByText('mobile.tick.gradeHelp');
+    expect({
+      variant: ordinaryHelp.getAttribute('data-variant'),
+      color: ordinaryHelp.getAttribute('data-color'),
+      numberOfLines: ordinaryHelp.getAttribute('data-number-of-lines'),
+    }).toEqual(firstPresentation);
   });
 
   it('keeps the ordinary grade help otherwise', () => {

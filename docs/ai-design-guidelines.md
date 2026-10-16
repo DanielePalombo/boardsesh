@@ -1136,11 +1136,24 @@ Its editable name centres when room permits, while the ellipsis and Save share a
 trailing toolbar on Liquid Glass. The actions keep their touch targets when a long
 name or translated Material label needs more space.
 
+The create-tick form groups Tries and Stars with one divider below Stars; grade
+guidance stays attached to the grade rail in secondary-label colour. Keep the
+personal-grade explanation and first-ascent logging requirement visible and
+wrapping. On iOS, date/time stays in the expanded sheet so the compact state
+focuses on Tries, Stars and Grade. Android keeps date/time in its single
+content-fitting state. Collapsing preserves the chosen timestamp; expanding
+restores it. When shown, the date row has no divider above the pinned footer.
+
 Tick comments stay visible above the create sheet's actions: one line at the
 medium detent and a larger field at the large detent. Focusing the field expands
 the sheet; the same native input stays mounted. Done dismisses the keyboard
 without saving the tick or adding a newline. Both tick action surfaces preserve
-the same numeric height through their React Native touch wrappers.
+the same numeric height through their React Native touch wrappers. A blocked
+filled tick action keeps its violet fill at disabled opacity; its React Native
+touch owner remains disabled and exposes that state to accessibility. The
+noninteractive SwiftUI child supplies the paint without the native disabled
+style that turns the fill black. Loading and secondary actions keep their native
+state styling.
 
 Device QA remains required: iPhone/iPad AX1–AX5 plus Bold Text, VoiceOver/TalkBack
 hold editing and queue boundaries, native slider drag/accessibility commits,

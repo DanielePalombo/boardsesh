@@ -6,7 +6,7 @@
 // row is a `TickFormRow`, so the label seam and the control seam are the same
 // two verticals here as in the edit sheet.
 import React, { useCallback } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { StarRating } from '../StarRating';
 import { Text } from '../Text';
@@ -29,9 +29,15 @@ export type QuickTickBarProps = {
   form: QuickTickForm;
   /** LogAscentSheet keeps this field in its pinned action bar. */
   showNote?: boolean;
+  /** Compact logging keeps date/time in the expanded form. */
+  showDate?: boolean;
 };
 
-export const QuickTickBar = React.memo(function QuickTickBar({ form, showNote = true }: QuickTickBarProps) {
+export const QuickTickBar = React.memo(function QuickTickBar({
+  form,
+  showNote = true,
+  showDate = true,
+}: QuickTickBarProps) {
   const { t } = useTranslation('session');
   const { t: tClimbs } = useTranslation('climbs');
   // Resolved through the provider, never the static palette: these sheets sit
@@ -69,30 +75,39 @@ export const QuickTickBar = React.memo(function QuickTickBar({ form, showNote = 
   );
 
   return (
-    // Row order is least-used at the top, most-used at the bottom, so the
-    // common controls land in the thumb zone. Measured interaction rates:
-    // tries 28%, stars 24%, grade 6.5%, note 1.4%, date/time <1% (#4163).
-    // LogAscentSheet pins the note with its actions so medium detents show it.
     <>
-      {/* Date and time on one row — two short, related values that don't each
-          need a row of their own, separated by an `@`. Both fields commit
-          through the same `onClimbedAtChange`, so touching either one pins
-          the timestamp instead of logging a fresh save-time now. */}
-      <TickFormRow label={tClimbs('mobile.tick.dateLabel')} testID="tick-row-date">
-        <TickDateRow
-          value={climbedAt}
-          maximumDate={maximumClimbedAtDate}
-          onChange={onClimbedAtChange}
-          onFutureAdjusted={onFutureAdjusted}
-          dateAccessibilityLabel={tClimbs('mobile.tick.dateLabel')}
-          timeAccessibilityLabel={tClimbs('mobile.tick.timeLabel')}
-        />
-      </TickFormRow>
+      {/* Put the common controls first so the opening sheet never scrolls past
+          date/grade before attempts and quality (#6503). */}
+      <View testID="tick-primary-fields">
+        <TickFormRow
+          label={tClimbs('mobile.tick.triesLabel')}
+          bleed
+          height={TICK_RAIL_ROW_HEIGHT}
+          showSeparator={false}
+          testID="tick-row-tries"
+        >
+          <TickCountRail
+            value={tickState.attemptCount}
+            onSelect={onTriesSelect}
+            resetKey={climbUuid}
+            accessibilityLabel={tClimbs('mobile.tick.triesLabel')}
+          />
+        </TickFormRow>
 
+        <TickFormRow label={tClimbs('mobile.tick.starsLabel')} testID="tick-row-stars">
+          <StarRating
+            value={tickState.quality ?? undefined}
+            onChange={handleStarChange}
+            size={STAR_GLYPH_SIZE}
+            getAccessibilityLabel={starAccessibilityLabel}
+          />
+        </TickFormRow>
+      </View>
       <TickFormRow
         label={tClimbs('mobile.tick.gradeLabel')}
         bleed
         height={TICK_RAIL_ROW_HEIGHT}
+        showSeparator={false}
         testID="tick-row-grade"
       >
         {grades ? (
@@ -116,7 +131,12 @@ export const QuickTickBar = React.memo(function QuickTickBar({ form, showNote = 
       {/* On a first ascent the consequence is bigger: this grade becomes the
           climb's (#5971), and a flash or send cannot be logged without it. */}
       {firstAscent ? (
-        <Text variant="caption1" style={styles.gradeHelp} testID="tick-first-ascent">
+        <Text
+          variant="caption1"
+          color={systemColors.secondaryLabel}
+          style={styles.gradeHelp}
+          testID="tick-first-ascent"
+        >
           {tClimbs('mobile.tick.firstAscent')}
         </Text>
       ) : (
@@ -125,28 +145,22 @@ export const QuickTickBar = React.memo(function QuickTickBar({ form, showNote = 
         </Text>
       )}
 
-      <TickFormRow label={tClimbs('mobile.tick.starsLabel')} testID="tick-row-stars">
-        <StarRating
-          value={tickState.quality ?? undefined}
-          onChange={handleStarChange}
-          size={STAR_GLYPH_SIZE}
-          getAccessibilityLabel={starAccessibilityLabel}
-        />
-      </TickFormRow>
-
-      <TickFormRow
-        label={tClimbs('mobile.tick.triesLabel')}
-        bleed
-        height={TICK_RAIL_ROW_HEIGHT}
-        testID="tick-row-tries"
-      >
-        <TickCountRail
-          value={tickState.attemptCount}
-          onSelect={onTriesSelect}
-          resetKey={climbUuid}
-          accessibilityLabel={tClimbs('mobile.tick.triesLabel')}
-        />
-      </TickFormRow>
+      {/* Date and time on one row — two short, related values that don't each
+          need a row of their own, separated by an `@`. Both fields commit
+          through the same `onClimbedAtChange`, so touching either one pins
+          the timestamp instead of logging a fresh save-time now. */}
+      {showDate ? (
+        <TickFormRow label={tClimbs('mobile.tick.dateLabel')} showSeparator={false} testID="tick-row-date">
+          <TickDateRow
+            value={climbedAt}
+            maximumDate={maximumClimbedAtDate}
+            onChange={onClimbedAtChange}
+            onFutureAdjusted={onFutureAdjusted}
+            dateAccessibilityLabel={tClimbs('mobile.tick.dateLabel')}
+            timeAccessibilityLabel={tClimbs('mobile.tick.timeLabel')}
+          />
+        </TickFormRow>
+      ) : null}
 
       {/* `alignTop`: the note is the one control that grows well past the 56pt
           row beat, and a centred label floats ~31pt below the first line of

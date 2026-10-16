@@ -10,13 +10,14 @@ import type { TickClimbIdentity } from '@boardsesh/board-config';
 // bar (`footer`), and clamps its single column to the active detent via the
 // same `useSheetColumnStyle` this file used to wire by hand (#3330).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { SHARED_EVENTS } from '@boardsesh/analytics';
 import { getGradeColor } from '@boardsesh/board-constants/grade-colors';
 import type { TickStatus } from '@boardsesh/play-view';
 import { track } from '../lib/analytics';
 import { ModalSheet } from './ModalSheet';
+import { useCreateTickSnapPoints } from './use-create-tick-snap-points';
 import { TickActionBar, TickNoteField, TickSheetHeader, CREATE_TICK_SNAP_POINTS } from './tick';
 import type { ManagedSheetHandle } from '../providers/sheet-presentation-provider';
 import { QuickTickBar } from './play-drawer/QuickTickBar';
@@ -83,9 +84,26 @@ function LogAscentSheetContent({
   sessionId,
   consensusGradeName,
 }: LogAscentSheetProps) {
-  const { t } = useTranslation('climbs');
+  const { t, i18n } = useTranslation('climbs');
   const sheetRef = useRef<ManagedSheetHandle>(null);
   const [expanded, setExpanded] = useState(false);
+  const compactNote = Platform.OS !== 'android' && !expanded;
+  const { snapPoints, onHeaderLayout, onFooterLayout, onBodyLayout } = useCreateTickSnapPoints(
+    i18n?.resolvedLanguage,
+    compactNote,
+  );
+
+  const formFieldsRef = useRef<View>(null);
+  // Include every field, including the audience picker, rather than just the
+  // first two rows. Re-measure unchanged intrinsic geometry after cache resets
+  // without remounting controls or the pinned note.
+  useEffect(() => {
+    formFieldsRef.current?.measure((_left, _top, _measuredWidth, height) => onBodyLayout(height));
+  }, [onBodyLayout]);
+  const handleFormFieldsLayout = useCallback(
+    (event: LayoutChangeEvent) => onBodyLayout(event.nativeEvent.layout.height),
+    [onBodyLayout],
+  );
 
   const handleDetentChange = useCallback((index: number) => {
     if (index >= 0) setExpanded(index > 0);
@@ -178,7 +196,9 @@ function LogAscentSheetContent({
       visible={visible}
       onClose={handleClose}
       onFullyDismissed={onFullyDismissed}
-      snapPoints={CREATE_TICK_SNAP_POINTS}
+      snapPoints={snapPoints}
+      onHeaderLayout={onHeaderLayout}
+      onFooterLayout={onFooterLayout}
       onChange={handleDetentChange}
       scrollable
       surface="solid"
@@ -205,7 +225,7 @@ function LogAscentSheetContent({
               onChangeText={form.onCommentChange}
               placeholder={t('mobile.tick.notePlaceholder')}
               accessibilityLabel={t('mobile.tick.noteAria')}
-              compact={Platform.OS !== 'android' && !expanded}
+              compact={compactNote}
               onFocus={handleNoteFocus}
             />
           }
@@ -227,8 +247,10 @@ function LogAscentSheetContent({
         />
       }
     >
-      <QuickTickBar form={form} showNote={false} />
-      <PublicationAudiencePicker privacy={form.privacy} disabled={form.isPending} />
+      <View ref={formFieldsRef} onLayout={handleFormFieldsLayout} testID="tick-form-fields">
+        <QuickTickBar form={form} showNote={false} showDate={!compactNote} />
+        <PublicationAudiencePicker privacy={form.privacy} disabled={form.isPending} />
+      </View>
     </ModalSheet>
   );
 }
