@@ -1,5 +1,5 @@
 Nouveautés de 2.6 :
-- Ajoute un mur de spray depuis une photo, vérifie les prises, ouvre et enregistre tes croix. Télécharge-le pour grimper sans réseau.
+- Ajoute un Spraywall depuis une photo, vérifie les prises, ouvre et enregistre tes croix. Télécharge-le pour grimper sans réseau.
 - Retrouve les séances de ton crew et leurs entrées sur les blocs.
 - Minuteur de repos avec passage automatique au bloc suivant, app ouverte.
 - Choisis les détails sous chaque bloc. Ajoute des playlists sans vider la file.

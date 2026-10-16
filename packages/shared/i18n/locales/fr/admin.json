@@ -26,7 +26,7 @@
     "feedback": "Rapports de bugs",
     "gymDuplicates": "Salles en double",
     "locationSync": "Gels de synchronisation des lieux",
-    "sprayWalls": "Données d'entraînement des murs de spray"
+    "sprayWalls": "Données d'entraînement des Spraywalls"
   },
   "feedback": {
     "title": "Bugs et retours",
@@ -442,7 +442,7 @@
     }
   },
   "sprayTraining": {
-    "title": "Données d'entraînement des murs de spray",
+    "title": "Données d'entraînement des Spraywalls",
     "statusLabel": "Statut de relecture",
     "status": {
       "unreviewed": "À relire ({{total}})",
@@ -454,7 +454,7 @@
     "retry": "Réessayer",
     "loadMore": "Charger plus",
     "card": {
-      "open": "Relire la version {{version}} du mur",
+      "open": "Relire la version {{version}} du Spraywall",
       "holds": "Prises : {{total}}",
       "edited": "Modifiées : {{percent}} %",
       "accepted": "Acceptées sans vérif : {{percent}} %",
@@ -484,15 +484,15 @@
       "PUBLIC": "Visibilité : public"
     },
     "review": {
-      "title": "Mur, version {{version}}",
+      "title": "Spraywall, version {{version}}",
       "close": "Fermer",
-      "previous": "Mur précédent",
-      "next": "Mur suivant",
+      "previous": "Spraywall précédent",
+      "next": "Spraywall suivant",
       "position": "{{current}} sur {{total}}",
-      "photoAlt": "Photo d'un mur de spray avec les prises marquées",
+      "photoAlt": "Photo d'un Spraywall avec les prises marquées",
       "noPhoto": "Cette photo n'est plus disponible.",
       "photoLoading": "Chargement de la photo",
-      "loadingNext": "Chargement d'autres murs",
+      "loadingNext": "Chargement d'autres Spraywalls",
       "unmappable": "Prises qu'on n'a pas pu placer sur la photo : {{total}}",
       "model": "Détecteur de prises : {{version}}",
       "showMarks": "Afficher les marques (H)",
@@ -502,16 +502,16 @@
       "approve": "Approuver (A)",
       "reject": "Refuser (R)",
       "backToUnreviewed": "Remettre à relire",
-      "shortcuts": "A approuve, R refuse, H masque les marques, les flèches gauche et droite changent de mur."
+      "shortcuts": "A approuve, R refuse, H masque les marques, les flèches gauche et droite changent de Spraywall."
     },
     "snackbar": {
       "approved": "Approuvé",
       "rejected": "Refusé",
       "reset": "De retour dans la file à relire",
       "failed": "Impossible d'enregistrer la relecture",
-      "notEligible": "Non enregistré. Ce mur n'est plus disponible comme données d'entraînement."
+      "notEligible": "Non enregistré. Ce Spraywall n'est plus disponible comme données d'entraînement."
     },
     "backToAdmin": "Retour à l'admin",
-    "noAccess": "Vos droits d'administration ne couvrent pas les murs de spray. Cette page demande un accès admin spray ou sur tout le site."
+    "noAccess": "Vos droits d'administration ne couvrent pas les Spraywalls. Cette page demande un accès admin Spraywall ou sur tout le site."
   }
 }

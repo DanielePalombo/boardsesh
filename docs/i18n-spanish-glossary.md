@@ -47,7 +47,7 @@ Two things it does **not** touch:
 
 ## A spray wall is a **Spraywall** (untranslated)
 
-One name for a user-built spray wall, in every string: **Spraywall**, left in English because Spanish has no good translation. Masculine: _el Spraywall, un Spraywall, este Spraywall_, plural _los Spraywalls_ (add `-s`, no accent, no hyphen). Articles, adjectives and pronouns agree with the masculine (_Este Spraywall está archivado_, _Resetéalo_). Capitalised like a brand-neutral proper noun in running text and titles.
+The same name in English, Spanish, French and German, in every string: **Spraywall**, left in English because Spanish has no good translation. Masculine: _el Spraywall, un Spraywall, este Spraywall_, plural _los Spraywalls_ (add `-s`, no accent, no hyphen). Articles, adjectives and pronouns agree with the masculine (_Este Spraywall está archivado_, _Resetéalo_). Capitalised like a brand-neutral proper noun in running text and titles.
 
 Never: _plafón de spray_, _plafones de spray_, _plafón spray_, _plafón de presas_, _muro de spray_, _muro spray_, _muros de spray_. Never a bare _plafón_ or _muro_ for the spray wall either (_Resetear este plafón_ → _Resetear este Spraywall_). **Plafón stays the word for Kilter, Tension and MoonBoard boards** (section above); only a spray wall is a Spraywall, so a sentence about "your boards" in general keeps _plafones_. Hold-detection copy keeps its own words (_presa_, _bloque_); only the name of the wall changes.
 

@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url';
 
 const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'locales');
 
-// A spray wall has one name per language, and every back-reference to it uses
+// A spray wall has the same name in every language, and every back-reference uses
 // the same word (#5960):
+//   en  Spraywall         (plural Spraywalls)
 //   es  Spraywall         (el Spraywall, los Spraywalls; untranslated, masculine)
-//   fr  spray wall        (le spray wall, les spray walls)
+//   fr  Spraywall         (le Spraywall, les Spraywalls)
 //   de  Spraywall         (die Spraywall, die Spraywalls)
 // Before this test the catalogs mixed five to six names per language (muro de
 // spray, plafones spray, mur de pan, Spraywand, "Spray Walls" ...). See the
@@ -56,7 +57,7 @@ const EXTRA_SPRAY_KEYS = new Set([
 
 // "Not a climbing wall": the report reason for a photo that is no wall at all.
 // It is the gym-wall sense, not the spray wall.
-const NOT_A_WALL_KEY = 'boards.json:sprayModeration.reasons.notAWall';
+const NOT_A_WALL_KEYS = ['boards.json:sprayModeration.reasons.notAWall', 'admin.json:sprayTraining.reason.NOT_A_WALL'];
 
 function isSprayString(entry: CatalogEntry): boolean {
   return (
@@ -76,13 +77,16 @@ const METADATA_DIR = join(
   'fastlane',
   'metadata',
 );
-const STORE_FOLDERS: Record<'es' | 'fr' | 'de', string[]> = {
+type Locale = 'en-US' | 'es' | 'fr' | 'de';
+
+const STORE_FOLDERS: Record<Locale, string[]> = {
+  'en-US': ['en-US', 'android/en-US'],
   es: ['es-ES', 'es-MX', 'android/es-ES'],
   fr: ['fr-FR', 'android/fr-FR'],
   de: ['de-DE', 'android/de-DE'],
 };
 
-function loadStoreTexts(locale: 'es' | 'fr' | 'de'): CatalogEntry[] {
+function loadStoreTexts(locale: Locale): CatalogEntry[] {
   const entries: CatalogEntry[] = [];
   for (const folder of STORE_FOLDERS[locale]) {
     const directories = [join(METADATA_DIR, folder), join(METADATA_DIR, folder, 'changelogs')];
@@ -98,7 +102,7 @@ function loadStoreTexts(locale: 'es' | 'fr' | 'de'): CatalogEntry[] {
 }
 
 type TermRule = {
-  locale: 'es' | 'fr' | 'de';
+  locale: Locale;
   // What the term is, for the failure message.
   term: string;
   glossary: string;
@@ -115,14 +119,24 @@ type TermRule = {
 
 const RULES: TermRule[] = [
   {
+    locale: 'en-US',
+    term: '"Spraywall" / "Spraywalls", one word and capitalized',
+    glossary: 'docs/i18n-spanish-glossary.md',
+    bannedEverywhere: /\bspray[ -]walls?\b/i,
+    bannedInSprayStrings: /\bwalls?\b|\bspray\b/i,
+    scopedAllowlist: new Set(NOT_A_WALL_KEYS),
+    requiredTerm: /\bSpraywalls?\b/,
+    requiredTermFloor: 100,
+  },
+  {
     locale: 'es',
     term: '"Spraywall" / "Spraywalls", untranslated and masculine (el Spraywall)',
     glossary: 'docs/i18n-spanish-glossary.md',
-    bannedEverywhere: /\bmuros?\s+(?:de\s+)?spray\b|\bplaf(?:ones|ón)\s+(?:de\s+)?(?:presas|spray)\b/i,
+    bannedEverywhere: /\bmuros?\s+(?:de\s+)?spray\b|\bplaf(?:ones|óns?)\s+(?:de\s+)?(?:presas|spray)\b/i,
     // Plafón is the Kilter/Tension/MoonBoard board; the spray wall is never one.
     bannedInSprayStrings: /\bmuros?\b|\bplaf(?:ones|ón)/i,
     scopedAllowlist: new Set([
-      NOT_A_WALL_KEY,
+      ...NOT_A_WALL_KEYS,
       // "Añádelo a tus plafones": the climber's boards in general, spray walls among them.
       'boards.json:sprayWizard.publish.title',
       // "Encuentra un rocódromo con plafones": gyms with any board.
@@ -132,30 +146,29 @@ const RULES: TermRule[] = [
       'marketing.json:help.sprayWalls.add.step1',
       'marketing.json:help.sprayWalls.later.p1',
     ]),
-    requiredTerm: /Spraywalls?/,
+    requiredTerm: /\bSpraywalls?\b/,
     requiredTermFloor: 99,
   },
   {
     locale: 'fr',
-    term: '"spray wall" / "spray walls"',
+    term: '"Spraywall" / "Spraywalls", one word, masculine',
     glossary: 'docs/i18n-french-glossary.md',
-    bannedEverywhere: /\bmurs?\s+(?:de\s+)?(?:spray|pan)\b/i,
-    // `spray` must always be followed by `wall`, and the wall is never a "mur".
-    bannedInSprayStrings: /\bmurs?\b|\bspray\b(?!\s+walls?\b)/i,
-    scopedAllowlist: new Set([NOT_A_WALL_KEY]),
-    requiredTerm: /spray walls?/i,
+    bannedEverywhere: /\bmurs?\s+(?:de\s+)?(?:spray|pan)\b|\bspray[ -]walls?\b/i,
+    bannedInSprayStrings: /\bmurs?\b|\bspray\b/i,
+    scopedAllowlist: new Set(NOT_A_WALL_KEYS),
+    requiredTerm: /\bSpraywalls?\b/,
     requiredTermFloor: 100,
   },
   {
     locale: 'de',
     term: '"Spraywall" / "Spraywalls", one word, feminine',
     glossary: 'docs/i18n-german-glossary.md',
-    bannedEverywhere: /Spraywand|Spraywände|Spraywänden|Spray\s+Walls?\b/i,
+    bannedEverywhere: /Spraywand|Spraywände|Spraywänden|Spray[ -]+Walls?\b/i,
     // `Board` is the device in German, never the spray wall. Compounds such as
     // Kletterwand, Wandfoto and Garagenwand are caught by the `wand` stem.
     bannedInSprayStrings: /\bWand\b|\bWände\b|\bWänden\b|\w+wand\b|\bWand\w+|\bBoards?\b/,
     scopedAllowlist: new Set([
-      NOT_A_WALL_KEY,
+      ...NOT_A_WALL_KEYS,
       // "Ab zu deinen Boards": the list of the climber's boards, spray walls among them.
       'boards.json:sprayWizard.publish.title',
       // "Finde eine Halle mit Boards": gyms with any board, not one spray wall.
@@ -165,7 +178,7 @@ const RULES: TermRule[] = [
       'marketing.json:help.sprayWalls.add.step1',
       'marketing.json:help.sprayWalls.later.p1',
     ]),
-    requiredTerm: /Spraywalls?/,
+    requiredTerm: /\bSpraywalls?\b/,
     requiredTermFloor: 97,
   },
 ];
@@ -197,6 +210,20 @@ describe.each(RULES)('$locale spray wall terminology', (rule) => {
     ).toEqual([]);
   });
 
+  it('uses the exact Spraywall spelling in catalogs and store text', () => {
+    const entries = [...strings, ...loadStoreTexts(rule.locale)];
+    const offenders = entries
+      .filter((entry) =>
+        [...entry.value.matchAll(/\bspray[ -]?walls?\b/gi)].some(
+          ([term]) => term !== 'Spraywall' && term !== 'Spraywalls',
+        ),
+      )
+      .map((entry) => `${entry.file}:${entry.keyPath} — ${entry.value}`);
+
+    expect(offenders).toEqual([]);
+    expect(loadStoreTexts(rule.locale).some((entry) => rule.requiredTerm.test(entry.value))).toBe(true);
+  });
+
   it('never uses a retired full name in the store listing text', () => {
     const storeTexts = loadStoreTexts(rule.locale);
     expect(storeTexts.length).toBeGreaterThan(0);
@@ -222,7 +249,7 @@ describe.each(RULES)('$locale spray wall terminology', (rule) => {
   it('never falls back to the bare word for the wall in a spray-wall string', () => {
     const offenders = sprayStrings
       .filter((entry) => !rule.scopedAllowlist.has(`${entry.file}:${entry.keyPath}`))
-      .filter((entry) => rule.bannedInSprayStrings.test(entry.value))
+      .filter((entry) => rule.bannedInSprayStrings.test(entry.value.replace(/\{\{.*?\}\}/g, '')))
       .map((entry) => `${entry.file}:${entry.keyPath} — ${entry.value}`);
 
     expect(
@@ -252,7 +279,8 @@ describe('spray wall term pins', () => {
       new Map(loadStrings(locale).map((entry) => [`${entry.file}:${entry.keyPath}`, entry.value]));
 
     expect(lookup('es').get('boards.json:mobile.boardDetail.spray.kind')).toBe('Spraywall');
-    expect(lookup('fr').get('boards.json:mobile.boardDetail.spray.kind')).toBe('Spray wall');
+    expect(lookup('en-US').get('boards.json:mobile.boardDetail.spray.kind')).toBe('Spraywall');
+    expect(lookup('fr').get('boards.json:mobile.boardDetail.spray.kind')).toBe('Spraywall');
     expect(lookup('de').get('boards.json:mobile.boardDetail.spray.kind')).toBe('Spraywall');
   });
 });

@@ -58,8 +58,8 @@
       "description": "Share an Instagram reel or TikTok into Boardsesh from its share sheet, attach it to a climb, film new beta, and find the beta others posted."
     },
     "helpSprayWalls": {
-      "title": "How to photograph and set up your spray wall",
-      "description": "Shoot your spray wall square on, in portrait and tilted with the wall, then add it to Boardsesh, fix the holds it finds, and edit them after a reset."
+      "title": "How to photograph and set up your Spraywall",
+      "description": "Shoot your Spraywall square on, in portrait and tilted with the Spraywall, then add it to Boardsesh, fix the holds it finds, and edit them after a reset."
     }
   },
   "home": {
@@ -118,10 +118,10 @@
       "title": "Fresh beta"
     },
     "showcase": {
-      "videoLabel": "Demo: every board in one app, including a spray wall, then a crew queue, a workout plan and a logged send.",
+      "videoLabel": "Demo: every board in one app, including a Spraywall, then a crew queue, a workout plan and a logged send.",
       "scenes": {
         "boards": "Every board. One app.",
-        "spray": "Your spray wall, too.",
+        "spray": "Your Spraywall, too.",
         "wall": "See what's on the wall.",
         "crew": "Your crew. One queue.",
         "workouts": "Give your session a plan.",
@@ -152,9 +152,9 @@
         "shotAlt": "Your sends and progress across boards in the Boardsesh profile"
       },
       "spray": {
-        "title": "Your spray wall, too.",
-        "body": "Photograph any wall. Set and log climbs on it.",
-        "shotAlt": "A climb highlighted on a spray wall photo in Boardsesh"
+        "title": "Your Spraywall, too.",
+        "body": "Photograph any Spraywall. Set and log climbs on it.",
+        "shotAlt": "A climb highlighted on a Spraywall photo in Boardsesh"
       }
     },
     "support": {
@@ -453,8 +453,8 @@
         "body": "Share a reel from Instagram or TikTok into Boardsesh, attach it to a climb, and find others' beta."
       },
       "sprayWalls": {
-        "title": "Spray walls",
-        "body": "Photograph your wall so the holds come out right, add it, and fix its holds any time."
+        "title": "Spraywalls",
+        "body": "Photograph your Spraywall so the holds come out right, add it, and fix its holds any time."
       }
     },
     "playlists": {
@@ -854,35 +854,35 @@
       "intro": "Everything on this page happens in the app."
     },
     "sprayWalls": {
-      "breadcrumb": "Spray walls",
+      "breadcrumb": "Spraywalls",
       "hero": {
         "title": "Spraywall setup",
-        "subtitle": "One photo of your wall is what every hold and climb is set on, so the shot matters."
+        "subtitle": "One photo of your Spraywall is what every hold and climb is set on, so the shot matters."
       },
       "watch": {
         "title": "Watch the walkthrough",
-        "videoAlt": "Walkthrough of adding a spray wall and editing its holds in the Boardsesh app",
-        "p1": "Boardsesh finds the holds in your photo, and every climb on the wall is set on that same photo. A good shot means fewer holds to fix by hand."
+        "videoAlt": "Walkthrough of adding a Spraywall and editing its holds in the Boardsesh app",
+        "p1": "Boardsesh finds the holds in your photo, and every climb on the Spraywall is set on that same photo. A good shot means fewer holds to fix by hand."
       },
       "photo": {
         "title": "Taking the photo",
-        "p1": "Before you choose or take your wall photo, keep these tips in mind:",
-        "square": "Stand square on to the wall, in line with its middle. From off to one side, the far holds shrink and bunch up.",
+        "p1": "Before you choose or take your Spraywall photo, keep these tips in mind:",
+        "square": "Stand square on to the Spraywall, in line with its middle. From off to one side, the far holds shrink and bunch up.",
         "portrait": "Hold the phone in portrait. You climb with the phone upright, and a landscape photo shrinks to a strip where the holds get too small to tap.",
-        "tilt": "Tilt the phone to match the wall's angle, so it sits parallel to the wall face. On an overhang, a phone held straight up makes the top of the wall loom and the bottom shrink away.",
-        "frame": "Get the whole wall in frame, top to bottom and side to side.",
-        "zoom": "Shoot at 1x. If the wall doesn't fit, step back rather than switching to the wide lens.",
-        "lighting": "Use bright, even lighting so the holds stand out from the wall. Clear contrast helps Boardsesh find them.",
+        "tilt": "Tilt the phone to match the Spraywall's angle, so it sits parallel to the Spraywall face. On an overhang, a phone held straight up makes the top of the Spraywall loom and the bottom shrink away.",
+        "frame": "Get the whole Spraywall in frame, top to bottom and side to side.",
+        "zoom": "Shoot at 1x. If the Spraywall doesn't fit, step back rather than switching to the wide lens.",
+        "lighting": "Use bright, even lighting so the holds stand out from the Spraywall. Clear contrast helps Boardsesh find them.",
         "why": "Why it matters: the hold finder reads your photo as it is. Holds shot at a skew come out small and stretched, so more of them get missed and you end up adding them yourself.",
-        "exampleAlt": "A densely set indoor spray wall photographed from the front, with the whole climbing surface visible",
-        "exampleCaption": "Keep the whole wall in frame so its holds are easy to find and mark."
+        "exampleAlt": "A densely set indoor Spraywall photographed from the front, with the whole climbing surface visible",
+        "exampleCaption": "Keep the whole Spraywall in frame so its holds are easy to find and mark."
       },
       "add": {
-        "title": "Adding the wall",
-        "step1": "Open Boards and tap Spray wall.",
-        "step2": "Name the wall and set its angle. The angle is fixed once you publish.",
+        "title": "Adding the Spraywall",
+        "step1": "Open Boards and tap Spraywall.",
+        "step2": "Name the Spraywall and set its angle. The angle is fixed once you publish.",
         "step3": "Choose or take a photo. Use Crop or rotate if its edges need tidying.",
-        "step4": "Pin the four wall corners to unlock other backgrounds if the photo allows; skip to keep the photo.",
+        "step4": "Pin the four Spraywall corners to unlock other backgrounds if the photo allows; skip to keep the photo.",
         "step5": "Let Boardsesh scan the photo, then review the hold rings."
       },
       "fix": {
@@ -890,21 +890,21 @@
         "p1": "The holds Boardsesh found show as rings on your photo. Check them before anyone climbs on them.",
         "maybe": "Dashed rings are uncertain finds. Tap one, then tap Keep.",
         "toggle": "Tap a ring to select it. Tap it again to switch it off; the ghost can be switched back on or deleted.",
-        "longPress": "Press and hold a ring to move it. Press and hold bare wall to place a new hold.",
-        "p2": "Tap Pick a look. Choose an available background, then how your holds light up. Without corner pins, Photo is the only background. Publish the wall.",
+        "longPress": "Press and hold a ring to move it. Press and hold bare Spraywall to place a new hold.",
+        "p2": "Tap Pick a look. Choose an available background, then how your holds light up. Without corner pins, Photo is the only background. Publish the Spraywall.",
         "select": "Select: tap a hold to pick it, move it, resize it, or switch it on or off.",
         "add": "Add: mark a missed hold with Draw or Corners.",
         "trace": "Trace: redraw the selected hold’s outline in one loop.",
         "refine": "Refine: brush along the outline to make it bigger or smaller.",
         "join": "Join: select one hold, then tap another to turn both outlines into one hold.",
-        "imageAlt": "Spray-wall editor with a selected hold and the Select, Add, Trace, Refine and Join tools",
+        "imageAlt": "Spraywall editor with a selected hold and the Select, Add, Trace, Refine and Join tools",
         "imageCaption": "Select a ring to see its controls. Use the five tools to correct the holds on your photo.",
         "gestures": "Use two fingers to pan or pinch to zoom. Undo and Redo let you step back and forward through your edits."
       },
       "later": {
         "title": "Editing holds later",
-        "p1": "On Boards, tap your spray wall to make it active. Tap the magnifying-glass Climbs tab, then the wall name at the top. Tap Edit holds; finish with Publish holds.",
-        "p2": "If the holds have changed across the wall, tap Reset this wall in the same sheet. Add a new photo and mark holds from scratch. Publishing the replacement archives the old wall and keeps its climbs with it.",
+        "p1": "On Boards, tap your Spraywall to make it active. Tap the magnifying-glass Climbs tab, then the Spraywall name at the top. Tap Edit holds; finish with Publish holds.",
+        "p2": "If the holds have changed across the Spraywall, tap Reset this Spraywall in the same sheet. Add a new photo and mark holds from scratch. Publishing the replacement archives the old Spraywall and keeps its climbs with it.",
         "missed": "Missed a few holds on your first pass? Come back here and add them at any time. Adding new holds leaves existing climbs unchanged; publish when you are ready for everyone to use them."
       },
       "next": {
@@ -921,9 +921,9 @@
         "step2": "Choose Add, then Draw.",
         "step3": "Draw a closed outline around the hold. For a small round hold, tap to place a circle.",
         "step4": "Repeat for other missed holds. Pan with two fingers and use Undo if you make a mistake.",
-        "step5": "Finish with Pick a look during setup, or Publish holds when editing an existing wall.",
+        "step5": "Finish with Pick a look during setup, or Publish holds when editing an existing Spraywall.",
         "corners": "Prefer straight edges? Choose Add → Corners. Tap at least three points around a hold, then tap Finish to close its outline. Repeat for the next hold.",
-        "drawAlt": "Add tool in Draw mode with a manually outlined hold on the wall photo",
+        "drawAlt": "Add tool in Draw mode with a manually outlined hold on the Spraywall photo",
         "drawCaption": "Add → Draw: outline one missed hold at a time, or tap for a circle.",
         "cornersAlt": "Add tool in Corners mode with points around a hold and the Finish control",
         "cornersCaption": "Add → Corners: place at least three points, then tap Finish."
@@ -939,7 +939,7 @@
         "title": "Using Apple Pencil on iPad",
         "layout": "These Pencil gestures are available in the full-width iPad editor. A compact window uses the phone layout.",
         "draw": "With Apple Pencil, draw around an unmarked hold to add its outline, or tap an unmarked spot to add a circle. Tap a marked hold with Pencil to switch it on or off.",
-        "setting": "Pencil only turns on when Apple Pencil first touches or hovers over the editor, unless you have already chosen a setting. Your choice is remembered. With Pencil only on, fingers can still select holds, move a picked hold, and pan or zoom the wall; Pencil handles drawing and hold toggles."
+        "setting": "Pencil only turns on when Apple Pencil first touches or hovers over the editor, unless you have already chosen a setting. Your choice is remembered. With Pencil only on, fingers can still select holds, move a picked hold, and pan or zoom the Spraywall; Pencil handles drawing and hold toggles."
       }
     }
   },
@@ -1040,12 +1040,12 @@
       "body2": "You can revoke location permission at any time in your device settings. The app works fully without it."
     },
     "sprayPhotos": {
-      "title": "Spray wall photos",
-      "body1": "When you add a spray wall, we keep its photo and the holds you mark. Who can see the photo follows the wall's visibility setting: private, link-only or public. Members of a gym can also see the walls attached to that gym.",
-      "body2": "Each wall has a “Help train hold finding” switch. While it is on, we use the wall's photo and the holds you mark to train the hold finder, the part of the app that spots holds in a new wall photo. A Boardsesh admin checks them first to make sure they are good to learn from. That applies at every visibility, private walls included. The copy we use for training is kept in private storage and is never shared or published outside Boardsesh.",
-      "body3": "The switch is on when you add a wall, and you can change it then or any time later under Edit board. Walls added before the switch existed, or with a version of the app that does not show it, start with it off. We train on a wall whose switch is on under legitimate interest to improve hold finding; switching it off is how you object, and it takes effect as described below.",
-      "body4": "Switching it off, deleting the wall, or deleting your account takes the wall out of our stored training set within 24 hours. A copy already downloaded for a training run can be used for up to 7 more days, and is deleted the next time we fetch the set. Models we already trained keep what they learned, but they hold no copy of your photo.",
-      "body5": "If a wall is reported, a Boardsesh admin can see its photo to review the report, whatever the switch says. When you delete a wall, we delete its photo after 30 days. When you delete your account, your wall photos are deleted with it; a training copy leaves on the timing above. Resetting a wall keeps the old one, photo included, as an archived wall until you delete it too. Turning the switch off on either wall covers both."
+      "title": "Spraywall photos",
+      "body1": "When you add a Spraywall, we keep its photo and the holds you mark. Who can see the photo follows the Spraywall's visibility setting: private, link-only or public. Members of a gym can also see the Spraywalls attached to that gym.",
+      "body2": "Each Spraywall has a “Help train hold finding” switch. While it is on, we use the Spraywall's photo and the holds you mark to train the hold finder, the part of the app that spots holds in a new Spraywall photo. A Boardsesh admin checks them first to make sure they are good to learn from. That applies at every visibility, private Spraywalls included. The copy we use for training is kept in private storage and is never shared or published outside Boardsesh.",
+      "body3": "The switch is on when you add a Spraywall, and you can change it then or any time later under Edit board. Spraywalls added before the switch existed, or with a version of the app that does not show it, start with it off. We train on a Spraywall whose switch is on under legitimate interest to improve hold finding; switching it off is how you object, and it takes effect as described below.",
+      "body4": "Switching it off, deleting the Spraywall, or deleting your account takes the Spraywall out of our stored training set within 24 hours. A copy already downloaded for a training run can be used for up to 7 more days, and is deleted the next time we fetch the set. Models we already trained keep what they learned, but they hold no copy of your photo.",
+      "body5": "If a Spraywall is reported, a Boardsesh admin can see its photo to review the report, whatever the switch says. When you delete a Spraywall, we delete its photo after 30 days. When you delete your account, your Spraywall photos are deleted with it; a training copy leaves on the timing above. Resetting a Spraywall keeps the old one, photo included, as an archived Spraywall until you delete it too. Turning the switch off on either Spraywall covers both."
     },
     "thirdParty": {
       "title": "Third-party services",
@@ -1071,7 +1071,7 @@
       "title": "Data sharing",
       "body1ProductAnalytics": "We do not sell your data, run ads or share information with advertisers or data brokers. The providers described above process data for hosting, storage, service reliability and optional analytics. Aurora Climbing synchronization runs when you enable it.",
       "body2": "Other Boardsesh users can see your username, profile, and logged climbs if you participate in social features like Party Mode. This is visible in the app and is part of how the product works.",
-      "body3SprayPhotos": "We do not give spray wall photos or the holds you mark to anyone else to train on. The only model trained on them is our own hold finder. Other people see a wall's photo as its visibility setting allows, and members of a gym see the walls attached to that gym, private ones included. A public wall's photo is on the open web."
+      "body3SprayPhotos": "We do not give Spraywall photos or the holds you mark to anyone else to train on. The only model trained on them is our own hold finder. Other people see a Spraywall's photo as its visibility setting allows, and members of a gym see the Spraywalls attached to that gym, private ones included. A public Spraywall's photo is on the open web."
     },
     "retention": {
       "title": "Data retention",

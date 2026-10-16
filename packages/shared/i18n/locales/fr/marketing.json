@@ -58,8 +58,8 @@
       "description": "Partage un reel Instagram ou un TikTok vers Boardsesh depuis sa fiche de partage, joins-le à un bloc, filme une nouvelle beta, et trouve la beta des autres."
     },
     "helpSprayWalls": {
-      "title": "Comment photographier et configurer ton spray wall",
-      "description": "Photographie ton spray wall bien en face, en portrait et incliné comme le spray wall, puis ajoute-le à Boardsesh, corrige les prises trouvées et modifie-les après un changement de prises."
+      "title": "Comment photographier et configurer ton Spraywall",
+      "description": "Photographie ton Spraywall bien en face, en portrait et incliné comme le Spraywall, puis ajoute-le à Boardsesh, corrige les prises trouvées et modifie-les après un changement de prises."
     }
   },
   "home": {
@@ -118,10 +118,10 @@
       "title": "Beta fraîche"
     },
     "showcase": {
-      "videoLabel": "Démo : toutes les boards dans une appli, y compris un spray wall, puis une file de groupe, un plan de séance et une croix notée.",
+      "videoLabel": "Démo : toutes les boards dans une appli, y compris un Spraywall, puis une file de groupe, un plan de séance et une croix notée.",
       "scenes": {
         "boards": "Toutes les boards. Une seule appli.",
-        "spray": "Ton spray wall aussi.",
+        "spray": "Ton Spraywall aussi.",
         "wall": "Vois ce qu'il y a sur le mur.",
         "crew": "Ton crew. Une seule file.",
         "workouts": "Donne un plan à ta séance.",
@@ -152,9 +152,9 @@
         "shotAlt": "Tes croix et tes progrès sur chaque board dans ton profil Boardsesh"
       },
       "spray": {
-        "title": "Ton spray wall aussi.",
-        "body": "Photographie n'importe quel spray wall. Ouvre des blocs et fais la croix dessus.",
-        "shotAlt": "Un bloc mis en évidence sur la photo d'un spray wall dans Boardsesh"
+        "title": "Ton Spraywall aussi.",
+        "body": "Photographie n'importe quel Spraywall. Ouvre des blocs et fais la croix dessus.",
+        "shotAlt": "Un bloc mis en évidence sur la photo d'un Spraywall dans Boardsesh"
       }
     },
     "support": {
@@ -453,8 +453,8 @@
         "body": "Partager un reel Instagram ou TikTok vers Boardsesh, le joindre à un bloc, et trouver la beta des autres."
       },
       "sprayWalls": {
-        "title": "Spray walls",
-        "body": "Photographie ton spray wall pour que les prises ressortent bien, ajoute-le, et corrige ses prises quand tu veux."
+        "title": "Spraywalls",
+        "body": "Photographie ton Spraywall pour que les prises ressortent bien, ajoute-le, et corrige ses prises quand tu veux."
       }
     },
     "playlists": {
@@ -854,35 +854,35 @@
       "intro": "Tout ce qui est sur cette page se passe dans l'app."
     },
     "sprayWalls": {
-      "breadcrumb": "Spray walls",
+      "breadcrumb": "Spraywalls",
       "hero": {
-        "title": "Configuration du spray wall",
-        "subtitle": "Chaque prise et chaque bloc de ton spray wall sont posés sur une seule photo, alors soigne-la."
+        "title": "Configuration du Spraywall",
+        "subtitle": "Chaque prise et chaque bloc de ton Spraywall sont posés sur une seule photo, alors soigne-la."
       },
       "watch": {
         "title": "Regarde le guide vidéo",
-        "videoAlt": "Vidéo montrant comment ajouter un spray wall et modifier ses prises dans l'app Boardsesh",
-        "p1": "Boardsesh trouve les prises sur ta photo, et chaque bloc du spray wall est posé sur cette même photo. Une bonne photo, c'est moins de prises à corriger à la main."
+        "videoAlt": "Vidéo montrant comment ajouter un Spraywall et modifier ses prises dans l'app Boardsesh",
+        "p1": "Boardsesh trouve les prises sur ta photo, et chaque bloc du Spraywall est posé sur cette même photo. Une bonne photo, c'est moins de prises à corriger à la main."
       },
       "photo": {
         "title": "Prendre la photo",
-        "p1": "Avant de choisir ou de prendre la photo du spray wall, garde ces conseils en tête :",
-        "square": "Place-toi bien en face du spray wall, dans l'axe de son centre. Décalé sur le côté, les prises lointaines rétrécissent et se tassent.",
+        "p1": "Avant de choisir ou de prendre la photo du Spraywall, garde ces conseils en tête :",
+        "square": "Place-toi bien en face du Spraywall, dans l'axe de son centre. Décalé sur le côté, les prises lointaines rétrécissent et se tassent.",
         "portrait": "Tiens le téléphone en portrait. Tu grimpes avec le téléphone à la verticale, et une photo en paysage se réduit à une bande où les prises sont trop petites pour être touchées.",
-        "tilt": "Incline le téléphone selon l'angle du spray wall, pour qu'il soit parallèle à sa surface. Sur un dévers, un téléphone tenu bien droit fait grossir le haut du spray wall et rétrécir le bas.",
-        "frame": "Cadre tout le spray wall, de haut en bas et d'un bord à l'autre.",
-        "zoom": "Shoote en 1x. Si le spray wall ne rentre pas, recule plutôt que de passer au grand-angle.",
-        "lighting": "Utilise un éclairage vif et uniforme pour que les prises se détachent du spray wall. Un bon contraste aide Boardsesh à les repérer.",
+        "tilt": "Incline le téléphone selon l'angle du Spraywall, pour qu'il soit parallèle à sa surface. Sur un dévers, un téléphone tenu bien droit fait grossir le haut du Spraywall et rétrécir le bas.",
+        "frame": "Cadre tout le Spraywall, de haut en bas et d'un bord à l'autre.",
+        "zoom": "Shoote en 1x. Si le Spraywall ne rentre pas, recule plutôt que de passer au grand-angle.",
+        "lighting": "Utilise un éclairage vif et uniforme pour que les prises se détachent du Spraywall. Un bon contraste aide Boardsesh à les repérer.",
         "why": "Pourquoi c'est important : le détecteur de prises lit ta photo telle quelle. Photographiées de biais, les prises ressortent petites et étirées, donc il en rate davantage et tu finis par les ajouter toi-même.",
-        "exampleAlt": "Spray wall couvert de prises, photographié de face avec toute la surface de grimpe visible",
-        "exampleCaption": "Cadre tout le spray wall pour trouver et marquer les prises plus facilement."
+        "exampleAlt": "Spraywall couvert de prises, photographié de face avec toute la surface de grimpe visible",
+        "exampleCaption": "Cadre tout le Spraywall pour trouver et marquer les prises plus facilement."
       },
       "add": {
-        "title": "Ajouter le spray wall",
-        "step1": "Ouvre Boards et touche Spray wall.",
-        "step2": "Donne un nom au spray wall et règle son angle. L'angle est figé une fois publié.",
+        "title": "Ajouter le Spraywall",
+        "step1": "Ouvre Boards et touche Spraywall.",
+        "step2": "Donne un nom au Spraywall et règle son angle. L'angle est figé une fois publié.",
         "step3": "Choisis ou prends une photo. Utilise Recadrer ou pivoter si tu dois ajuster les bords.",
-        "step4": "Marque les quatre coins du spray wall pour accéder à d'autres fonds si la photo le permet ; si tu passes cette étape, tu gardes la photo.",
+        "step4": "Marque les quatre coins du Spraywall pour accéder à d'autres fonds si la photo le permet ; si tu passes cette étape, tu gardes la photo.",
         "step5": "Laisse Boardsesh analyser la photo, puis vérifie les cercles autour des prises."
       },
       "fix": {
@@ -890,21 +890,21 @@
         "p1": "Les prises trouvées par Boardsesh s'affichent en cercles sur ta photo. Vérifie-les avant que quelqu'un grimpe dessus.",
         "maybe": "Les cercles en pointillés sont des prises incertaines. Touche-en un, puis Garder.",
         "toggle": "Touche un cercle pour le sélectionner. Touche-le à nouveau pour désactiver la prise ; tu peux réactiver ou supprimer son fantôme.",
-        "longPress": "Appuie longuement sur un cercle pour le déplacer. Appuie longuement sur une zone vide du spray wall pour placer une prise.",
-        "p2": "Touche Choisir le rendu. Choisis un fond disponible, puis comment allumer les prises. Sans les coins marqués, seule la photo est proposée. Publie le spray wall.",
+        "longPress": "Appuie longuement sur un cercle pour le déplacer. Appuie longuement sur une zone vide du Spraywall pour placer une prise.",
+        "p2": "Touche Choisir le rendu. Choisis un fond disponible, puis comment allumer les prises. Sans les coins marqués, seule la photo est proposée. Publie le Spraywall.",
         "select": "Choisir : touche une prise pour la sélectionner, la déplacer, la redimensionner ou l’activer et la désactiver.",
         "add": "Ajouter : marque une prise manquante avec Dessiner ou Coins.",
         "trace": "Tracer : redessine le contour de la prise choisie d’un seul geste.",
         "refine": "Retoucher : passe le pinceau sur le contour pour l’agrandir ou le rogner.",
         "join": "Réunir : choisis une prise, puis touche une autre pour réunir leurs contours en une seule prise.",
-        "imageAlt": "Éditeur du spray wall avec une prise choisie et les outils Choisir, Ajouter, Tracer, Retoucher et Réunir",
+        "imageAlt": "Éditeur du Spraywall avec une prise choisie et les outils Choisir, Ajouter, Tracer, Retoucher et Réunir",
         "imageCaption": "Choisis un cercle pour voir ses commandes. Corrige les prises sur la photo avec les cinq outils.",
         "gestures": "Utilise deux doigts pour déplacer la photo ou pince pour zoomer. Annuler et Rétablir te permettent de revenir sur tes modifications."
       },
       "later": {
         "title": "Modifier les prises plus tard",
-        "p1": "Dans Boards, touche ton spray wall pour l'activer. Touche l'onglet Blocs (la loupe), puis le nom du spray wall en haut. Touche Modifier les prises, puis Publier les prises.",
-        "p2": "Si tu as changé les prises sur tout le spray wall, touche Réinitialiser ce spray wall dans la même fiche. Ajoute une nouvelle photo et marque les prises de zéro. Quand tu publies le nouveau spray wall, l'ancien est archivé avec ses blocs.",
+        "p1": "Dans Boards, touche ton Spraywall pour l'activer. Touche l'onglet Blocs (la loupe), puis le nom du Spraywall en haut. Touche Modifier les prises, puis Publier les prises.",
+        "p2": "Si tu as changé les prises sur tout le Spraywall, touche Réinitialiser ce Spraywall dans la même fiche. Ajoute une nouvelle photo et marque les prises de zéro. Quand tu publies le nouveau Spraywall, l'ancien est archivé avec ses blocs.",
         "missed": "Tu as oublié quelques prises au premier passage ? Reviens ici pour les ajouter quand tu veux. Ajouter de nouvelles prises ne change pas les blocs existants ; publie quand tu veux que tout le monde puisse les utiliser."
       },
       "next": {
@@ -921,7 +921,7 @@
         "step2": "Choisis Ajouter, puis Dessiner.",
         "step3": "Dessine un contour fermé autour de la prise. Pour une petite prise ronde, touche la photo pour placer un cercle.",
         "step4": "Recommence pour les autres prises manquantes. Déplace la photo avec deux doigts et utilise Annuler en cas d’erreur.",
-        "step5": "Termine avec Choisir le rendu pendant la configuration, ou Publier les prises pour un spray wall existant.",
+        "step5": "Termine avec Choisir le rendu pendant la configuration, ou Publier les prises pour un Spraywall existant.",
         "corners": "Tu préfères les bords droits ? Choisis Ajouter → Coins. Touche au moins trois points autour d’une prise, puis Terminer pour fermer le contour. Recommence pour la prise suivante.",
         "drawAlt": "Outil Ajouter en mode Dessiner avec le contour d’une prise tracé à la main sur la photo",
         "drawCaption": "Ajouter → Dessiner : trace chaque prise manquante, ou touche pour placer un cercle.",
@@ -1040,12 +1040,12 @@
       "body2": "Vous pouvez révoquer la permission de localisation à tout moment dans les paramètres de votre appareil. L'app fonctionne pleinement sans elle."
     },
     "sprayPhotos": {
-      "title": "Photos de murs de spray",
-      "body1": "Quand tu ajoutes un mur de spray, nous gardons sa photo et les prises que tu marques. Qui peut voir la photo dépend de la visibilité du mur : privé, lien seulement ou public. Les membres d'une salle voient aussi les murs rattachés à cette salle.",
-      "body2": "Chaque mur a un interrupteur « Aider à entraîner la détection des prises ». Tant qu'il est activé, nous utilisons la photo du mur et les prises que tu marques pour entraîner le détecteur de prises, la partie de l'app qui repère les prises sur la photo d'un nouveau mur. Un admin Boardsesh les vérifie d'abord pour s'assurer qu'elles sont bonnes pour apprendre. Cela vaut quelle que soit la visibilité, murs privés compris. La copie utilisée pour l'entraînement est gardée dans un stockage privé et n'est jamais partagée ni publiée hors de Boardsesh.",
-      "body3": "L'interrupteur est activé quand tu ajoutes un mur, et tu peux le modifier à ce moment-là ou plus tard dans « Modifier la board ». Les murs ajoutés avant l'arrivée de l'interrupteur, ou avec une version de l'app qui ne l'affiche pas, commencent avec l'interrupteur désactivé. Nous entraînons avec un mur dont l'interrupteur est activé au titre de l'intérêt légitime pour améliorer la détection des prises ; le désactiver est ta façon de t'y opposer, avec l'effet décrit plus bas.",
-      "body4": "Si tu le désactives, supprimes le mur ou supprimes ton compte, le mur sort sous 24 heures du jeu de données d'entraînement que nous stockons. Une copie déjà téléchargée pour un entraînement peut encore servir pendant 7 jours au plus, et elle est supprimée au prochain téléchargement de ce jeu de données. Les modèles déjà entraînés gardent ce qu'ils ont appris, mais n'ont aucune copie de ta photo.",
-      "body5": "Si un mur est signalé, un admin Boardsesh peut voir sa photo pour traiter le signalement, quel que soit le réglage de l'interrupteur. Quand tu supprimes un mur, nous supprimons sa photo au bout de 30 jours. Quand tu supprimes ton compte, les photos de tes murs sont supprimées avec lui ; la copie d'entraînement sort dans les délais indiqués plus haut. Quand tu réinitialises un mur, l'ancien est conservé avec sa photo comme mur archivé jusqu'à ce que tu le supprimes aussi. Désactiver l'interrupteur sur l'un des deux vaut pour les deux."
+      "title": "Photos de Spraywalls",
+      "body1": "Quand tu ajoutes un Spraywall, nous gardons sa photo et les prises que tu marques. Qui peut voir la photo dépend de la visibilité du Spraywall : privé, lien seulement ou public. Les membres d'une salle voient aussi les Spraywalls rattachés à cette salle.",
+      "body2": "Chaque Spraywall a un interrupteur « Aider à entraîner la détection des prises ». Tant qu'il est activé, nous utilisons la photo du Spraywall et les prises que tu marques pour entraîner le détecteur de prises, la partie de l'app qui repère les prises sur la photo d'un nouveau Spraywall. Un admin Boardsesh les vérifie d'abord pour s'assurer qu'elles sont bonnes pour apprendre. Cela vaut quelle que soit la visibilité, Spraywalls privés compris. La copie utilisée pour l'entraînement est gardée dans un stockage privé et n'est jamais partagée ni publiée hors de Boardsesh.",
+      "body3": "L'interrupteur est activé quand tu ajoutes un Spraywall, et tu peux le modifier à ce moment-là ou plus tard dans « Modifier la board ». Les Spraywalls ajoutés avant l'arrivée de l'interrupteur, ou avec une version de l'app qui ne l'affiche pas, commencent avec l'interrupteur désactivé. Nous entraînons avec un Spraywall dont l'interrupteur est activé au titre de l'intérêt légitime pour améliorer la détection des prises ; le désactiver est ta façon de t'y opposer, avec l'effet décrit plus bas.",
+      "body4": "Si tu le désactives, supprimes le Spraywall ou supprimes ton compte, le Spraywall sort sous 24 heures du jeu de données d'entraînement que nous stockons. Une copie déjà téléchargée pour un entraînement peut encore servir pendant 7 jours au plus, et elle est supprimée au prochain téléchargement de ce jeu de données. Les modèles déjà entraînés gardent ce qu'ils ont appris, mais n'ont aucune copie de ta photo.",
+      "body5": "Si un Spraywall est signalé, un admin Boardsesh peut voir sa photo pour traiter le signalement, quel que soit le réglage de l'interrupteur. Quand tu supprimes un Spraywall, nous supprimons sa photo au bout de 30 jours. Quand tu supprimes ton compte, les photos de tes Spraywalls sont supprimées avec lui ; la copie d'entraînement sort dans les délais indiqués plus haut. Quand tu réinitialises un Spraywall, l'ancien est conservé avec sa photo comme Spraywall archivé jusqu'à ce que tu le supprimes aussi. Désactiver l'interrupteur sur l'un des deux vaut pour les deux."
     },
     "thirdParty": {
       "title": "Services tiers",
@@ -1071,7 +1071,7 @@
       "title": "Partage de données",
       "body1ProductAnalytics": "Nous ne vendons pas tes données, n’affichons pas de publicités et ne partageons pas d’informations avec des annonceurs ou des courtiers en données. Les prestataires décrits ci-dessus traitent les données pour l’hébergement, le stockage, la fiabilité du service et les statistiques facultatives. La synchronisation Aurora Climbing fonctionne quand tu l’actives.",
       "body2": "Les autres utilisateurs de Boardsesh peuvent voir ton nom d'utilisateur, ton profil et tes blocs enregistrés si tu participes à des fonctionnalités sociales comme le Mode Party. C'est visible dans l'app et fait partie du fonctionnement du produit.",
-      "body3SprayPhotos": "Nous ne donnons à personne d'autre les photos de murs de spray ni les prises que tu marques pour entraîner des modèles. Le seul modèle entraîné avec elles est notre propre détecteur de prises. Les autres voient la photo d'un mur selon sa visibilité, et les membres d'une salle voient les murs rattachés à cette salle, murs privés compris. La photo d'un mur public est sur le web ouvert."
+      "body3SprayPhotos": "Nous ne donnons à personne d'autre les photos de Spraywalls ni les prises que tu marques pour entraîner des modèles. Le seul modèle entraîné avec elles est notre propre détecteur de prises. Les autres voient la photo d'un Spraywall selon sa visibilité, et les membres d'une salle voient les Spraywalls rattachés à cette salle, Spraywalls privés compris. La photo d'un Spraywall public est sur le web ouvert."
     },
     "retention": {
       "title": "Conservation des données",

@@ -210,9 +210,9 @@
           "dismissAccessibility": "Dismiss this suggestion"
         },
         "sprayWalls": {
-          "title": "Spray walls",
-          "useOwnLook": "Use my look on spray walls",
-          "footer": "Spray walls show the look their creator picked for the photo. Turn this on to see your own look there instead."
+          "title": "Spraywalls",
+          "useOwnLook": "Use my look on Spraywalls",
+          "footer": "Spraywalls show the look their creator picked for the photo. Turn this on to see your own look there instead."
         }
       },
       "accessibility": {

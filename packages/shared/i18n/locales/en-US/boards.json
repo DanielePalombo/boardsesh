@@ -4,7 +4,7 @@
     "running": "Finding holds in your photo…",
     "connection": "Can't reach your recognition job. Try again when you're connected.",
     "failed": "We couldn't finish finding holds. Your photo is saved.",
-    "resumeHint": "You can leave and resume later. Your published wall stays unchanged.",
+    "resumeHint": "You can leave and resume later. Your published Spraywall stays unchanged.",
     "retry": "Try again",
     "manual": "Mark holds myself",
     "queuePosition": "Your photo is #{{position}} in the recognition queue.",
@@ -20,7 +20,7 @@
       "noAccess": "You don't have permission to edit this board",
       "back": "Go back",
       "configLockedHint": "You don't have permission to change this board's layout, size, or hold sets.",
-      "configLockedHintSpray": "A wall's layout is its photo. Shoot the wall again to change its holds.",
+      "configLockedHintSpray": "A Spraywall's layout is its photo. Shoot the Spraywall again to change its holds.",
       "duplicate": {
         "title": "You already have this setup",
         "body": "This change makes the board match \"{{name}}\" — same layout, size and hold sets.",
@@ -75,7 +75,7 @@
       "unfollowConfirm": "Unfollow",
       "edit": "Edit",
       "done": "Done",
-      "deleteWallTitle": "Delete spray wall?",
+      "deleteWallTitle": "Delete Spraywall?",
       "deleteWallMessage": "Delete \"{{name}}\"? Its photos and climbs will no longer be available. This cannot be undone.",
       "deleteSuccess": "\"{{name}}\" deleted"
     },
@@ -95,7 +95,7 @@
       "gymHint": "Pick your gym's board",
       "own": "My own board",
       "ownHint": "Set up the board you have at home",
-      "sprayWall": "Add my spray wall",
+      "sprayWall": "Add my Spraywall",
       "scan": "Scan for the board in front of me",
       "scanFootnote": "MoonBoards and some Kilter boxes don't show up here yet.",
       "searching": "Looking for boards near you…",
@@ -148,7 +148,7 @@
       "unpinAria": "Unpin {{name}}",
       "pinnedBadgeAria": "Pinned",
       "pinError": "Couldn't update your pinned boards",
-      "addWallTile": "Spray wall"
+      "addWallTile": "Spraywall"
     },
     "create": {
       "screenTitle": "Set up your board",
@@ -228,18 +228,18 @@
         "adjustable": "adjustable"
       },
       "spray": {
-        "kind": "Spray wall",
+        "kind": "Spraywall",
         "editHolds": "Edit holds",
-        "editHoldsHint": "Add, move or delete the holds on your wall.",
-        "resetWall": "Reset this wall",
+        "editHoldsHint": "Add, move or delete the holds on your Spraywall.",
+        "resetWall": "Reset this Spraywall",
         "resetWallHint": "Take a new photo and mark the holds again.",
         "shareLink": "Share link",
-        "shareLinkPublicHint": "Anyone can open this wall.",
+        "shareLinkPublicHint": "Anyone can open this Spraywall.",
         "shareLinkUnlistedHint": "Only the climbers you send it to."
       },
       "details": "Details",
       "detailsAria": "Open details for {{name}}",
-      "activeSprayDetails": "{{name}} · wall details",
+      "activeSprayDetails": "{{name}} · Spraywall details",
       "share": {
         "shareLink": "Share link",
         "publicHint": "Anyone can open this board.",
@@ -446,9 +446,9 @@
       "linkError": "Couldn't link that gym. It may be too far from your board. Your other changes were saved."
     },
     "sprayShare": {
-      "title": "Share this wall",
-      "publicBody": "This wall is public, so anyone can open it, it shows on the gym page, and its climbs turn up in the feed.",
-      "unlistedBody": "Only the climbers you send this link to can open the wall. It isn't listed anywhere.",
+      "title": "Share this Spraywall",
+      "publicBody": "This Spraywall is public, so anyone can open it, it shows on the gym page, and its climbs turn up in the feed.",
+      "unlistedBody": "Only the climbers you send this link to can open the Spraywall. It isn't listed anywhere.",
       "copyLink": "Copy link",
       "share": "Share",
       "copied": "Link copied",
@@ -475,10 +475,10 @@
       "unlisted": "Link only",
       "public": "Public",
       "privateHint": "Only you can see it, plus members of its gym if it has one. With “Help train hold finding” on, the Boardsesh team may use the photo to improve hold finding.",
-      "unlistedHint": "Anyone with the link gets in. The wall isn't listed on the gym page and its photo stays off the open web.",
-      "publicHint": "Anyone can find the wall. It shows on the gym page, its climbs turn up in the feed, and the wall photo goes on the open web.",
-      "ownerOnlyError": "Only the climber who set this wall up can change who sees it. Your other changes saved.",
-      "updateError": "Couldn't change who can see this wall. Try again."
+      "unlistedHint": "Anyone with the link gets in. The Spraywall isn't listed on the gym page and its photo stays off the open web.",
+      "publicHint": "Anyone can find the Spraywall. It shows on the gym page, its climbs turn up in the feed, and the Spraywall photo goes on the open web.",
+      "ownerOnlyError": "Only the climber who set this Spraywall up can change who sees it. Your other changes saved.",
+      "updateError": "Couldn't change who can see this Spraywall. Try again."
     },
     "publicGymWarning": {
       "message": "Your gym {{name}} is public, so its location is visible to everyone. If it's your home, make the gym private.",
@@ -486,7 +486,7 @@
     },
     "sprayTraining": {
       "label": "Help train hold finding",
-      "description": "We use this wall's photo and the holds you mark to teach the app to spot holds. A Boardsesh admin checks them first. The training copy stays private.",
+      "description": "We use this Spraywall's photo and the holds you mark to teach the app to spot holds. A Boardsesh admin checks them first. The training copy stays private.",
       "updateError": "Couldn't change “Help train hold finding”. Try again.",
       "loadError": "Couldn't load “Help train hold finding”. Close this screen and open it again."
     }
@@ -861,7 +861,7 @@
     },
     "startOver": {
       "title": "Start over?",
-      "body": "Every hold goes back to how it was when you opened the wall. You can undo this.",
+      "body": "Every hold goes back to how it was when you opened the Spraywall. You can undo this.",
       "confirm": "Start over",
       "cancel": "Keep editing"
     },
@@ -926,7 +926,7 @@
       "pencil": "Apple Pencil adds and switches holds. Fingers move around and pick a hold."
     },
     "a11y": {
-      "wall": "Your wall photo: {{summary}}",
+      "wall": "Your Spraywall photo: {{summary}}",
       "holdValue": "Hold {{position}} of {{total}}, {{role}}",
       "noHold": "No hold picked",
       "hint": "Swipe up or down to move through the holds. Double-tap to switch one on or off.",
@@ -945,7 +945,7 @@
       "revealed": "Holds found: {{summary}}",
       "pickHint": "Swipe up or down to a hold, then double-tap to pick it."
     },
-    "readOnly": "This wall isn't yours to edit.",
+    "readOnly": "This Spraywall isn't yours to edit.",
     "errors": {
       "tooManyHolds": "That's the {{max}} hold limit. Switch some off to add more.",
       "saveFailed": "Couldn't save your holds. Try again.",
@@ -953,8 +953,8 @@
       "strokeTooBig": "That loop is far bigger than a hold. Zoom in and trace the hold itself.",
       "strokeTooDetailed": "That stroke has too much detail to store. Trace the edge in one pass.",
       "strokeTooShort": "That stroke is too short. Draw a full loop round the hold.",
-      "someHoldsOffWall_one": "{{count}} hold lands off the wall. Move it back onto the photo or switch it off.",
-      "someHoldsOffWall_other": "{{count}} holds land off the wall. Move them back onto the photo or switch them off.",
+      "someHoldsOffWall_one": "{{count}} hold lands off the Spraywall. Move it back onto the photo or switch it off.",
+      "someHoldsOffWall_other": "{{count}} holds land off the Spraywall. Move them back onto the photo or switch them off.",
       "cornersCross": "Two sides cross. Tap the corners in order round the hold.",
       "cornersTooFew": "Those corners are too close together or in a line. Tap at least 3 round the hold.",
       "cornersHollow": "That shape is too hollow. Tap the corners round the outside of the hold.",
@@ -964,17 +964,17 @@
       "needsOnHold": "Switch the hold on first"
     },
     "empty": {
-      "noPhoto": "This wall has no photo to edit yet."
+      "noPhoto": "This Spraywall has no photo to edit yet."
     },
-    "loading": "Loading your wall…",
-    "loadStalled": "Couldn't load your wall. Try again.",
+    "loading": "Loading your Spraywall…",
+    "loadStalled": "Couldn't load your Spraywall. Try again.",
     "rail": {
       "label": "Editing tools",
       "grip": "Move the tools to the other side",
       "mark": "Pick and switch holds",
       "pencilOnly": "Pencil only",
-      "pencilOnlyHint": "Fingers pick holds and move around. Only Apple Pencil changes the wall.",
-      "fit": "Fit the wall to the screen",
+      "pencilOnlyHint": "Fingers pick holds and move around. Only Apple Pencil changes the Spraywall.",
+      "fit": "Fit the Spraywall to the screen",
       "more": "More options"
     },
     "inspector": {
@@ -1014,7 +1014,7 @@
     }
   },
   "sprayWizard": {
-    "screenTitle": "Add a spray wall",
+    "screenTitle": "Add a Spraywall",
     "stepCounter": "Step {{current}} of {{total}}",
     "back": "Back",
     "next": "Next",
@@ -1023,19 +1023,19 @@
       "helpLink": "How to shoot it",
       "helpLinkHint": "Opens the photo guide in your browser",
       "adjust": "Crop or rotate",
-      "cameraDenied": "Boardsesh needs your camera to photograph a wall.",
+      "cameraDenied": "Boardsesh needs your camera to photograph a Spraywall.",
       "failed": "That photo wouldn't open. Try another one.",
-      "tip": "Stand back, face the wall square on, get all four corners in.",
-      "heroTitle": "Take a photo of your wall",
+      "tip": "Stand back, face the Spraywall square on, get all four corners in.",
+      "heroTitle": "Take a photo of your Spraywall",
       "heroBody": "Tap to open the camera",
-      "heroTitleLibrary": "Pick a photo of your wall",
+      "heroTitleLibrary": "Pick a photo of your Spraywall",
       "heroBodyLibrary": "Tap to open your photos",
       "fromLibrary": "Choose from your photos",
       "retake": "Retake",
       "change": "Change photo",
-      "tileLabel": "Your wall photo",
+      "tileLabel": "Your Spraywall photo",
       "howItWorks": {
-        "snap": "Snap the wall",
+        "snap": "Snap the Spraywall",
         "holds": "Mark the holds",
         "name": "Name it",
         "step": "{{number}}. {{label}}"
@@ -1043,7 +1043,7 @@
     },
     "adjust": {
       "title": "Crop and rotate",
-      "body": "Crop to the edges of the wall. Turn it round if it came out sideways.",
+      "body": "Crop to the edges of the Spraywall. Turn it round if it came out sideways.",
       "hint": "Drag an edge or a corner. Drag inside the box to move it.",
       "small": "This photo is small. Holds may look soft when you zoom in.",
       "failed": "That photo wouldn't crop. Try again, or cancel to keep it as it was.",
@@ -1063,16 +1063,16 @@
     },
     "anchors": {
       "title": "Mark the corners",
-      "body": "Drag the rings onto the wall's corners. It straightens the photo and unlocks the Wall only and Holds only looks. You can skip it.",
+      "body": "Drag the rings onto the Spraywall's corners. It straightens the photo and unlocks the Spraywall only and Holds only looks. You can skip it.",
       "hint": "Top left, top right, bottom right, bottom left.",
-      "crossed": "Those corners cross over each other. Put them round the wall in order.",
+      "crossed": "Those corners cross over each other. Put them round the Spraywall in order.",
       "cornerTopLeft": "Top left corner",
       "cornerTopRight": "Top right corner",
       "cornerBottomRight": "Bottom right corner",
       "cornerBottomLeft": "Bottom left corner",
       "clear": "Reset corners",
       "quality": {
-        "good": "Nice and square. The wall will flatten cleanly.",
+        "good": "Nice and square. The Spraywall will flatten cleanly.",
         "soft": "A bit angled. Retake front-on for a sharper look.",
         "fail": "Too angled to flatten. Your photo still works, or retake it face-on.",
         "small": "This photo is too small to flatten. Your photo still works as it is."
@@ -1096,125 +1096,125 @@
     "scan": {
       "queued": "Getting in line…",
       "running": "Looking for holds…",
-      "slow": "Busy walls take a little longer",
+      "slow": "Busy Spraywalls take a little longer",
       "resumeHint": "You can leave and resume later."
     },
     "review": {
-      "nothingFound": "No holds spotted. Tap the wall to add them.",
-      "detectionFailed": "Couldn't spot holds this time. Tap the wall to add them.",
-      "manualOnly": "Tap the wall to add your holds.",
+      "nothingFound": "No holds spotted. Tap the Spraywall to add them.",
+      "detectionFailed": "Couldn't spot holds this time. Tap the Spraywall to add them.",
+      "manualOnly": "Tap the Spraywall to add your holds.",
       "retry": "Try again"
     },
     "look": {
       "title": "How should holds light up?",
-      "body": "Swipe to try a look. Climbers see your wall this way.",
-      "loading": "Loading your wall…",
-      "unavailable": "Your wall's photo can't be shown here, but you can still pick a look.",
+      "body": "Swipe to try a look. Climbers see your Spraywall this way.",
+      "loading": "Loading your Spraywall…",
+      "unavailable": "Your Spraywall's photo can't be shown here, but you can still pick a look.",
       "saving": "Saving your look…",
       "failed": "Couldn't save the look. Try again, or keep going without it.",
       "publishWithout": "Publish anyway",
       "continueWithout": "Keep going anyway",
-      "dimTitle": "Dim the rest of the wall",
+      "dimTitle": "Dim the rest of the Spraywall",
       "dimOff": "Off",
       "previewPhoto": "Hold lighting is previewed on your original photo. {{background}} is used when you publish.",
       "failedPublish": "Couldn't save the look. Try again, or publish without it."
     },
     "details": {
-      "title": "Name your wall",
-      "namePlaceholder": "My spray wall",
-      "defaultName": "{{name}}'s spray wall",
+      "title": "Name your Spraywall",
+      "namePlaceholder": "My Spraywall",
+      "defaultName": "{{name}}'s Spraywall",
       "angle": "Angle",
       "angleValue": "{{angle}}°",
       "angleHint": "Fixed once you publish.",
       "save": "Save",
-      "saving": "Saving your wall…",
-      "saveFailed": "Couldn't save your wall's details. Try again.",
+      "saving": "Saving your Spraywall…",
+      "saveFailed": "Couldn't save your Spraywall's details. Try again.",
       "name": "Name",
-      "renameTitle": "Rename your wall",
+      "renameTitle": "Rename your Spraywall",
       "renameDone": "Done",
       "renameHint": "Opens a box to type a new name"
     },
     "publish": {
       "title": "Putting it on your boards",
-      "working": "Publishing your wall…",
-      "failed": "Publishing the wall failed.",
-      "stalled": "Your wall is saved, but setting it up took too long. Try again.",
+      "working": "Publishing your Spraywall…",
+      "failed": "Publishing the Spraywall failed.",
+      "stalled": "Your Spraywall is saved, but setting it up took too long. Try again.",
       "retry": "Try again"
     },
     "done": {
-      "body": "Setting your wall up…",
+      "body": "Setting your Spraywall up…",
       "leave": "Back to climbing"
     },
     "leave": {
-      "title": "Leave this wall for now?",
-      "body": "Your wall and its photo are saved. Pick it up where you left off.",
+      "title": "Leave this Spraywall for now?",
+      "body": "Your Spraywall and its photo are saved. Pick it up where you left off.",
       "stay": "Keep going",
       "go": "Leave",
       "unsavedTitle": "Leave without publishing?",
-      "unsavedBody": "Your hold changes won't be kept. The wall and its photo stay saved.",
+      "unsavedBody": "Your hold changes won't be kept. The Spraywall and its photo stay saved.",
       "discard": "Leave anyway"
     },
     "resume": {
-      "checking": "Looking for a wall you started…",
-      "title": "You've a wall on the go",
+      "checking": "Looking for a Spraywall you started…",
+      "title": "You've a Spraywall on the go",
       "body": "“{{name}}” isn't finished. Pick up where you left off, or start over.",
       "pickUp": "Pick up where you left off",
       "startOver": "Start over",
-      "checkFailed": "Couldn't check that wall. Try again.",
+      "checkFailed": "Couldn't check that Spraywall. Try again.",
       "retry": "Try again"
     },
     "reset": {
-      "screenTitle": "Reset this wall",
-      "starting": "Getting your new wall ready…",
+      "screenTitle": "Reset this Spraywall",
+      "starting": "Getting your new Spraywall ready…",
       "startFailed": "Couldn't start the reset. Try again.",
       "resumeTitle": "You have a reset in progress",
-      "resumeBody": "The new photo of “{{name}}” isn't finished. Pick up where you left off, or start over. The wall stays live until the new one goes live.",
-      "archiveNotice": "When this wall goes live, the old one is archived. Its climbs and sends stay.",
-      "heroTitle": "Take a new photo of the wall",
-      "heroTitleLibrary": "Pick a new photo of the wall",
+      "resumeBody": "The new photo of “{{name}}” isn't finished. Pick up where you left off, or start over. The Spraywall stays live until the new one goes live.",
+      "archiveNotice": "When this Spraywall goes live, the old one is archived. Its climbs and sends stay.",
+      "heroTitle": "Take a new photo of the Spraywall",
+      "heroTitleLibrary": "Pick a new photo of the Spraywall",
       "photoNote": "Same name and angle as before."
     },
     "background": {
-      "title": "What should the wall show?",
-      "body": "Swipe to compare the photo, just the wall, or just the holds.",
-      "unsupported": "Only the photo is available right now. You can still finish your wall."
+      "title": "What should the Spraywall show?",
+      "body": "Swipe to compare the photo, just the Spraywall, or just the holds.",
+      "unsupported": "Only the photo is available right now. You can still finish your Spraywall."
     }
   },
   "sprayResetConfirm": {
-    "title": "Reset this wall?",
-    "body": "Take a new photo and mark the holds from scratch. When the new wall goes live, this one is archived. Its climbs and sends stay in logbooks and playlists, and nobody can set on it any more.",
+    "title": "Reset this Spraywall?",
+    "body": "Take a new photo and mark the holds from scratch. When the new Spraywall goes live, this one is archived. Its climbs and sends stay in logbooks and playlists, and nobody can set on it any more.",
     "start": "Start reset",
     "cancel": "Not now"
   },
   "sprayArchive": {
     "banner": "Archived {{date}}. Climbs and sends stay, but nothing new can be set here.",
     "bannerUndated": "Archived. Climbs and sends stay, but nothing new can be set here.",
-    "switchToNew": "Switch to the new wall",
-    "openFailed": "Couldn't open that wall. Try again.",
+    "switchToNew": "Switch to the new Spraywall",
+    "openFailed": "Couldn't open that Spraywall. Try again.",
     "manageHeader": "Archived",
     "manageRow": "Archived {{date}}",
     "manageRowUndated": "Archived",
     "deleteMessage": "Delete “{{name}}”? Its photo goes. Its climbs, and every send logged on them, leave logbooks and playlists. This can't be undone."
   },
   "sprayWallErrors": {
-    "archived": "This wall is archived. Its climbs and sends stay, but nothing new can be set on it.",
-    "resetRetired": "Walls change by resetting them now. Update the app, then reset the wall.",
-    "resetOwnerOnly": "Only the wall's owner can reset it.",
-    "resetSourceUnpublished": "Finish setting up this wall before you reset it.",
-    "archiveLimitReached": "You can keep {{max}} archived walls. Delete one under Archived to reset this wall."
+    "archived": "This Spraywall is archived. Its climbs and sends stay, but nothing new can be set on it.",
+    "resetRetired": "Spraywalls change by resetting them now. Update the app, then reset the Spraywall.",
+    "resetOwnerOnly": "Only the Spraywall's owner can reset it.",
+    "resetSourceUnpublished": "Finish setting up this Spraywall before you reset it.",
+    "archiveLimitReached": "You can keep {{max}} archived Spraywalls. Delete one under Archived to reset this Spraywall."
   },
   "sprayMaintenance": {
     "screenTitle": "Edit holds",
-    "preparing": "Opening your wall…",
-    "unavailable": "You can't edit this wall.",
-    "nothingPublished": "Finish setting up this wall before editing its holds.",
-    "draftUnavailable": "This draft has changed. Reopen the wall to edit its holds.",
+    "preparing": "Opening your Spraywall…",
+    "unavailable": "You can't edit this Spraywall.",
+    "nothingPublished": "Finish setting up this Spraywall before editing its holds.",
+    "draftUnavailable": "This draft has changed. Reopen the Spraywall to edit its holds.",
     "loadFailed": "Couldn't open the hold editor. Try again.",
     "publish": "Publish holds",
     "publishing": "Publishing your holds…",
     "publishFailed": "Your hold changes are saved. Try publishing again.",
-    "refreshing": "Loading the updated wall…",
-    "refreshFailed": "Your holds are published. Try loading the wall again.",
+    "refreshing": "Loading the updated Spraywall…",
+    "refreshFailed": "Your holds are published. Try loading the Spraywall again.",
     "retry": "Try again",
     "temporarilyUnavailable": "Hold editing isn't available right now. Try again later.",
     "leave": {
@@ -1223,7 +1223,7 @@
       "stay": "Keep editing",
       "discard": "Discard changes"
     },
-    "leftoverPhoto": "This wall has an unfinished new photo from an older version of the app. Discard it to edit the holds.",
+    "leftoverPhoto": "This Spraywall has an unfinished new photo from an older version of the app. Discard it to edit the holds.",
     "discardLeftover": "Discard the unfinished photo",
     "discardLeftoverFailed": "That photo wouldn't clear. Try again."
   },
@@ -1236,34 +1236,34 @@
     "keep": "Keep holds"
   },
   "sprayCaps": {
-    "holds": "A wall carries up to {{max}} holds. Drop a few and save again.",
-    "versions": "A wall keeps up to {{max}} versions of its holds, one per published hold edit, and this one has used them all. Reset the wall to start fresh.",
-    "walls": "You can keep {{max}} walls. Delete one to make room.",
-    "wallsHint": "You can keep up to {{max}} walls."
+    "holds": "A Spraywall carries up to {{max}} holds. Drop a few and save again.",
+    "versions": "A Spraywall keeps up to {{max}} versions of its holds, one per published hold edit, and this one has used them all. Reset the Spraywall to start fresh.",
+    "walls": "You can keep {{max}} Spraywalls. Delete one to make room.",
+    "wallsHint": "You can keep up to {{max}} Spraywalls."
   },
   "sprayHidden": {
     "body": "Someone reported it and we took it out of everyone else’s view. It’s still here for you, and nothing on it was deleted.",
-    "title": "This wall is hidden"
+    "title": "This Spraywall is hidden"
   },
   "sprayModeration": {
-    "reportTitle": "Report wall",
-    "reportHint": "Flag this wall for admin review",
+    "reportTitle": "Report Spraywall",
+    "reportHint": "Flag this Spraywall for admin review",
     "submit": "Send",
     "reported": "Thanks. Your report is in the review queue.",
     "reportOffline": "Connect to the internet to submit your report.",
     "reportError": "Your report didn’t go through. Try again.",
-    "queueTitle": "Spray-wall reports",
-    "hide": "Hide wall",
-    "unhide": "Unhide wall",
+    "queueTitle": "Spraywall reports",
+    "hide": "Hide Spraywall",
+    "unhide": "Unhide Spraywall",
     "keepVisible": "Keep visible",
     "hidden": "Hidden",
     "photoLabel": "Photo of {{wall}}",
     "noPhoto": "No photo available",
-    "review": "Review wall",
+    "review": "Review Spraywall",
     "reviewError": "The decision didn’t save. Try again.",
-    "unavailable": "Spray-wall moderation is unavailable for this account right now.",
-    "loadError": "Couldn’t load wall reports.",
-    "empty": "No walls waiting for review.",
+    "unavailable": "Spraywall moderation is unavailable for this account right now.",
+    "loadError": "Couldn’t load Spraywall reports.",
+    "empty": "No Spraywalls waiting for review.",
     "reasons": {
       "inappropriate": "Inappropriate photo or name",
       "notAWall": "Not a climbing wall",
@@ -1274,24 +1274,24 @@
     "reportCount_other": "{{count}} reports"
   },
   "sprayBackground": {
-    "label": "Wall background",
+    "label": "Spraywall background",
     "photo": "Photo",
-    "wallCrop": "Wall only",
+    "wallCrop": "Spraywall only",
     "holdCutouts": "Holds only",
-    "retake": "Reset wall with a new photo",
+    "retake": "Reset Spraywall with a new photo",
     "previewLabel": "Preview of {{look}}",
     "saveFailed": "Couldn't save the background. Try again.",
     "notAvailable": "This photo is too angled for that look. Retake it face-on.",
     "note": {
       "lockedNoPins": "Pin the 4 corners to unlock.",
-      "lockedRetake": "Reset the wall with a face-on photo to unlock.",
+      "lockedRetake": "Reset the Spraywall with a face-on photo to unlock.",
       "generating": "Generating…",
       "failed": "That look didn't render. Save it again to retry.",
-      "preview": "This is how your wall will look. Your photo shows for about a minute after you publish.",
+      "preview": "This is how your Spraywall will look. Your photo shows for about a minute after you publish.",
       "soft": "Retake front-on for a sharper look.",
       "volumes": "Volumes aren't cut out yet."
     },
-    "notAvailableNoPins": "Pin the 4 corners of the wall first to use this look.",
+    "notAvailableNoPins": "Pin the 4 corners of the Spraywall first to use this look.",
     "notAvailableSmall": "This photo is too small to flatten. Retake it with your phone's main camera at 1x.",
     "usePhoto": "Use the photo"
   },
@@ -1306,7 +1306,7 @@
     "offline": "Importing · Connect to check progress",
     "open": "Check import",
     "review": "Review holds",
-    "unavailable": "This import is gone. Its photo was replaced or discarded, or you can't edit this wall anymore."
+    "unavailable": "This import is gone. Its photo was replaced or discarded, or you can't edit this Spraywall anymore."
   },
   "boardShareLink": {
     "metadataTitle": "You're invited to a board | Boardsesh",

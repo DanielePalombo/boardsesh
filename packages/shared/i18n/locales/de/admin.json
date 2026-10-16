@@ -26,7 +26,7 @@
     "feedback": "Bug-Reports",
     "gymDuplicates": "Doppelte Hallen",
     "locationSync": "Standort-Sync-Sperren",
-    "sprayWalls": "Trainingsdaten der Spraywände"
+    "sprayWalls": "Trainingsdaten der Spraywalls"
   },
   "feedback": {
     "title": "Bug-Reports & Feedback",
@@ -442,7 +442,7 @@
     }
   },
   "sprayTraining": {
-    "title": "Trainingsdaten der Spraywände",
+    "title": "Trainingsdaten der Spraywalls",
     "statusLabel": "Prüfstatus",
     "status": {
       "unreviewed": "Ungeprüft ({{total}})",
@@ -454,7 +454,7 @@
     "retry": "Nochmal versuchen",
     "loadMore": "Mehr laden",
     "card": {
-      "open": "Spraywand-Version {{version}} prüfen",
+      "open": "Spraywall-Version {{version}} prüfen",
       "holds": "Griffe: {{total}}",
       "edited": "Bearbeitet: {{percent}} %",
       "accepted": "Ungeprüft übernommen: {{percent}} %",
@@ -484,15 +484,15 @@
       "PUBLIC": "Sichtbarkeit: öffentlich"
     },
     "review": {
-      "title": "Spraywand, Version {{version}}",
+      "title": "Spraywall, Version {{version}}",
       "close": "Schließen",
-      "previous": "Vorherige Wand",
-      "next": "Nächste Wand",
+      "previous": "Vorherige Spraywall",
+      "next": "Nächste Spraywall",
       "position": "{{current}} von {{total}}",
-      "photoAlt": "Foto einer Spraywand mit markierten Griffen",
+      "photoAlt": "Foto einer Spraywall mit markierten Griffen",
       "noPhoto": "Dieses Foto ist nicht mehr verfügbar.",
       "photoLoading": "Foto wird geladen",
-      "loadingNext": "Weitere Wände werden geladen",
+      "loadingNext": "Weitere Spraywalls werden geladen",
       "unmappable": "Griffe, die wir nicht auf dem Foto platzieren konnten: {{total}}",
       "model": "Grifferkennung: {{version}}",
       "showMarks": "Markierungen zeigen (H)",
@@ -502,16 +502,16 @@
       "approve": "Freigeben (A)",
       "reject": "Ablehnen (R)",
       "backToUnreviewed": "Zurück zu ungeprüft",
-      "shortcuts": "A gibt frei, R lehnt ab, H blendet Markierungen aus, Pfeil links und rechts wechseln die Wand."
+      "shortcuts": "A gibt frei, R lehnt ab, H blendet Markierungen aus, Pfeil links und rechts wechseln die Spraywall."
     },
     "snackbar": {
       "approved": "Freigegeben",
       "rejected": "Abgelehnt",
       "reset": "Wieder in der Warteschlange",
       "failed": "Die Prüfung ließ sich nicht speichern",
-      "notEligible": "Nicht gespeichert. Diese Wand ist nicht mehr als Trainingsdaten verfügbar."
+      "notEligible": "Nicht gespeichert. Diese Spraywall ist nicht mehr als Trainingsdaten verfügbar."
     },
     "backToAdmin": "Zurück zum Admin",
-    "noAccess": "Dein Admin-Zugang gilt nicht für Spraywände. Diese Seite braucht Admin-Zugang für Spraywände oder die ganze Seite."
+    "noAccess": "Dein Admin-Zugang gilt nicht für Spraywalls. Diese Seite braucht Admin-Zugang für Spraywalls oder die ganze Seite."
   }
 }

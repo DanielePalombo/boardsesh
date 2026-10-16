@@ -43,7 +43,7 @@ Every string names the board device **Board**, neuter in grammar: _das Board, ei
 
 ## A spray wall is a **Spraywall** (feminine)
 
-One name for a user-built spray wall, in every string: **Spraywall**, one word, feminine: _die Spraywall, eine Spraywall, diese Spraywall_, plural _die Spraywalls_ (no umlaut plural, no `-s` on the singular genitive/dative: _der Spraywall_). After the first mention, keep saying Spraywall; do not drop to _Wand_ or _Board_ for it. Compounds take a hyphen: _Spraywall-Foto_, _Spraywall-Hintergrund_, _Garagen-Spraywall_.
+The same name in English, Spanish, French and German, in every string: **Spraywall**, one word, feminine: _die Spraywall, eine Spraywall, diese Spraywall_, plural _die Spraywalls_ (no umlaut plural, no `-s` on the singular genitive/dative: _der Spraywall_). After the first mention, keep saying Spraywall; do not drop to _Wand_ or _Board_ for it. Compounds take a hyphen: _Spraywall-Foto_, _Spraywall-Hintergrund_, _Garagen-Spraywall_.
 
 Never: _Spraywand_, _Spraywände_, _Spray Wall_, _Spray Walls_, bare _Wand_ / _Wände_ for the spray wall, or _Board_ for it (_dieses Board_ → _diese Spraywall_). _Board_ is neuter and is the device; the spray wall is feminine, so pronouns follow it (_sie_, _ihr Foto_, not _es_, _sein Foto_). Keep _Board_ in sentences that really mean "your boards" in general. Hold-detection copy keeps its own words (_Griff_, _Boulder_); only the name of the wall changes.
 
