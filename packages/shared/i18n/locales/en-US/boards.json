@@ -824,6 +824,10 @@
       "saved": "Holds saved",
       "addA11y": "Add missing holds"
     },
+    "preview": {
+      "open": "Preview holds only",
+      "back": "Back to editing"
+    },
     "toast": {
       "deleted": "Hold deleted",
       "joined": "Joined 2 holds",
@@ -996,28 +1000,29 @@
     "screenTitle": "Add a spray wall",
     "stepCounter": "Step {{current}} of {{total}}",
     "back": "Back",
-    "meta": {
-      "title": "What's this wall?",
-      "body": "Name it, say how steep it is, and choose who gets to see it.",
-      "namePlaceholder": "Garage wall",
-      "angle": "Angle",
-      "angleHint": "How far the wall leans back, in 5° steps. Fixed once you publish.",
-      "next": "Next",
-      "anglePreview": "Wall at {{angle}} degrees"
-    },
+    "next": "Next",
+    "notSaved": "Not saved",
     "photo": {
-      "title": "Photograph the wall",
-      "body": "Stand square on, shoot at 1x, and get the whole wall in frame. Every hold you set lives on these pixels.",
       "helpLink": "How to shoot it",
       "helpLinkHint": "Opens the photo guide in your browser",
-      "library": "Choose a photo",
-      "camera": "Take a photo",
-      "pickAnother": "Choose a different photo",
       "adjust": "Crop or rotate",
-      "next": "Next",
       "cameraDenied": "Boardsesh needs your camera to photograph a wall.",
       "failed": "That photo wouldn't open. Try another one.",
-      "tip": "Stand back, face the wall square-on, fit all 4 corners in."
+      "tip": "Stand back, face the wall square on, get all four corners in.",
+      "heroTitle": "Take a photo of your wall",
+      "heroBody": "Tap to open the camera",
+      "heroTitleLibrary": "Pick a photo of your wall",
+      "heroBodyLibrary": "Tap to open your photos",
+      "fromLibrary": "Choose from your photos",
+      "retake": "Retake",
+      "change": "Change photo",
+      "tileLabel": "Your wall photo",
+      "howItWorks": {
+        "snap": "Snap the wall",
+        "holds": "Mark the holds",
+        "name": "Name it",
+        "step": "{{number}}. {{label}}"
+      }
     },
     "adjust": {
       "title": "Crop and rotate",
@@ -1041,16 +1046,14 @@
     },
     "anchors": {
       "title": "Mark the corners",
-      "body": "Drag the four rings onto the corners of the wall. Skip it if you shot square on.",
+      "body": "Drag the rings onto the wall's corners. It straightens the photo and unlocks the Wall only and Holds only looks. You can skip it.",
       "hint": "Top left, top right, bottom right, bottom left.",
       "crossed": "Those corners cross over each other. Put them round the wall in order.",
       "cornerTopLeft": "Top left corner",
       "cornerTopRight": "Top right corner",
       "cornerBottomRight": "Bottom right corner",
       "cornerBottomLeft": "Bottom left corner",
-      "next": "Next",
-      "skip": "Skip",
-      "clear": "Start the corners again",
+      "clear": "Reset corners",
       "quality": {
         "good": "Nice and square. The wall will flatten cleanly.",
         "soft": "A bit angled. Retake front-on for a sharper look.",
@@ -1067,7 +1070,8 @@
       "offlineMode": "Offline mode is on, so your photo can't go up. Turn it off, then try again.",
       "noSignal": "No signal, so your photo didn't go up. Try again once you're back online.",
       "serverUnreachable": "Boardsesh can't be reached right now. Your photo is still here, so try again in a minute.",
-      "checkFailed": "Couldn't tell whether your photo made it. Try again when you've signal."
+      "checkFailed": "Couldn't tell whether your photo made it. Try again when you've signal.",
+      "resumeHint": "You can leave and pick this up later."
     },
     "detect": {
       "title": "Looking for holds"
@@ -1079,26 +1083,42 @@
       "resumeHint": "You can leave and resume later."
     },
     "review": {
-      "next": "Pick a look",
       "nothingFound": "No holds spotted. Tap the wall to add them.",
       "detectionFailed": "Couldn't spot holds this time. Tap the wall to add them.",
       "manualOnly": "Tap the wall to add your holds.",
       "retry": "Try again"
     },
     "look": {
-      "title": "How should your holds light up?",
-      "body": "Climbers see your wall like this, unless they've chosen to use their own look on spray walls.",
+      "title": "How should holds light up?",
+      "body": "Swipe to try a look. Climbers see your wall this way.",
       "loading": "Loading your wall…",
       "unavailable": "Your wall's photo can't be shown here, but you can still pick a look.",
       "saving": "Saving your look…",
-      "failed": "Couldn't save the look. Try again, or publish anyway.",
+      "failed": "Couldn't save the look. Try again, or keep going without it.",
       "publishWithout": "Publish anyway",
+      "continueWithout": "Keep going anyway",
       "dimTitle": "Dim the rest of the wall",
       "dimOff": "Off",
-      "previewPhoto": "Hold lighting is previewed on your original photo. {{background}} is used when you publish."
+      "previewPhoto": "Hold lighting is previewed on your original photo. {{background}} is used when you publish.",
+      "failedPublish": "Couldn't save the look. Try again, or publish without it."
+    },
+    "details": {
+      "title": "Name your wall",
+      "namePlaceholder": "My spray wall",
+      "defaultName": "{{name}}'s spray wall",
+      "angle": "Angle",
+      "angleValue": "{{angle}}°",
+      "angleHint": "Fixed once you publish.",
+      "save": "Save",
+      "saving": "Saving your wall…",
+      "saveFailed": "Couldn't save your wall's details. Try again.",
+      "name": "Name",
+      "renameTitle": "Rename your wall",
+      "renameDone": "Done",
+      "renameHint": "Opens a box to type a new name"
     },
     "publish": {
-      "title": "Put it on your boards",
+      "title": "Putting it on your boards",
       "working": "Publishing your wall…",
       "failed": "Publishing the wall failed.",
       "stalled": "Your wall is saved, but setting it up took too long. Try again.",
@@ -1132,14 +1152,14 @@
       "startFailed": "Couldn't start the reset. Try again.",
       "resumeTitle": "You have a reset in progress",
       "resumeBody": "The new photo of “{{name}}” isn't finished. Pick up where you left off, or start over. The wall stays live until the new one goes live.",
-      "photoTitle": "Photograph the wall as it is now",
-      "photoBody": "Same name and angle as before. Shoot the whole wall, then mark every hold.",
-      "archiveNotice": "When this wall goes live, the old one is archived. Its climbs and sends stay."
+      "archiveNotice": "When this wall goes live, the old one is archived. Its climbs and sends stay.",
+      "heroTitle": "Take a new photo of the wall",
+      "heroTitleLibrary": "Pick a new photo of the wall",
+      "photoNote": "Same name and angle as before."
     },
     "background": {
       "title": "What should the wall show?",
-      "body": "Slide between the photo, the wall and the holds before choosing how they light up.",
-      "next": "Pick hold look",
+      "body": "Swipe to compare the photo, just the wall, or just the holds.",
       "unsupported": "Only the photo is available right now. You can still finish your wall."
     }
   },

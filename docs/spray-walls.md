@@ -363,6 +363,10 @@ also explains full-width iPad Pencil gestures. Recording and render steps are
 in [help-clips.md](help-clips.md#the-spray-wall-walkthrough). Change the page
 and re-record the takes when this flow changes.
 
+The setup walkthrough video still shows the old order, with the name, angle and
+visibility asked first. The flow now starts with the photo and names the wall
+last, so the walkthrough needs re-recording.
+
 Two front doors open it: the board picker's Spray wall tile, and "Add my spray
 wall" under My own board in the "Where do you climb?" block that Climbs' Find my
 board opens for a climber with no boards (#5654, `First Board Path Chosen
@@ -370,18 +374,23 @@ board opens for a climber with no boards (#5654, `First Board Path Chosen
 not offer it, because the wizard binds without the onboarding `source` and so
 would leave first-run open.
 
+The flow starts with the photo and names the wall last, so a climber can go from
+photo to published wall without typing anything. Six steps are counted for a new
+wall (photo, corners, holds, background, hold look, details) and five for a
+reset, which has no details step. Publishing is not counted: it runs by itself.
+
 | Step | What it does |
 | --- | --- |
-| `resuming` | Asks `mySprayWalls` for a wall of the caller's own with no published version and offers to pick it up or start over (a reset's unfinished clone excepted, see [The reset on the phone](#the-reset-on-the-phone)). With `?resetOf=` it calls `resetSprayWall` instead. |
-| `meta` | Name, gym, visibility, location, and the angle — snapped to `SPRAY_ANGLES`, because the server validates against that list. |
-| `photo` | Library pick; the camera button only on a binary at or past the version that shipped the usage description. Compressed to a JPEG of at most 5712 px on the long side (`WALL_PHOTO_MAX_DIMENSION`) and 24.5 MP, at quality 0.92 (`WALL_PHOTO_QUALITY`), which bakes the EXIF orientation into the pixels. A 12 MP or 24 MP phone photo goes up unscaled; a square photo stops at 4946 px. Both limits come from `sprayWallPhotoMaxLongSide` in `@boardsesh/spray-wall-geometry`, the rule the server's full copy follows too (see "Two sizes per photo" for why the pixel cap exists). The server keeps a 2048 px base for the frame, the detector and the climb view, and the larger copy only for the hold editor's deep zoom (#5911). The photo's size is the rendered JPEG's own (`compressPickedImageWithSize`), not the picker's, which on some Android builds describes the sensor rather than the picture. "Crop or rotate" under the preview opens `adjust`. |
+| `resuming` | Only for a reset (`?resetOf=`, which calls `resetSprayWall`) and for a targeted open of one wall (a progress row or a notification): a full-screen wait, because neither has anything to show until the server answers. |
+| `photo` | The first step. Behind it, while it shows, the flow asks `mySprayWalls` for a wall of the caller's own with no published version and offers to pick it up or start over (a reset's unfinished clone excepted, see [The reset on the phone](#the-reset-on-the-phone)). The prompt waits while the photo picker is open, and Next waits for the answer (it spins while a picked photo waits), because going on could create a second wall. The step is one inviting target: a large dashed tile (up to 520 pt wide, 4:3) that opens the camera when tapped, or the photo library on a binary or phone without one (`canPhotographWall`; the camera only on a binary at or past the version that shipped the usage description). Under it: "Choose from your photos" (camera builds only), the Offline mode warning, a quiet three-step "how it works" row (Snap the wall, Mark the holds, Name it), one shooting tip and the "How to shoot it" guide link, the whole column centred on the screen. Once picked, the photo fills the tile (cover, at most 55% of the window's height) and a tap on it opens the crop; "Crop or rotate" and "Retake" (for a camera shot) or "Change photo" (for a library pick) sit under it, and the tip, the steps and the link go. The picked tile is announced as "Your wall photo" with cropping as its hint, apart from the button. A reset's tile says "Take a new photo of the wall", with "Same name and angle as before." under it. No step counter on this step. Compressed to a JPEG of at most 5712 px on the long side (`WALL_PHOTO_MAX_DIMENSION`) and 24.5 MP, at quality 0.92 (`WALL_PHOTO_QUALITY`), which bakes the EXIF orientation into the pixels. A 12 MP or 24 MP phone photo goes up unscaled; a square photo stops at 4946 px. Both limits come from `sprayWallPhotoMaxLongSide` in `@boardsesh/spray-wall-geometry`, the rule the server's full copy follows too (see "Two sizes per photo" for why the pixel cap exists). The server keeps a 2048 px base for the frame, the detector and the climb view, and the larger copy only for the hold editor's deep zoom (#5911). The photo's size is the rendered JPEG's own (`compressPickedImageWithSize`), not the picker's, which on some Android builds describes the sensor rather than the picture. "Crop or rotate" (or a tap on the photo) opens `adjust`. |
 | `adjust` | Not counted, and always returns to `photo`. A free-aspect crop box (four corners, four edges, drag inside to move) and a Rotate button that turns the photo a quarter clockwise, over the BASE — the first compressed, uncropped copy. Copy: "Crop to the edges of the wall". Done renders the edit in one pass with `renderWallPhotoEdit` (rotate, crop, shrink to the cap for the crop's shape, JPEG 0.92) from the picker's ORIGINAL, falling back to the base when the original is over 25 MP (`ORIGINAL_RENDER_MAX_PIXELS`: decoded memory, about 195 MB for a 48 MP capture), gone, or fails to render; the result's size is the rendered image's. At the 5712 px cap the base keeps 71% of a 48 MP original's width, so only a crop tighter than 71% of each side comes out softer. The output is at most 5712 px on the long side and 24.5 MP (a square crop stops at 4946 x 4946), so no crop uploads more than an uncropped 24 MP photo. It clears the anchors, as a new photo does: a quarter turn changes which corner is the top-left. Reset puts the photo back as picked, Cancel (Back) leaves it as it was, and Back and leaving wait while the edit renders (`photoProcessing`). The smallest crop keeps 15% of each side and at least 512 base pixels, which guarantees 512 uploaded ones; under 1200 px on the long side a soft warning says holds may look soft, predicted from the same file the render will read (`renderableOriginalSize`). Rotation renders a turned preview of the base per quarter turn (`renderRotatedPreview`, 1600 px) rather than a view transform, because a rotated view hands pan translations back in its own axes. The pure halves are `photo-edit.ts` and `crop-box-math.ts`. Re-opening starts from the base with the last edit, so a crop can be loosened again. |
-| `anchors` | Optional, Skip by default. Four draggable handles with the marked area outlined between them; a quad that crosses itself is refused client-side, because the server's fallback for a degenerate quad is the identity matrix. The photo is fitted on both axes to the space under the header (`corner-photo-fit.ts`), so all four handles are on screen and the step does not scroll. Back, Skip and Next are in the header; "Start the corners again" sits in a row above the photo that is always drawn (disabled until there are corners), so the photo is not re-fitted when the first drag ends. When that space would fall under about 200 points the photo stops shrinking and the step scrolls instead — reachable on a 375x667 phone at large text sizes — and the page is held still while a ring is being dragged, so a drag never becomes a scroll. The hint and the refusal that replaces it share one slot, so a refused quad does not re-fit the photo. |
-| `upload` | `createSprayWall`, then the multipart POST, then `createSprayWallVersion`. |
+| `anchors` | Optional, and the copy says what skipping costs: the corners straighten the photo and are what unlock the Wall only and Holds only backgrounds, so a wall without them stays on the photo. The header always says Next: rings left where they started mean "no corners". Four draggable handles with the marked area outlined between them; a quad that crosses itself is refused client-side, because the server's fallback for a degenerate quad is the identity matrix. The photo is fitted on both axes to the space under the header (`corner-photo-fit.ts`), so all four handles are on screen and the step does not scroll. Back and Next are in the header; "Reset corners" sits in a row above the photo that is always drawn (disabled until there are corners), so the photo is not re-fitted when the first drag ends. When that space would fall under about 200 points the photo stops shrinking and the step scrolls instead — reachable on a 375x667 phone at large text sizes — and the page is held still while a ring is being dragged, so a drag never becomes a scroll. The hint and the refusal that replaces it share one slot, so a refused quad does not re-fit the photo. |
+| `upload` | `createSprayWall`, then the multipart POST, then `createSprayWallVersion`. The wall is created here, before the climber has named it, because the photo handler authorises against a wall the caller owns: with the default name (`sprayWizard.details.defaultName`, "Marco's spray wall" in the climber's own language, or "My spray wall" without a display name), 40°, private and the location hidden. A cap refusal is final: no Try again, since the server would say the same. A failure is said in our own words unless it carries a code we map (the caps, the lifecycle refusals); the server's message never reaches the screen, because it can be anything up to a raw SQL statement. The details save and the publish follow the same rule. With the photo still on the phone the step is the same full-screen surface as `detect` (`SprayScanPhoto` with `band={false}`: the photo where the scan will sweep it, a spinner and the percentage in the card), so the photo stays on screen from the corners through detection; once the wall exists the card adds "You can leave and pick this up later." A run without the file keeps the plain progress bar. |
 | `detect` | Request or resume a server-owned recognition job. New walls can enter manual editing while queued ("Mark holds myself"). With the photo still on the phone the step is full-screen (`SprayScanPhoto`): the photo sits exactly where the editor will put it (`fitSprayPhoto`), dimmed, with a violet band looping down it and a glass status card. A run resumed without the file keeps the plain spinner. |
-| `review` | `SprayHoldEditorScreen`. Its one button, "Pick a look", commits the holds (`REVIEW_COMMITTED`) and hands over to the background step. Until its draft has loaded it shows `SprayEditorLoading`, never a bare spinner: the local photo dimmed with a status card and no scan band when the wizard still has the file, a spinner and a status line otherwise, and "Couldn't load your wall" with "Try again" when the read has given up or is parked offline (`useSprayWallDraft`'s `isStalled`; an automatic retry still in flight keeps the plain wait). "Try again" re-probes connectivity before it refetches, because an offline connectivity store refuses requests before they reach the network. The wizard prefetches that draft during `detect` (`prefetchSprayWallDraft`). |
-| `background` → `look` | `SprayWallLookStep` first shows one background preview above a stepped horizontal slider: Photo, Wall only, or Holds only. Generated choices keep the photo-quality and backend-capability gates; a photo-only fallback stays available. Continue moves to the hold-look step without saving or publishing. |
-| `look` → `publish` | The second look-and-feel step shows one real draft-board preview above the shared horizontal look slider, with ~12 holds lit as a stand-in problem (`samplePreviewHolds`, `useSyntheticSprayWallPreview`). Defaults to `DEFAULT_SPRAY_WALL_LOOK_OPTION_ID` (Aura Outline), retains the dim control, and has no Skip. Back returns to background with both selections and dimming preserved. The two phases share one mounted component. Its final button stores the look and selected background together with `setSprayWallRenderSettings`, then `LOOK_CONFIRMED`; publishing runs by itself once — `publishSprayWallVersion`, `invalidateSprayWallRenderData`, and the board bind — and stops on an error with Try again. Leaving still keeps the draft. |
+| `review` | `SprayHoldEditorScreen`. Its one button, "Next", commits the holds (`REVIEW_COMMITTED`) and hands over to the background step. Until its draft has loaded it shows `SprayEditorLoading`, never a bare spinner: the local photo dimmed with a status card and no scan band when the wizard still has the file, a spinner and a status line otherwise, and "Couldn't load your wall" with "Try again" when the read has given up or is parked offline (`useSprayWallDraft`'s `isStalled`; an automatic retry still in flight keeps the plain wait). "Try again" re-probes connectivity before it refetches, because an offline connectivity store refuses requests before they reach the network. The wizard prefetches that draft during `detect` (`prefetchSprayWallDraft`). |
+| `background` → `look` | `SprayWallLookStep` is a settings-style form (`MoreForm`, the Settings pages' rows, #6477) under a short header (step counter, question, one line). Its first phase is a horizontal row of draft previews (`SprayWallBackgroundCarousel`): Photo, Wall only, and Holds only. Swiping or tapping a neighboring card chooses that background; dots show the current choice. The gate's sentence is the footer (`buildSprayBackgroundModel` in `spray-look-model.ts`). Where only the photo can be stored, only its card is offered and the footer says why. Both preview steps render the form model through `MoreFormRN` on iOS and Android, fitting their rows to measured controls and footer text without a native form host around the horizontal list. Next moves to the hold-look step without saving or publishing. |
+| `look` → `details` | The second phase mirrors Settings → Board: a swipeable carousel of full previews of the draft wall (`BoardLookCarousel`, hero-sized for the row, `selectOnSnap`, no descriptions, `RailIndexDots` under it) hosted as one fixed-height full-bleed `custom` row, with ~12 holds lit as a stand-in problem (`samplePreviewHolds`, `useSyntheticSprayWallPreview`), then "Dim the rest of the wall" as a `slider` row (`buildSprayLookModel`). A swipe selects the card it lands on. A dim drag redraws the selected card only: the step swaps just that option, and `buildBoardLookPreviewSettings` hands every unchanged option back the override it already had, so no other card's native render re-fires; the value is committed on release. The row's height is worked out from the form slot's measured height, because a native host pins it in points. On Android both phases render through `MoreFormRN`, because a Compose `RNHostView` row drew nothing on the emulator (the preview and the rail went missing; Settings → Board shows the same symptom). Until a preview can be drawn (loading, or the draft cannot be shown) the plain fallback lists the looks by name with the dim slider and a Try again. Defaults to `DEFAULT_SPRAY_WALL_LOOK_OPTION_ID` (Aura Outline) and has no Skip. Back returns to background with both selections and dimming preserved. The two phases share one mounted component. Its Next stores the look and selected background together with `setSprayWallRenderSettings`, then `LOOK_CONFIRMED`, which goes on to the details step; on a reset the button says Save and the publish follows it directly. A failed save is said at the top of the form with "Keep going anyway" ("Publish anyway" on a reset, whose sentence says publish too). The confirmed choice is kept per draft version, so Back from the details step reopens the look as it was. Leaving still keeps the draft. |
+| `details` → `publish` | "Name your wall", named in the bar like a Settings page and built the same way (`MoreForm` over `buildSprayDetailsModel` in `spray-details-model.ts`; no step counter): a Name row showing the current name (prefilled with the default) that opens a small rename sheet (`SprayWallNameSheet`, which refuses an empty name); who can see it as a segmented Private / Link only / Public row with the choice's meaning in its footer; the angle as a slider snapped to `SPRAY_ANGLE_OPTIONS` ("Fixed once you publish."), written to the builder on release only; and a Gym row that opens `GymPickerSheet`, with the wall cap as the last footer. A failed Save is the form's first row. No location fields: picking a gym fills the location from the gym, and Edit board keeps the manual ones. Prefilled from what the server holds (`detailsSeedFromWall`, preferring `pendingVisibility` over the still-private board row), including on a resumed wall. Save sends ONE `updateSprayWall` with only the fields that changed since then (`buildDetailsUpdate`), or nothing at all when nothing did; a failure stays on the step with its message and Save resends the same change. Publishing then runs by itself once — `publishSprayWallVersion`, `invalidateSprayWallRenderData`, and the board bind — and stops on an error with Try again. The after-publish visibility write stays, as an idempotent repair. |
 
 These are independent previews. Background uses the draft's canonical wall
 frame and the existing on-phone photo warp and hold mask. Hold lighting uses
@@ -390,6 +399,14 @@ chosen background is applied when the wall goes live. A flattened background
 must not be painted beneath that native overlay: its holds use photo pixels,
 while the generated background uses canonical coordinates. Previewing changes
 neither the global wall registry nor the climber's own render preferences.
+
+On Android the look form measures its controls, footer notes and spacing before
+assigning the remaining height to the carousel. It scrolls only when a readable
+compact preview cannot fit, and compact cards retain centred swipe selection.
+The corner step likewise reserves its measured controls and hint before fitting
+the photo; a route-local native safe area keeps both screens above system navigation.
+The rename sheet uses a bounded scroll body on Android so keyboard focus cannot
+draw the name input over its pinned Done action.
 
 Three rules in that flow are not obvious from the API and are easy to undo:
 
@@ -454,8 +471,8 @@ stale-confirmation checks for every header exit. Each step's actions are in
 the header (`useHeaderActions`); there is no footer. The editor and Look
 surfaces reserve the transparent header's measured height. When a Look preview
 cannot be drawn, the creator can still select any offered look and save it.
-Photo replacement controls precede the preview so portrait photos cannot hide
-them below the fold.
+The picked photo is capped at 55% of the window's height, so a portrait photo
+cannot push its replacement controls below the fold.
 
 The wizard (a reset included) guards leaving with `usePreventRemove`, which
 registers native dismissal prevention before a gesture can remove the screen,
@@ -1576,7 +1593,7 @@ What the editor does with a wall is decided by this document rather than by tast
 - **Publish is in the header, the counts at top-left.** On a phone the editor
   sets its route's `headerRight` itself (`SprayEditorHeaderActions`): "?" for
   the tips, then the primary button as a semibold label (the hold route's
-  "Publish holds", the wizard's "Pick a look"), with a spinner while it works
+  "Publish holds", the wizard's "Next"), with a spinner while it works
   and disabled when nothing is ON, a Corners outline is half placed, Refine is
   open, or the wall is locked. Setting it from the editor rather than from each
   host keeps one enabled rule for both, and the header loses the buttons the
@@ -2138,6 +2155,13 @@ when it turns `READY`.
 
 #### Previewing a look on the phone
 
+The hold editor's menu also offers **Preview holds only**. This quick check masks
+the photo already on screen with the current ON holds, including unsaved traces
+and kept Refine strokes. It needs no upload or generated art. Zoom and pan keep
+their position; editing, save, Pencil actions and edit shortcuts are disabled
+until **Back to editing** (or Escape) restores the editor. All mask rings share
+one winding so overlapping holds remain visible.
+
 The picker is three tiles, Photo, Wall only and Holds only, each showing that
 look on the owner's own wall. They are drawn on the phone from the version's
 render payload (photo, homography, canonical frame and holds;
@@ -2587,8 +2611,9 @@ view and the "Full reset" switch are gone from the app; no client calls
   instead of listing the owner's walls. The server returns the unfinished clone
   if there is one, so reopening a reset lands on yesterday's photo. A clone with
   no photo draft rejoins at the photo step (`RESUMED_AT_PHOTO`): its name, angle
-  and location came from the old wall, so the meta step never shows, the step
-  counter starts at the photo, and Back on the photo step leaves the flow. A
+  and location came from the old wall, so the details step never shows (the
+  step counter counts five, and the look step's button says Save), and Back on
+  the photo step leaves the flow. A
   clone with a photo draft asks "Pick up or start over" first. One reset request
   at a time; an answer that lands after the screen has gone raises nothing.
   `Spray Wall Reset Started` fires once per confirm tap on the board sheet,
@@ -3078,6 +3103,37 @@ tombstone withdraws only that layout, including all cached photo versions and
 its overlays. A loader discovering that a wall is no longer readable uses the
 same withdrawal path. Filesystem cleanup still runs without an offline database
 and when the SQLite sign-out wipe fails.
+
+One case is not a withdrawal. The add-a-wall flow registers the wall it is
+creating from its draft version (`draft: true` on the registration), so the
+look step can draw it. The published-wall loader asks `sprayWallRenderData`
+with no version, and for a wall with no published version that answer is null.
+`settleSprayWallRenderMiss` keeps the registration in that one case: a draft,
+for the same wall uuid, whose registration still says the viewer can edit it.
+Everything else still withdraws a draft:
+
+- sign-out (`withdrawAllSprayWalls`), Start over, removing the wall or its
+  deletion tombstone, which all withdraw directly;
+- an account change, because `resetSprayWallViewerAccess` sets `viewerCanEdit`
+  to false on every registration, and a payload read for another account
+  registers with it false too;
+- the layout no longer resolving (`sprayWallByLayout` null), or resolving to a
+  different wall uuid;
+- the draft read itself coming back null, or naming another row under the
+  version number: the draft hook is the registration's only owner, so it
+  withdraws the draft there.
+
+A kept draft is stamped fresh, so the loader asks again once per 10-minute
+revalidation window rather than on every surface's ask. A draft left behind by
+an add-a-wall flow closed without publishing or Start over stays registered for
+the rest of the session, since no draft hook is mounted to withdraw it.
+
+A cold null with nothing registered only marks the layout unavailable. It does
+not bump the removal generation, so a draft read already in flight still lands.
+It erases nothing either: cached photo files from an earlier session are left
+to the 14-day age sweep (`SPRAY_PHOTO_MAX_AGE_MS`). A draft payload whose stamp
+went stale because this wall alone was withdrawn is read again once, as a fresh
+server-authorised read. A payload read before a sign-out is never read again.
 
 Session and per-wall generations fence pending downloads and render results.
 Partial photo downloads use generation-specific destinations; a late transfer
@@ -4464,7 +4520,12 @@ Editors keep their mapped draft photo and holds locally.
 Their background and touch targets use that local payload, while the published
 registry, runtime geometry and climb thumbnails retain the published wall.
 Only initial setup, before any published version exists, registers its draft
-for the add-wall look carousel. Account and wall-removal generations also
+for the add-wall look carousel. Draft render cache tokens also carry an in-memory
+geometry revision: saving holds changes that revision even though the draft row
+id stays the same. This prevents a zero-hold payload read during detection from
+remaining the look step's cached preview after the editor saves its holds. URL-only
+refreshes leave the token unchanged, as does the editor's separate identity token,
+so a geometry refresh does not remount the editor or clear its undo history. Account and wall-removal generations also
 withdraw local draft payloads; a delayed response cannot restore them.
 
 ### Hold maintenance and photo reset draft ownership

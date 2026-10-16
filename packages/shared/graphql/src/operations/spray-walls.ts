@@ -107,6 +107,31 @@ const SPRAY_WALL_FIELDS = `
   }
 `;
 
+/**
+ * What the add-a-wall wizard's details step prefills from, beyond the shared
+ * fragment: the visibility parked for the first publish (owner only) and the
+ * wall's location. The second `board` selection merges with the fragment's.
+ *
+ * Only the wizard's resume read and its details save select these. A backend
+ * that does not know `pendingVisibility` (or the new `updateSprayWall` input
+ * fields) fails the WHOLE operation at validation, it does not leave the field
+ * out, so they stay out of the shared fragment, out of Edit board's update and
+ * out of the post-publish visibility repair: an old backend must never fail a
+ * publish that has already landed. The backend half (#6494) ships first.
+ */
+const SPRAY_WALL_DETAILS_FIELDS = `
+  pendingVisibility {
+    isPublic
+    isUnlisted
+  }
+  board {
+    locationName
+    latitude
+    longitude
+    hideLocation
+  }
+`;
+
 export const GET_SPRAY_WALL = gql`
   query GetSprayWall($uuid: ID!) {
     sprayWall(uuid: $uuid) {
@@ -131,6 +156,7 @@ export const GET_SPRAY_WALL_WITH_VERSIONS = gql`
   query GetSprayWallWithVersions($uuid: ID!) {
     sprayWall(uuid: $uuid) {
       ${SPRAY_WALL_FIELDS}
+      ${SPRAY_WALL_DETAILS_FIELDS}
       versions {
         ${SPRAY_WALL_VERSION_FIELDS}
       }
@@ -301,7 +327,7 @@ export const RESET_SPRAY_WALL = gql`
 `;
 
 /**
- * Rename, share, re-gym or re-angle a wall.
+ * Rename, share, re-gym, re-place or re-angle a wall.
  *
  * Sharing is the point: a wall is created PRIVATE, so without this one it could
  * never be shown to anybody. The angle is only accepted while the wall has no
@@ -311,6 +337,20 @@ export const UPDATE_SPRAY_WALL = gql`
   mutation UpdateSprayWall($input: UpdateSprayWallInput!) {
     updateSprayWall(input: $input) {
       ${SPRAY_WALL_FIELDS}
+    }
+  }
+`;
+
+/**
+ * The add-a-wall wizard's details save: the same mutation, answering with what
+ * the details step re-reads (`SPRAY_WALL_DETAILS_FIELDS`), so the step's
+ * baseline is the server's answer rather than what was sent.
+ */
+export const UPDATE_SPRAY_WALL_DETAILS = gql`
+  mutation UpdateSprayWallDetails($input: UpdateSprayWallInput!) {
+    updateSprayWall(input: $input) {
+      ${SPRAY_WALL_FIELDS}
+      ${SPRAY_WALL_DETAILS_FIELDS}
     }
   }
 `;

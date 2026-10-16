@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   hasParent: { current: true },
   publishVersion: vi.fn<(versionId: string) => Promise<unknown>>(),
   updateVisibility: vi.fn<(input: unknown) => Promise<unknown>>(),
+  updateDetails: vi.fn<(input: unknown) => Promise<unknown>>(),
   activate:
     vi.fn<
       (
@@ -67,8 +68,9 @@ const mocks = vi.hoisted(() => ({
     current: null as null | {
       phase: 'background' | 'look';
       stepCounter: string;
+      forwardLabel: string;
       onBackgroundConfirmed: () => void;
-      onConfirmed: () => void;
+      onConfirmed: (choice: unknown) => void;
     },
   },
   resetWall: vi.fn<(wallUuid: string) => Promise<unknown>>(),
@@ -79,20 +81,32 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-native', () => ({
-  Pressable: ({ children, onPress, disabled }: { children?: ReactNode; onPress?: () => void; disabled?: boolean }) =>
-    createElement('button', { onClick: disabled ? undefined : onPress }, children),
+  Pressable: ({
+    children,
+    onPress,
+    disabled,
+    testID,
+  }: {
+    children?: ReactNode;
+    onPress?: () => void;
+    disabled?: boolean;
+    testID?: string;
+  }) => createElement('button', { 'data-testid': testID, onClick: disabled ? undefined : onPress }, children),
   AccessibilityInfo: { announceForAccessibility: vi.fn() },
   Alert: { alert: mocks.alert },
   BackHandler: { addEventListener: () => ({ remove() {} }) },
-  KeyboardAvoidingView: ({ children }: { children?: ReactNode }) => createElement('div', {}, children),
   Platform: { OS: 'ios' },
   ScrollView: ({ children }: { children?: ReactNode }) => createElement('div', {}, children),
   StyleSheet: {
     flatten: (style: unknown) => Object.assign({}, ...[style].flat(10).filter(Boolean)),
     hairlineWidth: 1,
+    absoluteFill: {},
     create: (styles: unknown) => styles,
   },
-  View: ({ children }: { children?: ReactNode }) => createElement('div', {}, children),
+  Switch: () => null,
+  Text: ({ children }: { children?: ReactNode }) => createElement('span', {}, children),
+  View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
+    createElement('div', { 'data-testid': testID }, children),
   useWindowDimensions: () => ({ width: 400, height: 800 }),
 }));
 vi.mock('expo-image', () => ({ Image: () => createElement('img') }));
@@ -154,11 +168,15 @@ vi.mock('../../../theme/tokens', () => ({
   opacity: { disabled: 0.5 },
   spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 6: 24, 8: 32 },
   borderRadius: { lg: 12 },
+  cardCorners: { borderRadius: 12 },
 }));
+vi.mock('../../../theme/colors', () => ({ withAlpha: (color: string) => color }));
 vi.mock('../../../theme/ios-colors', () => ({ iosSystemColors: { systemBlue: '#007AFF', systemRed: '#FF3B30' } }));
 vi.mock('../../../providers/theme-provider', () => ({
   useOptionalTheme: () => null,
   useTheme: () => ({
+    variant: 'liquidGlass',
+    brandColors: { primary: '#6D28D9', warning: '#B45309' },
     systemColors: { secondaryLabel: '#888', tertiaryLabel: '#999', separator: '#222', tertiaryBackground: '#333' },
   }),
 }));
@@ -174,16 +192,28 @@ vi.mock('../../Button', () => ({
 vi.mock('../../ActivityIndicator', () => ({ ActivityIndicator: () => createElement('i') }));
 vi.mock('../../board-discovery/GymPickerSheet', () => ({ GymPickerSheet: () => null }));
 vi.mock('../../board-discovery/BoardMetaFields', () => ({
-  BoardIdentityFields: () => null,
-  BoardVisibilityFields: () => null,
+  BuilderTextInput: () => null,
+  BoardGymField: () => null,
   SectionLabel: () => null,
+  SprayWallVisibilityField: () => null,
 }));
+vi.mock('../../CollapsibleSection', () => ({
+  CollapsibleSection: ({ children }: { children?: ReactNode }) => createElement('div', {}, children),
+}));
+vi.mock('../../Icon', () => ({ Icon: () => null }));
+vi.mock('../../../lib/graphql/hooks', () => ({ useProfile: () => ({ data: undefined }) }));
+vi.mock('../../../providers/auth-provider', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 // One object for the whole file: the wizard's callbacks list the builder as a
 // dependency, and a fresh one per render would rebuild every one of them.
 const builder = vi.hoisted(() => ({
   pendingVisibility: () => null,
   buildCreateInput: () => null,
-  canCreate: false,
+  // Nothing changed on the details step: Save publishes with no write.
+  buildDetailsUpdate: () => null,
+  hydrate: () => {},
+  name: 'Garage wall',
+  setName: () => {},
+  canCreate: true,
   angle: 40,
   setAngle: () => {},
   locationName: '',
@@ -198,6 +228,8 @@ vi.mock('../../board-discovery/use-spray-wall-builder', () => ({
 vi.mock('../../play-drawer/AngleSlider', () => ({ AngleSlider: () => null }));
 vi.mock('../../play-drawer/AngleBoardDiagram', () => ({ AngleBoardDiagram: () => null }));
 vi.mock('../SprayCornerStep', () => ({ SprayCornerStep: () => null }));
+vi.mock('../SprayWallNameSheet', () => ({ SprayWallNameSheet: () => null }));
+vi.mock('../SprayScanPhoto', () => ({ SprayScanPhoto: () => null }));
 vi.mock('../SprayPhotoAdjustStep', () => ({ SprayPhotoAdjustStep: () => null }));
 vi.mock('../SprayDetectionStep', () => ({ SprayDetectionStep: () => null }));
 vi.mock('../../outline-editor/SprayHoldEditorScreen', () => ({
@@ -211,8 +243,9 @@ vi.mock('../SprayWallLookStep', () => ({
   SprayWallLookStep: (props: {
     phase: 'background' | 'look';
     stepCounter: string;
+    forwardLabel: string;
     onBackgroundConfirmed: () => void;
-    onConfirmed: () => void;
+    onConfirmed: (choice: unknown) => void;
   }) => {
     mocks.lookProps.current = props;
     return createElement('div', { 'data-testid': 'look', 'data-step': props.stepCounter });
@@ -268,6 +301,7 @@ vi.mock('../../../lib/spray/use-create-spray-wall', () => ({
   useResetSprayWall: () => ({ mutateAsync: mocks.resetWall }),
   useMySprayWallLifecycle: () => ({ data: undefined, isFetching: false }),
   useUpdateSprayWallVisibility: () => ({ mutateAsync: mocks.updateVisibility }),
+  useUpdateSprayWallDetails: () => ({ mutateAsync: mocks.updateDetails }),
 }));
 
 const { SprayWallWizardScreen } = await import('../SprayWallWizardScreen');
@@ -290,7 +324,9 @@ function pressHeaderTrailing(label: string) {
   act(() => trailing?.onPress());
 }
 
-/** Mount, pick the draft back up, commit its holds and confirm its look: publish starts by itself. */
+const LOOK_CHOICE = { selectedId: 'aura-outline', dim: null, background: 'photo', backgroundTouched: false };
+
+/** Mount, pick the draft back up, commit its holds, confirm its look and Save its details: publish starts by itself. */
 async function reachPublish() {
   const view = render(createElement(SprayWallWizardScreen, { returnTo: '/(tabs)/climbs' }));
   await flush();
@@ -300,12 +336,19 @@ async function reachPublish() {
   await flush();
   expect(screen.getByTestId('editor')).toBeTruthy();
   act(() => mocks.editorProps.current?.onCommitted({ written: 0, removed: 0, holdCount: 5 }));
-  expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 5 of 7');
+  expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 4 of 6');
   expect(mocks.publishVersion).not.toHaveBeenCalled();
   act(() => mocks.lookProps.current?.onBackgroundConfirmed());
-  expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 6 of 7');
-  act(() => mocks.lookProps.current?.onConfirmed());
+  expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 5 of 6');
+  expect(mocks.lookProps.current?.forwardLabel).toBe('sprayWizard.next');
+  act(() => mocks.lookProps.current?.onConfirmed(LOOK_CHOICE));
+  // The details step, last of the six (a form named in the bar, no counter);
+  // the publish waits for its Save.
+  expect(screen.getByTestId('spray-details-step')).toBeTruthy();
+  expect(mocks.publishVersion).not.toHaveBeenCalled();
+  pressHeaderTrailing('sprayWizard.details.save');
   await flush();
+  expect(mocks.updateDetails).not.toHaveBeenCalled();
   return view;
 }
 
@@ -447,15 +490,22 @@ describe('SprayWallWizardScreen — publishing a reset', () => {
     act(() => pickUp?.onPress?.());
     await flush();
     act(() => mocks.editorProps.current?.onCommitted({ written: 0, removed: 0, holdCount: 3 }));
-    expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 4 of 6');
+    expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 4 of 5');
     act(() => mocks.lookProps.current?.onBackgroundConfirmed());
-    expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 5 of 6');
-    act(() => mocks.lookProps.current?.onConfirmed());
+    expect(screen.getByTestId('look').getAttribute('data-step')).toBe('Step 5 of 5');
+    // The look is a reset's last step: it says Save, and publishing follows it.
+    expect(mocks.lookProps.current?.forwardLabel).toBe('sprayWizard.details.save');
+    act(() => mocks.lookProps.current?.onConfirmed(LOOK_CHOICE));
     await flush();
+    expect(screen.queryByTestId('spray-details-step')).toBeNull();
 
     expect(mocks.publishVersion).toHaveBeenCalledWith('clone-v1');
     expect(mocks.settleArchived).toHaveBeenCalledExactlyOnceWith(expect.anything(), 'old-wall', 'clone-1');
-    expect(mocks.track).toHaveBeenCalledWith('Board Created', expect.objectContaining({ isReset: true }));
+    // Picked back up from a clone that already had its photo.
+    expect(mocks.track).toHaveBeenCalledWith(
+      'Board Created',
+      expect.objectContaining({ isReset: true, resumed: true }),
+    );
     expect(mocks.activate).toHaveBeenCalledWith(expect.anything(), 'clone-1', mocks.finish, expect.anything());
   });
 

@@ -36,6 +36,7 @@ const invalidateQueriesMock = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('../../error-reporting', () => ({ reportHandledError: reportHandledErrorMock }));
 
 const {
+  REGISTERED_WALL_REVALIDATE_MS,
   clearSprayWallRegistry,
   ensureSprayWallLoaded,
   markSprayWallArchived,
@@ -44,6 +45,7 @@ const {
   unregisterSprayWall,
   resetSprayWallViewerAccess,
   setSprayWallLoader,
+  sprayWallRemovalGeneration,
   sprayWallViewerGeneration,
   subscribeToSprayWalls,
   subscribeToSprayWallWithdrawals,
@@ -1056,6 +1058,121 @@ describe('loadSprayWall', () => {
     await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
 
     expect(getSprayWall(LAYOUT_ID)).toBeNull();
+  });
+
+  describe('a wall with nothing published yet', () => {
+    /** The add-a-wall flow's own registration of the draft it is creating. */
+    function registerInitialDraft(wallUuid = WALL_UUID) {
+      registerSprayWall(LAYOUT_ID, {
+        ...existingWall(),
+        wallUuid,
+        draft: true,
+        viewerAccess: { canEdit: true, generation: sprayWallViewerGeneration() },
+      });
+    }
+    function answerNothingPublished() {
+      requestMock
+        .mockResolvedValueOnce({ sprayWallByLayout: { uuid: WALL_UUID } })
+        .mockResolvedValueOnce({ sprayWallRenderData: null });
+    }
+
+    it('keeps an initial draft registered when nothing is published yet', async () => {
+      registerInitialDraft();
+      const held = getSprayWall(LAYOUT_ID);
+      const removalBefore = sprayWallRemovalGeneration(LAYOUT_ID);
+      answerNothingPublished();
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      // Same registration, only its revalidation stamp moved.
+      expect(getSprayWall(LAYOUT_ID)).toEqual({ ...held, registeredAtMs: expect.any(Number) });
+      expect(getSprayWall(LAYOUT_ID)?.draft).toBe(true);
+      expect(sprayWallRemovalGeneration(LAYOUT_ID)).toBe(removalBefore);
+    });
+
+    it('revalidates a kept draft once per window, not on every ask', async () => {
+      const start = 1_800_000_000_000;
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(start);
+      try {
+        registerInitialDraft();
+        const later = start + REGISTERED_WALL_REVALIDATE_MS + 60_000;
+        nowSpy.mockReturnValue(later);
+        const loader = vi.fn((layoutId: number) => loadSprayWall(fakeQueryClient(), layoutId));
+        setSprayWallLoader(loader);
+        answerNothingPublished();
+
+        ensureSprayWallLoaded(LAYOUT_ID);
+        expect(loader).toHaveBeenCalledTimes(1);
+        await loader.mock.results[0]?.value;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getSprayWall(LAYOUT_ID)?.draft).toBe(true);
+        expect(getSprayWall(LAYOUT_ID)?.registeredAtMs).toBe(later);
+        ensureSprayWallLoaded(LAYOUT_ID);
+        expect(loader).toHaveBeenCalledTimes(1);
+      } finally {
+        nowSpy.mockRestore();
+      }
+    });
+
+    it('a cold null payload for an unpublished wall does not bump removal', async () => {
+      // My Boards asks for the wall before the draft registers. Bumping the
+      // removal generation here would stale the draft read already in flight.
+      const removalBefore = sprayWallRemovalGeneration(LAYOUT_ID);
+      answerNothingPublished();
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      expect(getSprayWall(LAYOUT_ID)).toBeNull();
+      expect(sprayWallRemovalGeneration(LAYOUT_ID)).toBe(removalBefore);
+    });
+
+    it('withdraws a draft after an account change', async () => {
+      registerInitialDraft();
+      resetSprayWallViewerAccess();
+      expect(getSprayWall(LAYOUT_ID)?.viewerCanEdit).toBe(false);
+      answerNothingPublished();
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      expect(getSprayWall(LAYOUT_ID)).toBeNull();
+    });
+
+    it('withdraws a draft whose payload was read for another account', async () => {
+      const staleGeneration = sprayWallViewerGeneration();
+      resetSprayWallViewerAccess();
+      registerSprayWall(LAYOUT_ID, {
+        ...existingWall(),
+        draft: true,
+        viewerAccess: { canEdit: true, generation: staleGeneration },
+      });
+      answerNothingPublished();
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      expect(getSprayWall(LAYOUT_ID)).toBeNull();
+    });
+
+    it('withdraws a draft registered for a different wall under the layout', async () => {
+      registerInitialDraft('replaced-wall-uuid');
+      answerNothingPublished();
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      expect(getSprayWall(LAYOUT_ID)).toBeNull();
+    });
+
+    it('never marks a published registration as a draft', async () => {
+      registerInitialDraft();
+      requestMock
+        .mockResolvedValueOnce({ sprayWallByLayout: { uuid: WALL_UUID } })
+        .mockResolvedValueOnce(renderDataPayload());
+
+      await loadSprayWall(fakeQueryClient(), LAYOUT_ID);
+
+      expect(getSprayWall(LAYOUT_ID)?.versionId).toBe(2);
+      expect(getSprayWall(LAYOUT_ID)?.draft).toBeUndefined();
+    });
   });
 
   it('withdraws a held wall whose photo will not say its size', async () => {

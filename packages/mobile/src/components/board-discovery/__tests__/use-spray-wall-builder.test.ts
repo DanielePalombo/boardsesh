@@ -164,3 +164,122 @@ describe('useSprayWallBuilder', () => {
     expect(result.current.coords).toBeNull();
   });
 });
+
+describe('useSprayWallBuilder — the details step', () => {
+  const SERVER_WALL = {
+    name: 'Garage wall',
+    angle: 35,
+    isPublic: false,
+    isUnlisted: false,
+    hideLocation: true,
+    locationName: '',
+    coords: null,
+    gym: null,
+  };
+
+  it('names the wall with the default until somebody types, even when the default arrives late', () => {
+    const { result, rerender } = renderHook(({ defaultName }) => useSprayWallBuilder(null, { defaultName }), {
+      initialProps: { defaultName: 'My spray wall' },
+    });
+    expect(result.current.name).toBe('My spray wall');
+    expect(result.current.canCreate).toBe(true);
+    expect(result.current.buildCreateInput()).toMatchObject({ name: 'My spray wall', angle: 40, isPublic: false });
+
+    // The profile query lands: the default follows it.
+    rerender({ defaultName: "Marco's Spray wall" });
+    expect(result.current.name).toBe("Marco's Spray wall");
+
+    // Typed, it is the climber's, whatever the default does next.
+    act(() => result.current.setName('Cave'));
+    rerender({ defaultName: 'Something else' });
+    expect(result.current.name).toBe('Cave');
+  });
+
+  it('has nothing to send right after hydrating from the server', () => {
+    const { result } = renderHook(() => useSprayWallBuilder(null, { defaultName: 'My spray wall' }));
+    act(() => result.current.hydrate(SERVER_WALL));
+    expect(result.current.name).toBe('Garage wall');
+    expect(result.current.angle).toBe(35);
+    expect(result.current.buildDetailsUpdate()).toBeNull();
+  });
+
+  it('sends only what changed', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() => result.current.hydrate(SERVER_WALL));
+    act(() => result.current.setName('  The Cave  '));
+    expect(result.current.buildDetailsUpdate()).toEqual({ name: 'The Cave' });
+
+    act(() => result.current.setAngle(45));
+    expect(result.current.buildDetailsUpdate()).toEqual({ name: 'The Cave', angle: 45 });
+  });
+
+  it('sends the visibility as a pair, since it is one three-way choice', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() => result.current.hydrate(SERVER_WALL));
+    act(() => result.current.setIsUnlisted(true));
+    expect(result.current.buildDetailsUpdate()).toEqual({ isPublic: false, isUnlisted: true });
+  });
+
+  it('sends the gym with the location it fills in, so the server can check the gym is nearby', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() => result.current.hydrate(SERVER_WALL));
+    act(() => result.current.setSelectedGym({ uuid: 'gym-1', name: 'The Castle', latitude: 51.5, longitude: -0.1 }));
+    expect(result.current.buildDetailsUpdate()).toEqual({
+      gymUuid: 'gym-1',
+      locationName: 'The Castle',
+      latitude: 51.5,
+      longitude: -0.1,
+    });
+  });
+
+  it('detaches a gym and clears a point with nulls', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() =>
+      result.current.hydrate({
+        ...SERVER_WALL,
+        gym: { uuid: 'gym-1', name: 'The Castle' },
+        coords: { latitude: 51.5, longitude: -0.1 },
+        locationName: 'The Castle',
+      }),
+    );
+    act(() => result.current.setSelectedGym(null));
+    act(() => result.current.setCoords(null));
+    expect(result.current.buildDetailsUpdate()).toEqual({ gymUuid: null, latitude: null, longitude: null });
+  });
+
+  it('keeps its own value, as the baseline, for a field the seed leaves out', () => {
+    const { result } = renderHook(() => useSprayWallBuilder(null, { defaultName: 'My spray wall' }));
+    // The create response carries no location fields; what was sent is what the server holds.
+    act(() => result.current.hydrate({ name: 'My spray wall', angle: 40, isPublic: false, isUnlisted: false }));
+    expect(result.current.hideLocation).toBe(true);
+    expect(result.current.buildDetailsUpdate()).toBeNull();
+  });
+
+  // After a save the screen hydrates from the server's ANSWER, which a policy
+  // can clamp: the builder then shows and diffs from what the server holds.
+  it('follows a clamped answer rather than what was sent', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() => result.current.hydrate(SERVER_WALL));
+    act(() => result.current.setIsPublic(true));
+    expect(result.current.buildDetailsUpdate()).toEqual({ isPublic: true, isUnlisted: false });
+    act(() => result.current.hydrate({ ...SERVER_WALL, isPublic: false, isUnlisted: false }));
+    expect(result.current.isPublic).toBe(false);
+    expect(result.current.buildDetailsUpdate()).toBeNull();
+    expect(result.current.pendingVisibility()).toBeNull();
+  });
+
+  it('keeps hydrate stable, so callbacks built on it are too', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    const { hydrate } = result.current;
+    act(() => result.current.setName('The Cave'));
+    expect(result.current.hydrate).toBe(hydrate);
+  });
+
+  it('shows a legal angle for one the server would refuse, and Save writes it', () => {
+    const { result } = renderHook(() => useSprayWallBuilder());
+    act(() => result.current.hydrate({ ...SERVER_WALL, angle: 37 }));
+    expect(result.current.angle).toBe(DEFAULT_SPRAY_ANGLE);
+    // 37 is what the wall holds, so the angle on screen is a change.
+    expect(result.current.buildDetailsUpdate()).toEqual({ angle: DEFAULT_SPRAY_ANGLE });
+  });
+});

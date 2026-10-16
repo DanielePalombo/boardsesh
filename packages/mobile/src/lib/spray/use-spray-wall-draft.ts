@@ -13,8 +13,10 @@ import { lookPreviewSourceFromRenderData, type SprayLookPreviewSource } from './
 import {
   getSprayWall,
   registerSprayWall,
+  unregisterSprayWall,
   type RegisteredSprayWall,
   sprayWallRemovalGeneration,
+  sprayWallSessionGeneration,
   sprayWallViewerGeneration,
   subscribeToSprayWalls,
 } from './spray-wall-registry';
@@ -33,6 +35,17 @@ type SprayWallRenderDataResponse = { sprayWallRenderData: SprayWallRenderData | 
  */
 const draftViewerGenerations = new WeakMap<SprayWallRenderData, number>();
 const draftRemovalGenerations = new WeakMap<SprayWallRenderData, number>();
+/**
+ * The registry-wide session each payload was read under (`sprayWallSessionGeneration`).
+ * A payload whose wall was withdrawn on its own is read again; one from before
+ * a sign-out is not (see the re-read effect in `useSprayWallDraft`).
+ */
+const draftSessionGenerations = new WeakMap<SprayWallRenderData, number>();
+/**
+ * Payloads already read again by the re-read effect in `useSprayWallDraft`, so
+ * each stale payload costs at most one request, however many hooks hold it.
+ */
+const healedDraftPayloads = new WeakSet<SprayWallRenderData>();
 
 export const sprayWallDraftQueryKey = (
   wallUuid: string | null,
@@ -61,6 +74,7 @@ const DRAFT_STALE_TIME_MS = 5 * 60 * 1000;
 async function fetchSprayWallDraft(layoutId: number, wallUuid: string | null, versionNumber: number | null) {
   const viewerGeneration = sprayWallViewerGeneration();
   const removalGeneration = sprayWallRemovalGeneration(layoutId);
+  const sessionGeneration = sprayWallSessionGeneration();
   const response = await getHttpClient().request<SprayWallRenderDataResponse>(GET_SPRAY_WALL_DRAFT_RENDER_DATA, {
     uuid: wallUuid,
     version: versionNumber,
@@ -68,6 +82,7 @@ async function fetchSprayWallDraft(layoutId: number, wallUuid: string | null, ve
   if (response.sprayWallRenderData) {
     draftViewerGenerations.set(response.sprayWallRenderData, viewerGeneration);
     draftRemovalGenerations.set(response.sprayWallRenderData, removalGeneration);
+    draftSessionGenerations.set(response.sprayWallRenderData, sessionGeneration);
   }
   return response;
 }
@@ -188,12 +203,57 @@ export function useSprayWallDraft(
     if (draftViewerGenerations.get(renderData) !== sprayWallViewerGeneration()) return;
     registerSprayWall(layoutId, {
       ...wall,
+      draft: true,
       viewerAccess: {
         canEdit: wall.viewerCanEdit,
         generation: draftViewerGenerations.get(renderData) ?? -1,
       },
     });
   }, [layoutId, renderData, wall]);
+
+  // A payload left behind by a withdrawal of THIS wall alone (a removal, or an
+  // account change) is nulled by the memo above, and nothing else would read it
+  // again inside the stale window: the step would say "unavailable" for good.
+  // So it is read once more, as a fresh server-authorised read under whoever is
+  // signed in now. Once per `viewer:removal` pair, so a read that keeps landing
+  // stale cannot loop. Never after a sign-out: a payload from an erased session
+  // is not read again on its behalf.
+  const { refetch: refetchDraft, fetchStatus } = query;
+  useEffect(() => {
+    void accessGeneration;
+    if (!renderData || fetchStatus !== 'idle') return;
+    const stale =
+      draftRemovalGenerations.get(renderData) !== sprayWallRemovalGeneration(layoutId) ||
+      draftViewerGenerations.get(renderData) !== sprayWallViewerGeneration();
+    if (!stale) return;
+    if (draftSessionGenerations.get(renderData) !== sprayWallSessionGeneration()) return;
+    if (healedDraftPayloads.has(renderData)) return;
+    healedDraftPayloads.add(renderData);
+    void refetchDraft();
+  }, [layoutId, renderData, fetchStatus, accessGeneration, refetchDraft]);
+
+  // The server stopped vouching for the draft this hook registered: the read
+  // came back null (the viewer lost edit access, the wall is gone), or the row
+  // under this number is no longer this draft. This hook is the registration's
+  // only owner, and the published loader keeps a draft on a null published
+  // payload, so the draft is withdrawn here or nowhere. A row that has since
+  // been PUBLISHED is not a refusal: the loader replaces the draft with it.
+  const draftAnswered = query.isSuccess && fetchStatus === 'idle';
+  useEffect(() => {
+    void accessGeneration;
+    if (!draftAnswered || wallUuid == null || versionId == null) return;
+    const held = getSprayWall(layoutId);
+    if (!held?.draft || held.wallUuid !== wallUuid || held.versionId !== Number(versionId)) return;
+    if (renderData) {
+      // Only an answer read under the current viewer and removal speaks for it.
+      if (draftRemovalGenerations.get(renderData) !== sprayWallRemovalGeneration(layoutId)) return;
+      if (draftViewerGenerations.get(renderData) !== sprayWallViewerGeneration()) return;
+      if (renderData.wall.currentVersion?.id === versionId) return;
+      const version = renderData.wall.versions?.find((candidate) => candidate.number === versionNumber);
+      if (version && version.id === versionId && version.status === 'DRAFT') return;
+    }
+    unregisterSprayWall(layoutId);
+  }, [draftAnswered, layoutId, renderData, wallUuid, versionNumber, versionId, accessGeneration]);
 
   // Captured in a ref so the teardown does not re-run — and therefore does not
   // yank the published wall back mid-session — when the uuid prop settles.
@@ -307,6 +367,7 @@ export function useKeepSprayDraftRegistered(
     if (!wall) return;
     registerSprayWall(layoutId, {
       ...wall,
+      draft: true,
       viewerAccess: {
         canEdit: wall.viewerCanEdit,
         generation: draftViewerGenerations.get(payload) ?? -1,

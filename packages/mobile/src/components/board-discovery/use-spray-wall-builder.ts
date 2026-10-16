@@ -1,4 +1,4 @@
-// The meta half of `use-board-builder.ts`, for a wall (epic #5346, SW-09).
+// The details half of `use-board-builder.ts`, for a wall (epic #5346, SW-09).
 //
 // A catalogue board is a CHOICE — board → layout → size → sets, each level
 // resetting the ones below it — and `useBoardBuilder` is mostly that cascade. A
@@ -18,6 +18,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { SPRAY_ANGLES } from '@boardsesh/board-config';
 import type { CreateSprayWallInput } from '@boardsesh/graphql/generated/graphql';
+import type { SprayWallDetailsUpdate } from '../../lib/spray/use-create-spray-wall';
 import type { BoardGymSelection } from './BoardMetaFields';
 
 /**
@@ -41,7 +42,7 @@ export const DEFAULT_SPRAY_ANGLE = 40;
 export const SPRAY_ANGLE_OPTIONS: readonly number[] = SPRAY_ANGLES;
 
 /** Longest a wall's name may be, matching the board name column. */
-const MAX_NAME_LENGTH = 100;
+export const SPRAY_WALL_NAME_MAX_LENGTH = 100;
 
 /** True when `value` is one of the angles the server will actually accept. */
 export function isValidSprayAngle(value: number): boolean {
@@ -57,15 +58,69 @@ export type SprayWallBuilderSeed = {
   locationName?: string;
 };
 
+/** Everything the details step edits, as the wall on the server holds it. */
+export type SprayWallDetails = {
+  name: string;
+  angle: number;
+  isPublic: boolean;
+  isUnlisted: boolean;
+  hideLocation: boolean;
+  locationName: string;
+  coords: { latitude: number; longitude: number } | null;
+  gym: { uuid: string; name: string } | null;
+};
+
+/**
+ * What the server said about a wall, for `hydrate`. A field left out is one the
+ * read did not carry: the builder keeps its own value and takes THAT as what
+ * the server holds — right for the create response, which answers with fewer
+ * fields than were sent.
+ */
+export type SprayWallDetailsSeed = Partial<SprayWallDetails>;
+
+/** The location name as the server stores it: trimmed, and empty is no name. */
+function normalisedLocationName(value: string): string | null {
+  return value.trim() || null;
+}
+
+function sameCoords(
+  left: { latitude: number; longitude: number } | null,
+  right: { latitude: number; longitude: number } | null,
+): boolean {
+  if (left == null || right == null) return left === right;
+  return left.latitude === right.latitude && left.longitude === right.longitude;
+}
+
 /**
  * The name / visibility / location / gym / angle state behind the add-a-wall
- * flow's first step.
+ * flow's details step.
+ *
+ * The wall is CREATED before the climber sees that step (the photo upload needs
+ * a wall they own), with whatever this holds then: the default name, 40° and
+ * private. So the step is an edit of a wall that exists. `hydrate` records what
+ * the server holds, and `buildDetailsUpdate` sends only what changed since.
+ * After a save the screen hydrates again from the server's ANSWER, never from
+ * what it sent: the server may clamp a choice (a visibility policy).
  *
  * Pure of any rendering, like `useBoardBuilder`, so the stepper can be unit
  * tested without a renderer.
  */
-export function useSprayWallBuilder(seed?: SprayWallBuilderSeed | null) {
-  const [name, setName] = useState(seed?.name ?? '');
+export function useSprayWallBuilder(
+  seed?: SprayWallBuilderSeed | null,
+  options?: {
+    /**
+     * The name a wall gets when nobody types one ("Marco's Spray wall"). Shown
+     * as the name until the climber edits it or a wall is hydrated, so a value
+     * that arrives late (the profile query) still lands.
+     */
+    defaultName?: string;
+  },
+) {
+  // Null until somebody (the climber, or `hydrate`) sets a name: until then the
+  // name IS the default, whenever that arrives.
+  const [typedName, setTypedName] = useState<string | null>(seed?.name ?? null);
+  const name = typedName ?? options?.defaultName ?? '';
+  const setName = useCallback((next: string) => setTypedName(next), []);
   // A number the picker snaps, not free text: `SPRAY_ANGLE_OPTIONS` is the whole
   // set of legal answers, so there is no invalid state to validate out of.
   const [angle, setAngle] = useState<number>(
@@ -107,6 +162,104 @@ export function useSprayWallBuilder(seed?: SprayWallBuilderSeed | null) {
   const canCreate = name.trim().length > 0 && isValidSprayAngle(angle);
 
   /**
+   * What the server holds, as of the last `hydrate`. Starts as
+   * the constructor's own values, which is what a wall created from an untouched
+   * builder holds.
+   */
+  const baselineRef = useRef<SprayWallDetails>({
+    name: name.trim().slice(0, SPRAY_WALL_NAME_MAX_LENGTH),
+    angle,
+    isPublic,
+    isUnlisted,
+    hideLocation,
+    locationName,
+    coords,
+    gym: selectedGym,
+  });
+
+  /** The fields as they stand, in the server's terms (trimmed name). */
+  const snapshot = useCallback(
+    (): SprayWallDetails => ({
+      name: name.trim().slice(0, SPRAY_WALL_NAME_MAX_LENGTH),
+      angle,
+      isPublic,
+      isUnlisted,
+      hideLocation,
+      locationName,
+      coords,
+      gym: selectedGym,
+    }),
+    [name, angle, isPublic, isUnlisted, hideLocation, locationName, coords, selectedGym],
+  );
+  // Read by `hydrate`, which is stable on purpose: the screen
+  // calls them from resume callbacks that effects depend on, and a callback
+  // that changed on every keystroke would restart those effects.
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+
+  /**
+   * Take on the wall as the server holds it, and remember that as the baseline
+   * `buildDetailsUpdate` diffs against. Fields the seed leaves out keep this
+   * builder's value, which becomes their baseline too.
+   */
+  const hydrate = useCallback((wallSeed: SprayWallDetailsSeed) => {
+    const current = snapshotRef.current();
+    // An angle the slider cannot show is not shown (the builder keeps its own),
+    // but it IS what the server holds, so it stays the baseline and Save writes
+    // the angle on screen.
+    const seededAngle = wallSeed.angle;
+    const next: SprayWallDetails = {
+      name: wallSeed.name ?? current.name,
+      angle: seededAngle != null && isValidSprayAngle(seededAngle) ? seededAngle : current.angle,
+      isPublic: wallSeed.isPublic ?? current.isPublic,
+      isUnlisted: wallSeed.isUnlisted ?? current.isUnlisted,
+      hideLocation: wallSeed.hideLocation ?? current.hideLocation,
+      locationName: wallSeed.locationName ?? current.locationName,
+      coords: wallSeed.coords !== undefined ? wallSeed.coords : current.coords,
+      gym: wallSeed.gym !== undefined ? wallSeed.gym : current.gym,
+    };
+    setTypedName(next.name);
+    setAngle(next.angle);
+    setIsPublic(next.isPublic);
+    setIsUnlisted(next.isUnlisted);
+    setHideLocation(next.hideLocation);
+    setLocationName(next.locationName);
+    setCoords(next.coords);
+    setSelectedGymState(next.gym);
+    // A location name that is the gym's own was filled from the gym, so a
+    // later gym change may replace it, as it would have in this sitting.
+    autoFilledLocationRef.current = next.gym && next.locationName === next.gym.name ? next.gym.name : null;
+    baselineRef.current = seededAngle != null ? { ...next, angle: seededAngle } : next;
+  }, []);
+
+  /**
+   * The `updateSprayWall` fields that differ from what the server holds, or
+   * null when nothing does — the details step then publishes without a write.
+   * The visibility pair goes together: the two flags are one three-way choice.
+   */
+  const buildDetailsUpdate = useCallback((): SprayWallDetailsUpdate | null => {
+    const current = snapshot();
+    const base = baselineRef.current;
+    const update: SprayWallDetailsUpdate = {};
+    if (current.name !== base.name) update.name = current.name;
+    if (current.angle !== base.angle) update.angle = current.angle;
+    const gymUuid = current.gym?.uuid ?? null;
+    if (gymUuid !== (base.gym?.uuid ?? null)) update.gymUuid = gymUuid;
+    const location = normalisedLocationName(current.locationName);
+    if (location !== normalisedLocationName(base.locationName)) update.locationName = location;
+    if (!sameCoords(current.coords, base.coords)) {
+      update.latitude = current.coords?.latitude ?? null;
+      update.longitude = current.coords?.longitude ?? null;
+    }
+    if (current.hideLocation !== base.hideLocation) update.hideLocation = current.hideLocation;
+    if (current.isPublic !== base.isPublic || current.isUnlisted !== base.isUnlisted) {
+      update.isPublic = current.isPublic;
+      update.isUnlisted = current.isUnlisted;
+    }
+    return Object.keys(update).length > 0 ? update : null;
+  }, [snapshot]);
+
+  /**
    * The validated `createSprayWallInput`, or null while the step is incomplete.
    *
    * `hasLeds` and `isAngleAdjustable` are absent on purpose: they are not in the
@@ -115,7 +268,7 @@ export function useSprayWallBuilder(seed?: SprayWallBuilderSeed | null) {
    * moves.
    */
   const buildCreateInput = useCallback((): CreateSprayWallInput | null => {
-    const trimmedName = name.trim().slice(0, MAX_NAME_LENGTH);
+    const trimmedName = name.trim().slice(0, SPRAY_WALL_NAME_MAX_LENGTH);
     if (trimmedName.length === 0 || !isValidSprayAngle(angle)) return null;
     return {
       name: trimmedName,
@@ -179,9 +332,12 @@ export function useSprayWallBuilder(seed?: SprayWallBuilderSeed | null) {
       canCreate,
       buildCreateInput,
       pendingVisibility,
+      hydrate,
+      buildDetailsUpdate,
     }),
     [
       name,
+      setName,
       angle,
       isPublic,
       isUnlisted,
@@ -193,6 +349,8 @@ export function useSprayWallBuilder(seed?: SprayWallBuilderSeed | null) {
       canCreate,
       buildCreateInput,
       pendingVisibility,
+      hydrate,
+      buildDetailsUpdate,
     ],
   );
 }

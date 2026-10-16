@@ -225,6 +225,18 @@ export type RegisteredSprayWall = {
    * caller that can accidentally pin a wall as fresh forever.
    */
   registeredAtMs: number;
+  /**
+   * An initial, never-published wall registered from its DRAFT version by the
+   * add-a-wall flow (`use-spray-wall-draft.ts`), so its look step can draw it.
+   *
+   * The published loader has nothing to replace it with: `sprayWallRenderData`
+   * with no version answers null for a wall with no published version. So a
+   * render miss on a draft its editor still holds is not a withdrawal
+   * (`settleSprayWallRenderMiss`). Only ever set by the caller that registers
+   * a draft; the loader's published registrations never carry it, and a
+   * re-registration does not inherit it from the entry it replaces.
+   */
+  draft?: boolean;
 };
 
 /**
@@ -241,9 +253,23 @@ export type RegisteredSprayWall = {
 export const REGISTERED_WALL_REVALIDATE_MS = 10 * 60 * 1000;
 
 const walls = new Map<number, RegisteredSprayWall>();
+// An unpublished version is mutable: detection/editing saves holds without
+// changing its row id. Render caches must distinguish those geometry updates.
+const draftRenderRevisions = new Map<number, number>();
+let draftRenderSequence = 0;
 let removalSequence = 0;
 let registryRemovalGeneration = 0;
 const wallRemovalGenerations = new Map<number, number>();
+
+/**
+ * The registry-wide removal generation: moves only on `withdrawAllSprayWalls`
+ * (sign-out), never on a single wall's withdrawal. A read stamped with an older
+ * one began under a session that has since been erased, and must not be read
+ * again on that session's behalf.
+ */
+export function sprayWallSessionGeneration(): number {
+  return registryRemovalGeneration;
+}
 
 /** Stamp a load before I/O; removal makes its eventual registration stale. */
 export function sprayWallRemovalGeneration(layoutId: number): number {
@@ -430,10 +456,41 @@ export function registerSprayWall(
     layoutId,
     registeredAtMs: fetchedForAnotherViewer ? 0 : now(),
   };
+  if (wall.draft) {
+    if (!previous?.draft || !sameDraftGeometry(previous, registered)) {
+      draftRenderRevisions.set(layoutId, ++draftRenderSequence);
+    }
+  } else {
+    draftRenderRevisions.delete(layoutId);
+  }
   walls.set(layoutId, registered);
   loadStates.set(layoutId, { state: 'ready', settledAtMs: now() });
   registerRuntimeGeometry(sprayGeometryKey(layoutId), buildWallGeometry(drawnSprayHolds(registered)));
   notify();
+}
+
+function sameDraftGeometry(previous: RegisteredSprayWall, next: RegisteredSprayWall): boolean {
+  if (
+    previous.wallUuid !== next.wallUuid ||
+    previous.versionId !== next.versionId ||
+    previous.photoWidth !== next.photoWidth ||
+    previous.photoHeight !== next.photoHeight ||
+    previous.holds.length !== next.holds.length
+  )
+    return false;
+  if (previous.holds === next.holds) return true;
+  return previous.holds.every((hold, index) => {
+    const candidate = next.holds[index];
+    if (hold.id !== candidate.id || hold.cx !== candidate.cx || hold.cy !== candidate.cy || hold.r !== candidate.r) {
+      return false;
+    }
+    const outline = hold.outline ?? [];
+    const candidateOutline = candidate.outline ?? [];
+    return (
+      outline.length === candidateOutline.length &&
+      outline.every((point, pointIndex) => point === candidateOutline[pointIndex])
+    );
+  });
 }
 
 /**
@@ -640,6 +697,7 @@ export function resetSprayWallViewerAccess({ markStale = true }: { markStale?: b
 
 /** Drop a wall and its runtime geometry, so the render path reports no board rather than a stale one. */
 export function unregisterSprayWall(layoutId: number): void {
+  draftRenderRevisions.delete(layoutId);
   wallRemovalGenerations.set(layoutId, ++removalSequence);
   revokeSprayPrivacy(layoutId);
   notifyWithdrawal(layoutId);
@@ -740,6 +798,36 @@ function markUnavailable(layoutId: number): void {
 /** A cold by-layout miss is discovery failure; an existing wall losing access is withdrawal. */
 export function settleSprayWallDiscoveryMiss(layoutId: number): void {
   if (walls.has(layoutId)) unregisterSprayWall(layoutId);
+  else markUnavailable(layoutId);
+}
+
+/**
+ * The wall resolved by layout, but its PUBLISHED render payload came back null.
+ *
+ * For a published wall that is a withdrawal: deleted between the two reads,
+ * visibility revoked, the published photo gone. But a wall still being created
+ * has no published version at all, so the same null is simply "not published
+ * yet", and withdrawing the draft its add-a-wall flow registered would erase
+ * the look step's preview and every cached payload with it.
+ *
+ * So a draft is kept only while it is the SAME wall and its registration still
+ * says this viewer may edit it. `viewerCanEdit` is forced false by an account
+ * change (`resetSprayWallViewerAccess`) and by a payload fetched for another
+ * viewer (`registerSprayWall`), so a draft held across an account change is
+ * withdrawn here like any other wall. A cold miss with nothing registered is
+ * only marked unavailable: there is nothing to withdraw, and bumping the
+ * removal generation would stale a draft read that is still in flight.
+ */
+export function settleSprayWallRenderMiss(layoutId: number, wallUuid: string): void {
+  const held = walls.get(layoutId);
+  if (held?.draft && held.wallUuid === wallUuid && held.viewerCanEdit) {
+    // Revalidated: fresh for another window, so `ensureSprayWallLoaded` stops
+    // re-running a load that can only answer null again. No notify, nothing a
+    // surface draws has changed.
+    walls.set(layoutId, { ...held, registeredAtMs: now() });
+    return;
+  }
+  if (held) unregisterSprayWall(layoutId);
   else markUnavailable(layoutId);
 }
 
@@ -913,7 +1001,9 @@ export function sprayCacheToken(boardName: string, layoutId: number): string {
   // byte-identical to what it was before art existed, so no overlay on disk moves.
   const art = activeSprayArt(walls.get(layoutId));
   const background = art ? `-bg${art.variant}` : '';
-  return `${sprayIdentityToken(boardName, layoutId)}${background}`;
+  const revision = draftRenderRevisions.get(layoutId);
+  const draftGeometry = revision === undefined ? '' : `-dg${revision}`;
+  return `${sprayIdentityToken(boardName, layoutId)}${draftGeometry}${background}`;
 }
 
 /**
@@ -945,6 +1035,7 @@ export function withdrawAllSprayWalls(): void {
   privacyCleanup?.();
   for (const layoutId of walls.keys()) unregisterRuntimeGeometry(sprayGeometryKey(layoutId));
   walls.clear();
+  draftRenderRevisions.clear();
   loadStates.clear();
   deferredRequests.clear();
   inFlightLoads.clear();
