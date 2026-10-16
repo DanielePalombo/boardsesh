@@ -116,7 +116,7 @@ function CapsuleRowComponent({ capsules }: CapsuleRowProps) {
       <Row
         modifiers={[fillMaxWidth(), horizontalScroll(), padding(spacing[4], spacing[2], spacing[4], spacing[2])]}
         verticalAlignment="center"
-        horizontalArrangement={{ spacedBy: spacing[2] }}
+        horizontalArrangement={{ spacedBy: spacing[3] }}
       >
         {capsules.map((capsule) => (
           <CapsuleChip key={capsule.key} capsule={capsule} colors={colors} errorColor={brandColors.error} />
