@@ -605,6 +605,7 @@ describe('run decisions', () => {
       workflowRun({ databaseId: 1, status: 'in_progress', displayTitle: 'Mobile Store Draft (release/next)' }),
       workflowRun({ databaseId: 2, status: 'in_progress', displayTitle: 'Mobile Store Draft (main)' }),
       workflowRun({ databaseId: 3, status: 'queued', displayTitle: 'Mobile Store Draft (release/next)' }),
+      workflowRun({ databaseId: 4, status: 'in_progress', displayTitle: 'Mobile Store Draft (release/next) retry' }),
     ];
     expect(activeTrainDraftRuns(runs).map((run) => run.databaseId)).toEqual([1]);
   });

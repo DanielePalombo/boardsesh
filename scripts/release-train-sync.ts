@@ -614,7 +614,9 @@ export function parseRunJobs(json: string): RunJob[] {
 
 /** PURE: store-draft runs that pinned release/next and would abort if it moved. */
 export function activeTrainDraftRuns(runs: readonly WorkflowRun[]): WorkflowRun[] {
-  return runs.filter((run) => run.status === 'in_progress' && run.displayTitle.includes(`(${RELEASE_BRANCH})`));
+  // mobile-store-draft.yml's run-name is `Mobile Store Draft (<branch>)`, so the branch
+  // is always the title's last token; endsWith keeps other titles from matching.
+  return runs.filter((run) => run.status === 'in_progress' && run.displayTitle.endsWith(`(${RELEASE_BRANCH})`));
 }
 
 export type BuildRetryDecision = { action: 'skip' | 'dispatch'; reason: string };
@@ -1433,6 +1435,10 @@ export async function runReleaseTrainSync(runtime: SyncRuntime): Promise<SyncOut
       return { exitCode: 0, plan, pushedSha: null };
     }
 
+    // The loop is bounded twice over: MAX_PUSH_ATTEMPTS caps lease-rejected pushes, and
+    // a 'waited' recompute only happens while the fixed draftDeadline has not passed
+    // (each one sleeps at least one poll). After the deadline the draft check returns
+    // 'timeout' or 'clear' at once, so every later iteration reaches a push.
     if (!draftWaitExpired) {
       const draftState = await storeDraftsBlockingPush(runtime, draftDeadline);
       if (draftState === 'waited') continue; // the world moved while we waited: recompute
