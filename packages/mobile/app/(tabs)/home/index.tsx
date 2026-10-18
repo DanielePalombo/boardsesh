@@ -126,13 +126,20 @@ export default function HomeTab() {
   // During render, not in an effect: React re-renders with the board before it
   // commits, so nothing that waits on `scopeReady` (Fresh beta, the feeds) ever
   // asks once for every board and again for this one.
-  const [hasDefaultedScope, setHasDefaultedScope] = useState(false);
-  if (!hasDefaultedScope && !isResolvingHomeBoard) {
-    setHasDefaultedScope(true);
+  // Until the climber picks a scope from the menu, the scope follows the home
+  // board: a Change board from Your board's card moves Fresh beta, the gym feed
+  // and Climbing now with it. A board or Everyone picked from the menu stays.
+  // `undefined` until inference first settles.
+  const [scopedHomeBoardUuid, setScopedHomeBoardUuid] = useState<string | null | undefined>(undefined);
+  const [hasChosenScope, setHasChosenScope] = useState(false);
+  const homeBoardUuid = homeBoard?.uuid ?? null;
+  if (!isResolvingHomeBoard && scopedHomeBoardUuid !== homeBoardUuid) {
+    setScopedHomeBoardUuid(homeBoardUuid);
     // Screenshot mode stays on the global "Everyone" feed, so don't scope the
     // gym view to the home board (that would turn it into one board's feed).
-    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' && homeBoard) setSelectedBoard(homeBoard);
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' && !hasChosenScope) setSelectedBoard(homeBoard);
   }
+  const hasDefaultedScope = scopedHomeBoardUuid !== undefined;
 
   const feedInput = useMemo(() => deriveFeedScopeInput(mode, selectedBoard?.uuid ?? null), [mode, selectedBoard]);
   // "Climbing now" adds the selected board's sessions only when the climber is
@@ -330,12 +337,14 @@ export default function HomeTab() {
 
   const handleSelectBoard = useCallback((board: UserBoard) => {
     hapticLight();
+    setHasChosenScope(true);
     setSelectedBoard(board);
     setMode('gym');
   }, []);
 
   const handleSelectEveryone = useCallback(() => {
     hapticLight();
+    setHasChosenScope(true);
     setSelectedBoard(null);
     setMode('gym');
   }, []);
@@ -345,6 +354,7 @@ export default function HomeTab() {
   }, [router]);
 
   const handleBrowseEveryone = useCallback(() => {
+    setHasChosenScope(true);
     setSelectedBoard(null);
     setMode('gym');
   }, []);

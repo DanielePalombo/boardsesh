@@ -748,6 +748,7 @@
       "homeSections": {
         "groupTitle": "En Inicio",
         "customize": "Personalizar Inicio",
+        "reorder": "Reordenar secciones",
         "description": "Elige qué muestra Inicio y en qué orden. Enfocado muestra tu plafón, tu sesión y tus listas.",
         "settingsFooter": "Elige qué muestra Inicio y en qué orden. Personalizar Inicio, en el propio Inicio, cambia la misma lista.",
         "footer": "Los cambios se aplican al momento y solo en este teléfono. No cambian quién puede ver tu escalada.",

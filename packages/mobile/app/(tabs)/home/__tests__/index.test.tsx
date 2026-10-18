@@ -13,6 +13,7 @@ const recorded = vi.hoisted(() => ({
   betaProps: [] as Array<{ boardType: string | null; layoutId: number | null; enabled: boolean }>,
   chrome: [] as Array<{ showScopeMenu: boolean; scopeTitle: string; scopeActions: unknown[] }>,
   customizeSheet: [] as boolean[],
+  selectScopeIndex: null as ((index: number) => void) | null,
 }));
 const focus = vi.hoisted(() => ({ hasBeenFocused: true }));
 const homeBoardState = vi.hoisted(() => ({
@@ -106,7 +107,13 @@ vi.mock('../../../../src/components/you/CommentSheet', () => ({ CommentSheet: ()
 vi.mock('../../../../src/components/feed/FeedScopeTitle', () => ({ FeedScopeTitle: () => null }));
 vi.mock('../../../../src/components/feed/HomeTopChrome', () => ({
   TOP_ISLAND_BAND: 56,
-  HomeTopChrome: (props: { showScopeMenu: boolean; scopeTitle: string; scopeActions: unknown[] }) => {
+  HomeTopChrome: (props: {
+    showScopeMenu: boolean;
+    scopeTitle: string;
+    scopeActions: unknown[];
+    onSelectScopeIndex: (index: number) => void;
+  }) => {
+    recorded.selectScopeIndex = props.onSelectScopeIndex;
     recorded.chrome.push({
       showScopeMenu: props.showScopeMenu,
       scopeTitle: props.scopeTitle,
@@ -226,6 +233,7 @@ beforeEach(() => {
   recorded.betaProps = [];
   recorded.chrome = [];
   recorded.customizeSheet = [];
+  recorded.selectScopeIndex = null;
   refresh.onRefresh = null;
   refresh.refreshing = false;
   refresh.invalidateQueries.mockClear();
@@ -386,6 +394,30 @@ describe('Home sections', () => {
     expect(asked.length).toBeGreaterThan(0);
     // Never once for every board first: the board is set before the shelf may ask.
     expect(asked.every((props) => props.boardType === 'kilter' && props.layoutId === 8)).toBe(true);
+  });
+
+  it('moves Fresh beta to a new home board, until the climber picks a scope from the menu', () => {
+    const kilter = { uuid: 'board-1', boardType: 'kilter', layoutId: 8, name: 'Home wall', gymName: null };
+    const tension = { uuid: 'board-2', boardType: 'tension', layoutId: 10, name: 'Gym wall', gymName: null };
+    const moon = { uuid: 'board-3', boardType: 'moonboard', layoutId: 4, name: 'Garage', gymName: null };
+    homeBoardState.board = kilter;
+    homeSectionsStore.setVisible('beta', true);
+    const { rerender } = render(createElement(HomeTab));
+    expect(recorded.betaProps.at(-1)).toEqual({ boardType: 'kilter', layoutId: 8, enabled: true });
+
+    // Change board on Your board's card: the home board moves, and the scope with it.
+    homeBoardState.board = tension;
+    rerender(createElement(HomeTab));
+    expect(recorded.betaProps.at(-1)).toEqual({ boardType: 'tension', layoutId: 10, enabled: true });
+
+    // Everyone, picked from the scope menu, is the climber's own choice and stays.
+    const actions = lastChrome()?.scopeActions as Array<{ label: string }>;
+    const everyone = actions.findIndex((action) => action.label === 'mobile.home.scope.everyone');
+    act(() => recorded.selectScopeIndex?.(everyone));
+    expect(recorded.betaProps.at(-1)).toEqual({ boardType: null, layoutId: null, enabled: true });
+    homeBoardState.board = moon;
+    rerender(createElement(HomeTab));
+    expect(recorded.betaProps.at(-1)).toEqual({ boardType: null, layoutId: null, enabled: true });
   });
 
   it('keeps the spinner up until the latest of two pulls settles', async () => {

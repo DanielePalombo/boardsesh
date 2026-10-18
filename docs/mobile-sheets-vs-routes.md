@@ -336,7 +336,9 @@ pieces in `src/components/section-layout/SectionLayoutSheet.tsx` (frame, intro, 
 sheet list). Settings › Home is the native form with one exception (#6480, Marco's ask on
 #6546): the movable sections, with switches and arrows, are the same `SectionLayoutList`
 rows hosted in one full-bleed `custom` row, because the form has no reorderable row. The
-"Open the app on" row, the feed's switch and Show all / Focused / Restore defaults stay native. Its layout lives in `homeSectionsStore`
+"Open the app on" row, the feed's switch and Show all / Focused / Restore defaults stay native.
+Android's Compose form drew no hosted row on a real phone, so there the sections are native
+switches and a Reorder sections row opens `HomeCustomizeSheet` over Settings. Its layout lives in `homeSectionsStore`
 (`homeSectionsV1`, via `settingsLayoutStorage`); see `docs/ui/02-home.md`.
 
 ## The decision tree

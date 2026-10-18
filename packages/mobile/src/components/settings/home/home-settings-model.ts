@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { HomeSectionId } from '../../../lib/home-sections';
 import type { StartupScreen } from '../../../settings';
-import type { MoreFormModel, MoreOption } from '../../MoreForm.types';
+import type { MoreFormModel, MoreOption, MoreRow } from '../../MoreForm.types';
 import type { SectionLayoutRowModel } from '../../section-layout/SectionLayoutList';
 import type { SettingsTranslate } from '../root/settings-pages';
 
@@ -11,10 +11,16 @@ export type HomeSettingsModelInput = {
   startupScreen: StartupScreen;
   onStartupScreenChange: (screen: StartupScreen) => void;
   /**
-   * The sections that move, as one hosted row: `HomeSectionsFormList`, the
-   * sheet's switch-and-arrows rows. The form has no reorderable row of its own.
+   * How the sections that move draw. The form has no reorderable row of its own.
+   * - `hosted` (iOS, browser): one React Native row, `HomeSectionsFormList`, the
+   *   sheet's switch-and-arrows rows.
+   * - `native` (Android): a native switch per section in the saved order, then a
+   *   row that opens Customize Home to reorder. The Compose form draws no hosted
+   *   React Native row on a real phone (QA on a Pixel 8 Pro, #6546).
    */
-  movableList: { content: ReactNode; height: number };
+  movableSections:
+    | { kind: 'hosted'; content: ReactNode; height: number }
+    | { kind: 'native'; rows: readonly SectionLayoutRowModel<HomeSectionId>[]; onReorder: () => void };
   /** The sections that keep their place (the feed, always last), as native switches. */
   fixedRows: readonly SectionLayoutRowModel<HomeSectionId>[];
   onSectionChange: (sectionId: HomeSectionId, visible: boolean) => void;
@@ -29,11 +35,40 @@ export type HomeSettingsModelInput = {
 /**
  * Settings › Home, on the native form like Board and Climbs & grades: whether
  * the app opens on Climbs or Home; the sections with their switches and ↑/↓
- * arrows (the one React Native row, #6480's exception, at Marco's ask); the feed,
- * which stays last; then Show all, Focused and Restore defaults.
+ * arrows (the one React Native row, #6480's exception, at Marco's ask; on
+ * Android native switches and a Reorder row instead); the feed, which stays
+ * last; then Show all, Focused and Restore defaults.
  */
 export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormModel {
-  const { t } = input;
+  const { t, movableSections } = input;
+  const sectionToggle = (row: SectionLayoutRowModel<HomeSectionId>): MoreRow => ({
+    kind: 'toggle',
+    key: row.id,
+    label: row.label,
+    subtitle: row.description,
+    value: row.visible,
+    onValueChange: (visible: boolean) => input.onSectionChange(row.id, visible),
+  });
+  const movableRows: MoreRow[] =
+    movableSections.kind === 'hosted'
+      ? [
+          {
+            kind: 'custom',
+            key: 'movableSections',
+            content: movableSections.content,
+            height: movableSections.height,
+            fullBleed: true,
+          },
+        ]
+      : [
+          ...movableSections.rows.map(sectionToggle),
+          {
+            kind: 'nav',
+            key: 'reorderSections',
+            label: t('mobile.settings.homeSections.reorder'),
+            onPress: movableSections.onReorder,
+          },
+        ];
   // The tab names, so the choice reads exactly like the tab bar. Climbs first:
   // it is the default.
   const startupOptions: (MoreOption & { key: StartupScreen })[] = [
@@ -65,27 +100,12 @@ export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormM
       {
         key: 'sections',
         title: t('mobile.settings.homeSections.groupTitle'),
-        rows: [
-          {
-            kind: 'custom',
-            key: 'movableSections',
-            content: input.movableList.content,
-            height: input.movableList.height,
-            fullBleed: true,
-          },
-        ],
+        rows: movableRows,
       },
       {
         key: 'fixedSections',
         footer: t('mobile.settings.homeSections.settingsFooter'),
-        rows: input.fixedRows.map((row) => ({
-          kind: 'toggle',
-          key: row.id,
-          label: row.label,
-          subtitle: row.description,
-          value: row.visible,
-          onValueChange: (visible: boolean) => input.onSectionChange(row.id, visible),
-        })),
+        rows: input.fixedRows.map(sectionToggle),
       },
       {
         key: 'presets',

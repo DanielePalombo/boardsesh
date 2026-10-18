@@ -6,6 +6,7 @@ import type {
   MoreButtonRow,
   MoreCustomRow,
   MoreFormModel,
+  MoreNavRow,
   MoreSegmentedRow,
   MoreToggleRow,
 } from '../../../MoreForm.types';
@@ -19,6 +20,7 @@ const captured = vi.hoisted(() => ({
   layoutHandlers: new Map<string, (event: { nativeEvent: { layout: { width: number; height: number } } }) => void>(),
 }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
   values: new Map<string, unknown>(),
@@ -43,7 +45,7 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' },
+  Platform: platform,
   DynamicColorIOS: (appearances: { light: string }) => appearances.light,
   PlatformColor: (name: string) => name,
   useWindowDimensions: () => ({ width: 375, height: 667, fontScale: 1, scale: 2 }),
@@ -108,8 +110,8 @@ vi.mock('../../../Button', () => ({
     createElement('button', { onClick: onPress, 'data-testid': testID }, title),
 }));
 vi.mock('../../../ModalSheet', () => ({
-  ModalSheet: ({ header, children }: { header?: ReactNode; children?: ReactNode }) =>
-    createElement('section', { 'data-testid': 'sheet' }, header, children),
+  ModalSheet: ({ visible, header, children }: { visible: boolean; header?: ReactNode; children?: ReactNode }) =>
+    visible ? createElement('section', { 'data-testid': 'sheet' }, header, children) : null,
 }));
 vi.mock('../../../SheetTopBar', () => ({ SheetTopBar: () => null }));
 vi.mock('../../../use-ios-sheet-background-style', () => ({ useIosSheetBackgroundStyle: () => undefined }));
@@ -163,6 +165,7 @@ const toggle = (key: string) => rowOfKind(key, 'toggle') as MoreToggleRow;
 const button = (key: string) => rowOfKind(key, 'button') as MoreButtonRow;
 const segmented = (key: string) => rowOfKind(key, 'segmented') as MoreSegmentedRow;
 const hostedRow = () => rowOfKind('movableSections', 'custom') as MoreCustomRow;
+const navRow = (key: string) => rowOfKind(key, 'nav') as MoreNavRow;
 
 /** Draws the hosted React Native row the way the native form would, into its own container. */
 function renderHostedRows() {
@@ -187,6 +190,7 @@ beforeEach(() => {
   analytics.track.mockClear();
   captured.model = null;
   captured.layoutHandlers.clear();
+  platform.OS = 'ios';
 });
 
 afterEach(() => {
@@ -267,6 +271,42 @@ describe('HomeSettingsScreen', () => {
       `${SECTION_KEY}.beta`,
       `${SECTION_KEY}.climbingNow`,
       `${SECTION_KEY}.feed`,
+    ]);
+  });
+
+  it('on Android, draws native switches in the saved order and a Reorder row that opens Customize Home', () => {
+    platform.OS = 'android';
+    homeSectionsStore.move('climbingNow', -1);
+    render(createElement(HomeSettingsScreen));
+    const sectionRows = captured.model?.sections.find((section) => section.key === 'sections')?.rows ?? [];
+    expect(sectionRows.map((row) => [row.kind, row.key])).toEqual([
+      ['toggle', 'board'],
+      ['toggle', 'session'],
+      ['toggle', 'climbingNow'],
+      ['toggle', 'playlists'],
+      ['toggle', 'beta'],
+      ['nav', 'reorderSections'],
+    ]);
+    expect(rows().some((row) => row.kind === 'custom')).toBe(false);
+
+    act(() => toggle('playlists').onValueChange(true));
+    expect(homeSectionsStore.getLayout().visible.playlists).toBe(true);
+    expect(toggle('playlists').value).toBe(true);
+
+    expect(screen.queryByTestId('sheet')).toBeNull();
+    act(() => navRow('reorderSections').onPress());
+    // The sheet with the arrows, over the same store: a move there reorders the page.
+    expect(screen.getByTestId('sheet')).toBeTruthy();
+    act(() => {
+      fireEvent.click(screen.getByTestId('section-layout-move-up-climbingNow'));
+    });
+    expect(captured.model?.sections.find((section) => section.key === 'sections')?.rows.map((row) => row.key)).toEqual([
+      'board',
+      'climbingNow',
+      'session',
+      'playlists',
+      'beta',
+      'reorderSections',
     ]);
   });
 

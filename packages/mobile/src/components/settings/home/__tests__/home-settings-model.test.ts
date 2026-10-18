@@ -9,7 +9,7 @@ function makeInput(overrides: Partial<HomeSettingsModelInput> = {}): HomeSetting
     t: echo,
     startupScreen: 'climbs',
     onStartupScreenChange: vi.fn(),
-    movableList: { content: 'movable rows', height: 340 },
+    movableSections: { kind: 'hosted', content: 'movable rows', height: 340 },
     fixedRows: [{ id: 'feed', label: 'Feed', description: 'Always last', visible: true, movable: false }],
     onSectionChange: vi.fn(),
     canShowAll: true,
@@ -95,5 +95,39 @@ describe('buildHomeSettingsModel', () => {
       ['focused', false],
       ['restoreDefaults', true],
     ]);
+  });
+
+  it('draws the movable sections as native switches in order, then a Reorder row, on the native branch', () => {
+    const onSectionChange = vi.fn();
+    const onReorder = vi.fn();
+    const model = buildHomeSettingsModel(
+      makeInput({
+        onSectionChange,
+        movableSections: {
+          kind: 'native',
+          rows: [
+            { id: 'playlists', label: 'Playlists', description: 'Liked and Projects', visible: false, movable: true },
+            { id: 'board', label: 'Your board', description: 'Browse or change it', visible: true, movable: true },
+          ],
+          onReorder,
+        },
+      }),
+    );
+    const sections = model.sections[1];
+    expect(sections.rows.map((row) => [row.kind, row.key])).toEqual([
+      ['toggle', 'playlists'],
+      ['toggle', 'board'],
+      ['nav', 'reorderSections'],
+    ]);
+    const [playlists, , reorder] = sections.rows;
+    if (playlists.kind !== 'toggle') throw new Error('playlists is not a toggle');
+    expect(playlists.value).toBe(false);
+    expect(playlists.subtitle).toBe('Liked and Projects');
+    playlists.onValueChange(true);
+    expect(onSectionChange).toHaveBeenCalledWith('playlists', true);
+    if (reorder.kind !== 'nav') throw new Error('reorderSections is not a nav row');
+    expect(reorder.label).toBe('mobile.settings.homeSections.reorder');
+    reorder.onPress();
+    expect(onReorder).toHaveBeenCalledTimes(1);
   });
 });
