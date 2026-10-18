@@ -21,6 +21,7 @@ import { isOfflineEngineEnabled } from '../../../lib/offline-engine';
 import { replayOnboarding } from '../../../lib/onboarding/onboarding-storage';
 import { replayBoardLookStep } from '../../../lib/board-render/replay-board-look-step';
 import { withSettingTracking } from '../../../lib/settings-analytics';
+import { normaliseStartupScreen } from '../../../lib/app-entry-route';
 import { useOutboxSummary } from '../../../offline/outbox-store';
 import { useMissingOfflineBoards } from '../../../offline/use-keep-boards-offline';
 import { forgetDownloadAllTap, rememberDownloadAllTap, setSetting, useSetting } from '../../../settings';
@@ -51,6 +52,10 @@ export function GeneralSettingsScreen() {
   // itself is `useKeepBoardsOffline`, mounted once by the settings layout; the
   // tap is `makeAutoOfflineBoardsToggle`.
   const [autoOfflineBoards] = useSetting('autoOfflineBoards');
+  // Read by `getAppEntryTab()` on the next start; writing it moves nothing now.
+  // Normalised the same way, so an unknown stored value shows Climbs chosen.
+  const [storedStartupScreen, setStartupScreen] = useSetting('startupScreen');
+  const startupScreen = normaliseStartupScreen(storedStartupScreen);
   const missingOfflineBoards = useMissingOfflineBoards();
   const { effectiveOffline, offlineMode } = useConnectivity();
   // What is still sitting in the outbox. Gated on `schemaReady`: on a contended
@@ -133,6 +138,11 @@ export function GeneralSettingsScreen() {
             hapticLight();
             void openExternalUrl(`${GITHUB_LOCALES_TREE_URL}/${activeLocale}`, 'more-help-translate');
           },
+          startupScreen,
+          onStartupScreenChange: (screen) => {
+            hapticSelection();
+            setStartupScreen(screen);
+          },
           offline: {
             offlineEnabled,
             // Native only: on Expo web there is no storage behind the switch
@@ -164,6 +174,8 @@ export function GeneralSettingsScreen() {
       localePreference,
       setLocalePreference,
       activeLocale,
+      startupScreen,
+      setStartupScreen,
       offlineEnabled,
       offlineMode,
       autoOfflineBoards,
