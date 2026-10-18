@@ -14,6 +14,12 @@ import {
 
 export const HOME_SECTION_IDS = ['board', 'session', 'playlists', 'climbingNow', 'feed'] as const;
 export type HomeSectionId = (typeof HOME_SECTION_IDS)[number];
+/** The sections drawn above the feed; the feed is the list itself. */
+export type HomeTopSectionId = Exclude<HomeSectionId, 'feed'>;
+
+function isTopSection(sectionId: HomeSectionId): sectionId is HomeTopSectionId {
+  return sectionId !== 'feed';
+}
 
 export const HOME_SECTIONS: SectionLayoutSpec<HomeSectionId> = {
   ids: HOME_SECTION_IDS,
@@ -47,8 +53,8 @@ export function isDefaultHomeLayout(layout: SectionLayout<HomeSectionId>): boole
 }
 
 /** The sections above the feed that are switched on, in order. */
-export function visibleTopHomeSections(layout: SectionLayout<HomeSectionId>): HomeSectionId[] {
-  return layout.order.filter((sectionId) => sectionId !== 'feed' && layout.visible[sectionId]);
+export function visibleTopHomeSections(layout: SectionLayout<HomeSectionId>): HomeTopSectionId[] {
+  return layout.order.filter(isTopSection).filter((sectionId) => layout.visible[sectionId]);
 }
 
 // Screenshot builds start every launch on the default Home and never save an

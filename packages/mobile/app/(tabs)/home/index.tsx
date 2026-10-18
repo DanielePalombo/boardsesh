@@ -28,7 +28,8 @@ import { HomeTopChrome, TOP_ISLAND_BAND } from '../../../src/components/feed/Hom
 import { FeedScopeTitle } from '../../../src/components/feed/FeedScopeTitle';
 import { type AppMenuAction } from '../../../src/components/AppMenu';
 import { useBulkVoteSummaries, useSessionGroupedFeed } from '../../../src/lib/graphql/hooks';
-import { FOLLOWED_LIVE_SESSIONS_QUERY_KEY } from '../../../src/lib/graphql/query-keys';
+import { FOLLOWED_LIVE_SESSIONS_QUERY_KEY, SESSION_SUMMARY_QUERY_KEY } from '../../../src/lib/graphql/query-keys';
+import { SMART_PLAYLIST_COUNTS_QUERY_KEY } from '@boardsesh/playlists-react';
 import { useHomeBoard } from '../../../src/lib/graphql/hooks/use-home-board';
 import { useAuth } from '../../../src/providers/auth-provider';
 import { useTheme } from '../../../src/providers/theme-provider';
@@ -259,8 +260,8 @@ export default function HomeTab() {
     // Only what is on screen. Each section subscribes to its own query, so the
     // screen refreshes it by key; Your board reads the phone and has nothing to fetch.
     if (climbingNowVisible) void queryClient.invalidateQueries({ queryKey: FOLLOWED_LIVE_SESSIONS_QUERY_KEY });
-    if (sessionCardVisible) void queryClient.invalidateQueries({ queryKey: ['sessionSummary'] });
-    if (playlistsVisible) void queryClient.invalidateQueries({ queryKey: ['mySmartPlaylistCounts'] });
+    if (sessionCardVisible) void queryClient.invalidateQueries({ queryKey: [SESSION_SUMMARY_QUERY_KEY] });
+    if (playlistsVisible) void queryClient.invalidateQueries({ queryKey: [SMART_PLAYLIST_COUNTS_QUERY_KEY] });
     if (!feedVisible) return;
     void sessionVoteSummaries.refetch();
     void tickVoteSummaries.refetch();

@@ -44,7 +44,7 @@ export type { UseUserPlaylistsOptions, UseUserPlaylistsResult } from './use-user
 export { usePinnedPlaylists } from './use-pinned-playlists';
 export type { UsePinnedPlaylistsOptions, UsePinnedPlaylistsResult, PinnedSource } from './use-pinned-playlists';
 
-export { useSmartPlaylistCounts } from './use-smart-playlist-counts';
+export { SMART_PLAYLIST_COUNTS_QUERY_KEY, useSmartPlaylistCounts } from './use-smart-playlist-counts';
 export type { UseSmartPlaylistCountsOptions } from './use-smart-playlist-counts';
 
 export { useSmartPlaylist } from './use-smart-playlist';

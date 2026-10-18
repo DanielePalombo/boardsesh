@@ -120,3 +120,11 @@ export const climbLogsQueryKey = (
   ] as const;
 export const climbLogsPreviewQueryKey = (viewerId: string | undefined, boardName: string, climbUuid: string | null) =>
   [CLIMB_LOGS_PREVIEW_QUERY_KEY, viewerId, boardName, climbUuid] as const;
+
+/**
+ * A session's summary (start time and totals): the Session tab and Home's
+ * Session card. Here because Home's pull-to-refresh invalidates it without
+ * rendering the card's query.
+ */
+export const SESSION_SUMMARY_QUERY_KEY = 'sessionSummary';
+export const sessionSummaryQueryKey = (sessionId: string | null) => [SESSION_SUMMARY_QUERY_KEY, sessionId] as const;

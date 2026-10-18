@@ -45,6 +45,7 @@ import {
   SEARCH_CLIMBS_QUERY_KEY,
   INFINITE_SEARCH_CLIMBS_QUERY_KEY,
   SEARCH_CLIMBS_COUNT_QUERY_KEY,
+  sessionSummaryQueryKey,
 } from '../query-keys';
 import { getDatabaseHandle } from '../../../db';
 import { offlineAwareRequest } from '../offline-request';
@@ -1036,7 +1037,7 @@ export function useDeleteDraftClimb() {
 
 export function useSessionSummary(sessionId: string | null) {
   return useQuery({
-    queryKey: ['sessionSummary', sessionId],
+    queryKey: sessionSummaryQueryKey(sessionId),
     queryFn: () =>
       getHttpClient().request<GetSessionSummaryQueryResponse>(GET_SESSION_SUMMARY, {
         sessionId,
@@ -1091,7 +1092,7 @@ export function useUpdateSession() {
     },
     onSuccess: (updated) => {
       void queryClient.invalidateQueries({ queryKey: ['sessionDetail', updated.sessionId] });
-      void queryClient.invalidateQueries({ queryKey: ['sessionSummary', updated.sessionId] });
+      void queryClient.invalidateQueries({ queryKey: sessionSummaryQueryKey(updated.sessionId) });
       void queryClient.invalidateQueries({ queryKey: ['sessionGroupedFeed'] });
       void queryClient.invalidateQueries({ queryKey: ['activityFeed'] });
     },

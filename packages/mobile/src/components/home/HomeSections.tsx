@@ -1,13 +1,13 @@
 import { memo } from 'react';
 import { LiveSessionsRail } from '../live-sessions/LiveSessionsRail';
-import type { HomeSectionId } from '../../lib/home-sections';
+import type { HomeTopSectionId } from '../../lib/home-sections';
 import { HomeBoardSection } from './HomeBoardSection';
 import { HomePlaylistsSection } from './HomePlaylistsSection';
 import { HomeSessionSection } from './HomeSessionSection';
 
 type HomeSectionsProps = {
   /** The switched-on sections above the feed, in the climber's order. */
-  sectionIds: readonly HomeSectionId[];
+  sectionIds: readonly HomeTopSectionId[];
   /**
    * False until Home is first focused. Every tab mounts at launch, and the cards
    * wait for that first visit, so launching on Climbs costs Home nothing.
@@ -53,9 +53,6 @@ export const HomeSections = memo(function HomeSections({
             showStartPrompt={!sessionCardShows}
           />
         );
-      case 'feed':
-        // The feed is the list itself, drawn by Home under these sections.
-        return null;
     }
   });
 });

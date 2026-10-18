@@ -1,4 +1,4 @@
-import { useMemo, type ComponentType } from 'react';
+import { memo, useMemo, type ComponentType } from 'react';
 import { Platform, StyleSheet, View, type FlatListProps } from 'react-native';
 import { BottomSheetFlatList } from '@expo/ui/community/bottom-sheet';
 import { ModalSheet } from '../ModalSheet';
@@ -20,7 +20,13 @@ const SheetFlatList = BottomSheetFlatList as ComponentType<FlatListProps<PlacedS
  * feed, Show all and Focused at the top, Restore defaults under the list.
  * Choices apply at once; Home redraws behind the sheet.
  */
-export function HomeCustomizeSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export const HomeCustomizeSheet = memo(function HomeCustomizeSheet({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
   const {
     customizeLabel,
     description,
@@ -122,7 +128,7 @@ export function HomeCustomizeSheet({ visible, onClose }: { visible: boolean; onC
       />
     </ModalSheet>
   );
-}
+});
 
 const styles = StyleSheet.create({
   list: { flex: 1 },

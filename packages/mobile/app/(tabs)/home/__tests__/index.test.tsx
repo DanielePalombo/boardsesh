@@ -14,6 +14,7 @@ const recorded = vi.hoisted(() => ({
   customizeSheet: [] as boolean[],
 }));
 const focus = vi.hoisted(() => ({ hasBeenFocused: true }));
+const refresh = vi.hoisted(() => ({ onRefresh: null as (() => void) | null, invalidateQueries: vi.fn() }));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
   values: new Map<string, unknown>(),
@@ -37,24 +38,31 @@ vi.mock('react-native', () => ({
   View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
     createElement('div', { 'data-testid': testID }, children),
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-  RefreshControl: () => null,
+  RefreshControl: ({ onRefresh }: { onRefresh: () => void }) => {
+    refresh.onRefresh = onRefresh;
+    return null;
+  },
 }));
 vi.mock('@shopify/flash-list', () => ({
   FlashList: ({
     data,
     ListHeaderComponent,
     ListEmptyComponent,
+    refreshControl,
   }: {
     data: unknown[];
     ListHeaderComponent?: ReactNode;
     ListEmptyComponent?: ReactNode;
-  }) => createElement('div', null, ListHeaderComponent, data.length === 0 ? ListEmptyComponent : null),
+    refreshControl?: ReactNode;
+  }) => createElement('div', null, refreshControl, ListHeaderComponent, data.length === 0 ? ListEmptyComponent : null),
 }));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: refresh.invalidateQueries }),
+}));
 vi.mock('../../../../src/lib/routing/scoped-navigation', () => ({
   useScopedRouter: () => ({ push: vi.fn(), navigate: vi.fn() }),
 }));
@@ -142,7 +150,11 @@ vi.mock('../../../../src/lib/graphql/hooks', () => ({
   },
   useBulkVoteSummaries: () => ({ data: undefined, refetch: vi.fn() }),
 }));
-vi.mock('../../../../src/lib/graphql/query-keys', () => ({ FOLLOWED_LIVE_SESSIONS_QUERY_KEY: ['followed'] }));
+vi.mock('../../../../src/lib/graphql/query-keys', () => ({
+  FOLLOWED_LIVE_SESSIONS_QUERY_KEY: ['followed'],
+  SESSION_SUMMARY_QUERY_KEY: 'sessionSummary',
+}));
+vi.mock('@boardsesh/playlists-react', () => ({ SMART_PLAYLIST_COUNTS_QUERY_KEY: 'mySmartPlaylistCounts' }));
 vi.mock('../../../../src/lib/graphql/hooks/use-home-board', () => ({
   useHomeBoard: () => ({ board: null, isResolving: false, boards: [] }),
 }));
@@ -189,6 +201,8 @@ beforeEach(() => {
   recorded.railProps = [];
   recorded.chrome = [];
   recorded.customizeSheet = [];
+  refresh.onRefresh = null;
+  refresh.invalidateQueries.mockClear();
 });
 
 afterEach(() => {
@@ -268,5 +282,21 @@ describe('Home sections', () => {
       homeSectionsStore.setVisible('board', true);
     });
     expect(sectionOrder()).toEqual(['section-board', 'section-climbingNow']);
+  });
+
+  it('pull to refresh asks again only for what is on screen', () => {
+    const { unmount } = render(createElement(HomeTab));
+    act(() => refresh.onRefresh?.());
+    expect(refresh.invalidateQueries.mock.calls.map(([filters]) => filters)).toEqual([{ queryKey: ['followed'] }]);
+    unmount();
+
+    refresh.invalidateQueries.mockClear();
+    homeSectionsStore.apply(focusedHomeLayout(homeSectionsStore.getLayout()));
+    render(createElement(HomeTab));
+    act(() => refresh.onRefresh?.());
+    expect(refresh.invalidateQueries.mock.calls.map(([filters]) => filters)).toEqual([
+      { queryKey: ['sessionSummary'] },
+      { queryKey: ['mySmartPlaylistCounts'] },
+    ]);
   });
 });
