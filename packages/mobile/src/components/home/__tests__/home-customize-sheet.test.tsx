@@ -104,15 +104,18 @@ vi.mock('@expo/ui/community/bottom-sheet', () => ({
   BottomSheetFlatList: ({
     data,
     renderItem,
+    ListHeaderComponent,
     ListFooterComponent,
   }: {
     data: Array<{ id: string }>;
     renderItem: (entry: { item: { id: string }; index: number }) => ReactNode;
+    ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
   }) =>
     createElement(
       'section',
       null,
+      createElement('header', null, ListHeaderComponent),
       ...data.map((item, index) => createElement('div', { key: item.id }, renderItem({ item, index }))),
       createElement('footer', null, ListFooterComponent),
     ),

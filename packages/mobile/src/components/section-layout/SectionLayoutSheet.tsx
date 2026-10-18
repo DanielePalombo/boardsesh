@@ -53,8 +53,12 @@ export function SectionLayoutSheetFrame({
   visible: boolean;
   onClose: () => void;
   title: string;
-  /** What stays pinned above the list, such as tabs and `SectionLayoutSheetIntro`. */
-  header: ReactNode;
+  /**
+   * What stays pinned above the list, such as tabs. Leave it out to pin
+   * nothing, and put `SectionLayoutSheetIntro` in the list's header instead, so
+   * it scrolls away at large text on a small phone.
+   */
+  header?: ReactNode;
   /** One `SectionLayoutSheetList`. */
   children: ReactNode;
 }) {
@@ -69,7 +73,7 @@ export function SectionLayoutSheetFrame({
       header={
         <View>
           <SheetTopBar title={title} leading={{ kind: 'close', onPress: onClose }} />
-          <View style={[styles.headerControls, ground]}>{header}</View>
+          {header ? <View style={[styles.headerControls, ground]}>{header}</View> : null}
         </View>
       }
     >
@@ -207,6 +211,8 @@ export const SectionLayoutSheetList = memo(SectionLayoutSheetListBase) as typeof
 /** Spacing a sheet's own header or footer content shares with these pieces. */
 export const sectionLayoutSheetStyles = StyleSheet.create({
   guidance: { paddingHorizontal: spacing[4] },
+  /** `SectionLayoutSheetIntro` as the list's header, spaced like the pinned header controls. */
+  listIntro: { paddingTop: spacing[3], paddingBottom: spacing[3], gap: spacing[2] },
 });
 
 const styles = StyleSheet.create({

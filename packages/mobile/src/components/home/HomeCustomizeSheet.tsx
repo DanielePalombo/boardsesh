@@ -1,9 +1,11 @@
 import { memo, useMemo } from 'react';
+import { View } from 'react-native';
 import {
   SectionLayoutSheetFooter,
   SectionLayoutSheetFrame,
   SectionLayoutSheetIntro,
   SectionLayoutSheetList,
+  sectionLayoutSheetStyles,
   type SectionLayoutSheetAction,
 } from '../section-layout/SectionLayoutSheet';
 import { useHomeSectionControls } from './use-home-section-controls';
@@ -53,8 +55,14 @@ export const HomeCustomizeSheet = memo(function HomeCustomizeSheet({
     }),
     [restoreDefaultsLabel, restoreDefaults, canRestoreDefaults],
   );
-  const header = useMemo(
-    () => <SectionLayoutSheetIntro description={description} actions={actions} />,
+  // In the list, not pinned: at the largest text on a small phone a pinned
+  // description and actions would fill the sheet and leave no room for a switch.
+  const listIntro = useMemo(
+    () => (
+      <View style={sectionLayoutSheetStyles.listIntro}>
+        <SectionLayoutSheetIntro description={description} actions={actions} />
+      </View>
+    ),
     [description, actions],
   );
   const listFooter = useMemo(
@@ -62,11 +70,12 @@ export const HomeCustomizeSheet = memo(function HomeCustomizeSheet({
     [footer, restoreAction],
   );
   return (
-    <SectionLayoutSheetFrame visible={visible} onClose={onClose} title={customizeLabel} header={header}>
+    <SectionLayoutSheetFrame visible={visible} onClose={onClose} title={customizeLabel}>
       <SectionLayoutSheetList
         rows={rows}
         onVisibleChange={onVisibleChange}
         onMove={onMove}
+        ListHeaderComponent={listIntro}
         ListFooterComponent={listFooter}
       />
     </SectionLayoutSheetFrame>
