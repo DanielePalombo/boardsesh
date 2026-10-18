@@ -107,6 +107,20 @@ bypasses it, because the sync needs to recreate the bump commit. So nobody runs
 does not delete the branch (the repository deletes merged branches
 automatically, and the ruleset stops that for this one).
 
+**When the sync is broken.** Dispatch **Release Train Sync** with `dry_run` to
+see its plan and the error. A person can still move the train with an ordinary
+push, because the ruleset blocks only deletion and force-pushes:
+
+```sh
+git switch release/next && git pull
+git merge origin/main          # merge commit
+git push origin release/next
+```
+
+Only a reset or a rewrite of the train needs a force-push. For that, a repository
+admin pauses the ruleset (Settings → Rules) for the push and switches it back on
+afterwards.
+
 ## 2. Automatic native builds from `release/next`
 
 A push to `release/next` triggers a build when its fingerprint is new, or when the

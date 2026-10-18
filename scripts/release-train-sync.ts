@@ -1333,7 +1333,14 @@ async function waitForRunsAtTip(runtime: SyncRuntime, workflowFiles: readonly st
         .listWorkflowRuns(file, { branch: RELEASE_BRANCH, limit: 20 })
         .some((run) => run.headSha === tipSha),
     );
-    if (registered || runtime.now() >= deadline) return;
+    if (registered) return;
+    if (runtime.now() >= deadline) {
+      runtime.warn(
+        `No run registered at ${tipSha} within ${RUN_REGISTRATION_WAIT_MS / 1000} s for ${workflowFiles.join(', ')}; ` +
+          'deciding retries from the runs that exist now.',
+      );
+      return;
+    }
     await runtime.sleep(RUN_REGISTRATION_POLL_MS);
   }
 }
