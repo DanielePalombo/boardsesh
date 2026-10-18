@@ -149,7 +149,9 @@ locales; German and French each map to one.
 
 The Android lane uploads PNGs in `app-stores/google/screenshots/pixel-2/` to the
 Google Play phone screenshot slot as **screenshots only**, staged into
-`supply`'s expected `en-US/images/phoneScreenshots/` structure.
+the supply-style `en-US/images/phoneScreenshots/` structure and synced by
+SHA-256 (matching leading images stay, the rest are replaced). It commits through
+the review-protected Play listing runner described below.
 
 The default iOS replay campaign produces nine composed iPhone images from
 18 real captures and retains the six-image iPad story. It uses the dedicated
@@ -210,6 +212,22 @@ Both push to the editable/draft listing, so a wrong value is reversible: edit
 the `.txt` and re-run. In CI they run from the `Mobile Store Metadata` workflow
 (manual dispatch, `platform: ios | android | all`).
 
+`ios metadata` skips a version that is waiting for review, and
+`expected_version:<x.y.z>` (used by the merge-back submission) refuses unless that
+exact version is the one deliver would edit.
+
+### Review protection on every Play commit
+
+`android metadata`, `android images` and `android screenshots` open one edit of
+their own and commit it with `changesNotSentForReview: false` and
+`changesInReviewBehavior: ERROR_IF_IN_REVIEW` (`lib/play_listing.rb`). They used
+fastlane supply, whose commit used the API default, which cancels a release in
+review and resubmits it. The listing calls are the ones supply made, so the store
+ends up the same; only the commit differs. While a release is in review, the
+commit fails instead. `android draft_submission` does the same through
+`scripts/mobile-store-android-draft.ts`. Tests:
+`vp exec ruby fastlane/tests/play_listing_test.rb`.
+
 ## Listing images (Play only) — `android images`
 
 Google Play's listing images are source-controlled under
@@ -222,8 +240,8 @@ images/
 ```
 
 `android images` uploads whatever images are present there and leaves phone
-screenshots and any image you didn't commit untouched (no `sync_image_upload`,
-so a missing image never deletes the live one). Both are derived from the app
+screenshots and any image you didn't commit untouched (no sync, so a missing
+image never deletes the live one). Both are derived from the app
 art with `sharp`: `icon.png` is `packages/mobile/assets/icon.png` resized to
 512x512, and `featureGraphic.png` is `adaptive-icon.png` centered on a #0A0A0A
 background. Regenerate them if the app art changes.

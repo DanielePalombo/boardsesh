@@ -159,16 +159,17 @@ class StoreReviewSubmissionTest < Minitest::Test
     end
   end
 
-  def runner(selected = ["default"], context: nil)
-    BoardseshStoreReview::Runner.new(client: @client, audit: -> { @audit_calls += 1; Marshal.load(Marshal.dump(@report)) }, manifest: @manifest, metadata_root: @directory, selected: selected, cpp_review_context_version_id: context)
+  def runner(selected = ["default"], context: nil, release_type: nil)
+    policy = release_type ? { release_type: release_type } : {}
+    BoardseshStoreReview::Runner.new(client: @client, audit: -> { @audit_calls += 1; Marshal.load(Marshal.dump(@report)) }, manifest: @manifest, metadata_root: @directory, selected: selected, cpp_review_context_version_id: context, **policy)
   end
 
-  def plan(selected = ["default"], context: nil)
-    runner(selected, context: context).run(action: "plan")
+  def plan(selected = ["default"], context: nil, release_type: nil)
+    runner(selected, context: context, release_type: release_type).run(action: "plan")
   end
 
-  def submit(hash, selected = ["default"], context: nil)
-    runner(selected, context: context).run(action: "submit", expected_sha256: hash)
+  def submit(hash, selected = ["default"], context: nil, release_type: nil)
+    runner(selected, context: context, release_type: release_type).run(action: "submit", expected_sha256: hash)
   end
 
   def test_default_plan_ignores_unselected_incomplete_cpp_and_preserves_screenshot_order
@@ -319,6 +320,56 @@ class StoreReviewSubmissionTest < Minitest::Test
     assert_raises(BoardseshStoreReview::Error) { submit("0" * 64) }
     @report["version"]["releaseType"] = "AFTER_APPROVAL"
     assert_raises(BoardseshStoreReview::Error) { plan }
+    assert_empty @client.writes
+  end
+
+  # The hand-run flow is unchanged: without an explicit policy only MANUAL passes,
+  # so a stray AFTER_APPROVAL setting still stops a person's submission.
+  def test_default_policy_is_manual_and_names_it
+    @report["version"]["releaseType"] = "AFTER_APPROVAL"
+    error = assert_raises(BoardseshStoreReview::Error) { plan }
+    assert_includes error.message, "MANUAL"
+    error = assert_raises(BoardseshStoreReview::Error) { plan(release_type: "MANUAL") }
+    assert_includes error.message, "MANUAL"
+    assert_empty @client.writes
+  end
+
+  # The automatic merge-back submission sets AFTER_APPROVAL first, then plans and
+  # submits with that policy. Only that explicit policy accepts it.
+  def test_after_approval_policy_submits_release_on_approval_and_retries_as_noop
+    @report["version"]["releaseType"] = "AFTER_APPROVAL"
+    digest = plan(release_type: "AFTER_APPROVAL").fetch("snapshotSha256")
+    result = submit(digest, release_type: "AFTER_APPROVAL")
+    assert_equal "submitted", result.fetch("action")
+    assert_equal %w[POST POST PATCH], @client.writes.map(&:first)
+    assert_equal "AFTER_APPROVAL", @report.dig("version", "releaseType")
+    writes = @client.writes.length
+    assert_equal "already-submitted", submit(digest, release_type: "AFTER_APPROVAL").fetch("action")
+    assert_equal writes, @client.writes.length
+  end
+
+  def test_after_approval_policy_refuses_a_manual_release_without_writes
+    error = assert_raises(BoardseshStoreReview::Error) { plan(release_type: "AFTER_APPROVAL") }
+    assert_includes error.message, "AFTER_APPROVAL"
+    assert_raises(BoardseshStoreReview::Error) { submit("0" * 64, release_type: "AFTER_APPROVAL") }
+    assert_empty @client.writes
+  end
+
+  # Flipping the release type after the plan changes the reviewed snapshot.
+  def test_release_type_change_after_plan_blocks_submission
+    @report["version"]["releaseType"] = "AFTER_APPROVAL"
+    digest = plan(release_type: "AFTER_APPROVAL").fetch("snapshotSha256")
+    @report["version"]["releaseType"] = "MANUAL"
+    assert_raises(BoardseshStoreReview::Error) { submit(digest, release_type: "AFTER_APPROVAL") }
+    assert_empty @client.writes
+  end
+
+  def test_unknown_or_cpp_only_release_type_policy_fails_before_reads
+    ["SCHEDULED", "after_approval", ""].each do |release_type|
+      assert_raises(BoardseshStoreReview::Error, release_type) { runner(release_type: release_type) }
+    end
+    assert_raises(BoardseshStoreReview::Error) { runner(["kilter"], context: "approved-version", release_type: "AFTER_APPROVAL") }
+    assert_equal 0, @audit_calls
     assert_empty @client.writes
   end
 

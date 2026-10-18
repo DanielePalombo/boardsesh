@@ -1,0 +1,84 @@
+# frozen_string_literal: true
+
+require_relative "store_review_submission"
+
+# Where one iOS marketing version stands for the automatic merge-back submission
+# (mobile-store-submit.yml) and its readiness check on merge-back PRs
+# (mobile-store-submit-review-state.yml). Pure: it classifies the app's
+# appStoreVersions as App Store Connect returned them; the caller does the GET.
+#
+#   pending     nothing blocks a submission; the draft and submit jobs may run.
+#               needsDraft says whether the draft lane must run first: it must
+#               when the version is missing or in Prepare for Submission, and must
+#               not once it sits in a review draft (READY_FOR_REVIEW), because
+#               deliver cannot see that state and would try to create the version
+#               again. The review helper resumes such a draft instead.
+#   done        already submitted, approved or released; nothing to do
+#   deferred    Apple is reviewing another version; retry after that review
+#   blocked     a person has to act (a rejection, a version pulled from review,
+#               another open version, or a state this does not know)
+#   superseded  a newer version exists; submitting this one would go backwards
+module BoardseshStoreSubmissionStatus
+  Error = BoardseshStoreReview::Error
+  IN_REVIEW = %w[WAITING_FOR_REVIEW IN_REVIEW].freeze
+  # A rejection, a version a person pulled from review, or a broken binary: the
+  # review helper refuses these, and resubmitting them unattended every hour
+  # would fight whoever is handling it.
+  NEEDS_PERSON = %w[REJECTED METADATA_REJECTED DEVELOPER_REJECTED INVALID_BINARY].freeze
+  DONE = (BoardseshStoreReview::SUBMITTED + %w[REPLACED_WITH_NEW_VERSION]).freeze
+  OTHER_OPEN = (BoardseshStoreReview::EDITABLE + NEEDS_PERSON).freeze
+
+  def self.semver(version)
+    raise Error, "Expected iOS version must be semver" unless version.is_a?(String) && version.match?(/\A\d+\.\d+\.\d+\z/)
+    version.split(".").map(&:to_i)
+  end
+
+  def self.describe(versions)
+    versions.map { |entry| "#{entry.fetch('versionString')} (#{entry.fetch('state')})" }.join(", ")
+  end
+
+  def self.ios(app_store_versions, version)
+    wanted = semver(version)
+    versions = app_store_versions.filter_map do |resource|
+      attributes = resource.fetch("attributes", {})
+      next unless resource["type"] == "appStoreVersions" && attributes["platform"] == "IOS"
+      version_string = attributes["versionString"]
+      next unless version_string.is_a?(String) && version_string.match?(/\A\d+(?:\.\d+){0,2}\z/)
+      { "id" => resource["id"], "versionString" => version_string, "state" => attributes["appVersionState"] || attributes["appStoreState"] }
+    end
+    targets = versions.select { |entry| entry.fetch("versionString") == version }
+    raise Error, "App Store Connect lists #{targets.length} iOS #{version} versions; inspect it by hand" if targets.length > 1
+    target = targets.first
+    others = versions - targets
+    # Numeric compare, so "2.10.0" is newer than "2.9.0"; a short "2.7" pads to 2.7.0.
+    numbers = ->(entry) { (entry.fetch("versionString").split(".").map(&:to_i) + [0, 0])[0, 3] }
+    newer = others.select { |entry| (numbers.call(entry) <=> wanted) == 1 }
+    in_review = others.select { |entry| IN_REVIEW.include?(entry.fetch("state")) }
+    other_open = others.select { |entry| OTHER_OPEN.include?(entry.fetch("state")) }
+    state = target && target.fetch("state")
+    result = lambda do |status, reason|
+      { "platform" => "ios", "version" => version, "status" => status, "state" => state, "versionId" => target && target["id"],
+        "needsDraft" => status == "pending" && (target.nil? || state == "PREPARE_FOR_SUBMISSION"), "reason" => reason }
+    end
+
+    return result.call("done", "iOS #{version} is already #{state}; nothing to submit.") if DONE.include?(state)
+    if newer.any?
+      return result.call("superseded", "App Store Connect already has a newer iOS version, #{describe(newer)}; not submitting #{version}.")
+    end
+    if NEEDS_PERSON.include?(state)
+      return result.call("blocked", "iOS #{version} is #{state}; the automatic submission leaves it alone. Resolve it in App Store Connect: fix and resubmit it there, or rename it to the train's next version so the next merge-back submits that instead.")
+    end
+    if in_review.any?
+      return result.call("deferred", "Apple is reviewing #{describe(in_review)} and reviews one app version at a time; the next run retries once that review ends.")
+    end
+    if other_open.any?
+      return result.call("blocked", "#{describe(other_open)} is open in App Store Connect, and the draft lane will not rename it to #{version}. Submit or release it, or rename it to #{version} in App Store Connect.")
+    end
+    return result.call("pending", "No iOS #{version} version yet; the draft job creates it.") if target.nil?
+    if state == "READY_FOR_REVIEW"
+      return result.call("pending", "iOS #{version} is already in a review draft (READY_FOR_REVIEW); the submission resumes it.")
+    end
+    return result.call("pending", "iOS #{version} is #{state} and can be submitted.") if BoardseshStoreReview::EDITABLE.include?(state)
+    result.call("blocked", "iOS #{version} is in a state this automation does not handle (#{state.inspect}); inspect it in App Store Connect.")
+  end
+end
