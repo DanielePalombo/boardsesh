@@ -1,5 +1,7 @@
 import type { StoredClimbRowDisplay } from '../lib/climb-row-display';
 import type { RestTimerMode } from '../lib/rest-timer';
+import type { SectionLayoutRecord } from '../lib/section-layout';
+import type { PlayerButtonsPosition } from '../lib/player-buttons';
 import type { UserBoard } from '@boardsesh/shared-schema';
 
 /** What `offlineSprayWallArchiveV1` keeps per archived wall. */
@@ -13,6 +15,9 @@ export type OwnedSprayWallPinLedger = {
   userId: string;
   wallUuids: string[];
 };
+
+/** The tab an ordinary launch opens on (Settings › General, #6289). */
+export type StartupScreen = 'climbs' | 'home';
 
 export type AppSettings = {
   defaultBoardUuid: string | null;
@@ -92,6 +97,13 @@ export type AppSettings = {
    * `@boardsesh/ble-protocol/moonboard`. No-op on Aurora boards.
    */
   moonboardLightAdjacentHolds: boolean;
+  /**
+   * Draw the MoonBoard's A-K column letters and 1-18 row numbers (1-12 on the
+   * Minis) on the large boards: play, create, search by holds, the wall kiosk,
+   * the long-press climb menu, the board-look step and the enlarged preview
+   * (issue #6234). Display only; no effect on other boards or on the LEDs.
+   */
+  moonboardGridLabels: boolean;
   /** Light the connected board when swiping to the next/previous climb in the play view. */
   lightOnSwipe: boolean;
   /** Light the connected board when tapping a climb to select it from a climbs list. */
@@ -120,6 +132,15 @@ export type AppSettings = {
    */
   restTimerShowOnLockScreen: boolean;
   theme: 'system' | 'light' | 'dark';
+  /**
+   * Which tab an ordinary launch opens on. Read synchronously by
+   * `getAppEntryTab()` (`lib/app-entry-route.ts`), which the tab navigator
+   * evaluates once at module load, so a change applies from the next start and
+   * never navigates on its own. Links, notification taps, onboarding and a
+   * post-login return still open where they point. Per device, and it survives
+   * sign-out: nothing at the account boundary clears this store.
+   */
+  startupScreen: StartupScreen;
   hapticFeedbackEnabled: boolean;
   notifySessionInvites: boolean;
   notifyClimbComments: boolean;
@@ -203,6 +224,18 @@ export type AppSettings = {
    * re-render. Bump the `V1` suffix on an incompatible shape change.
    */
   climbRowDisplayV1: StoredClimbRowDisplay | null;
+  /**
+   * The player's buttons (#6229): their order and switches, `null` while they
+   * match the defaults so a later release's defaults still apply. Read and
+   * written ONLY through `playerButtonsStore` (`lib/player-buttons-preference.ts`),
+   * which keeps its own snapshot; never `useSetting` this key. In this store, not
+   * AsyncStorage, because the bar has to be right on the player's first frame.
+   */
+  playerButtonsV1: SectionLayoutRecord | null;
+  /** The player's ⏮ and ⏭. Off leaves their slots empty; swiping the board still moves. */
+  playerPreviousNext: boolean;
+  /** Where the player's controls block sits. Read through `sanitisePlayerButtonsPosition`. */
+  playerButtonsPosition: PlayerButtonsPosition;
 };
 
 export type SettingsKey = keyof AppSettings;

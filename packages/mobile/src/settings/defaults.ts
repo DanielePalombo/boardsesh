@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoDisconnectBle: false,
   autoDisconnectTimeoutSeconds: 30,
   moonboardLightAdjacentHolds: false,
+  moonboardGridLabels: true,
   lightOnSwipe: true,
   lightOnClimbTap: true,
   gradeRowShown: false,
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   restTimerMode: 'afterTick',
   restTimerShowOnLockScreen: true,
   theme: 'system',
+  startupScreen: 'climbs',
   hapticFeedbackEnabled: true,
   notifySessionInvites: true,
   notifyClimbComments: true,
@@ -39,4 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   otaLeaveOwed: false,
   otaLeaveBlockedUpdateId: null,
   climbRowDisplayV1: null,
+  playerButtonsV1: null,
+  playerPreviousNext: true,
+  playerButtonsPosition: 'below',
 };

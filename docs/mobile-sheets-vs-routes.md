@@ -255,8 +255,8 @@ work and native QA before claiming that contract works on Android.
 
 ### Play drawer section controls
 
-Settings → Climbs & grades → Below the climb and the player's ⋯ → View options use the same seven visibility
-switches. View options opens the **View options** sheet (`PlayDrawerSectionsSheet`)
+Settings → Climbs & grades → Climb view and the player's ⋯ → View options use the same seven visibility
+switches, listed in the climber's order. View options opens the **View options** sheet (`PlayDrawerSectionsSheet`)
 as a managed `ModalSheet` mounted inside the player, above `/play`. ⋯ is a native menu
 (SwiftUI `Menu` on iOS, Compose dropdown on Android, Paper menu on web) in the top row:
 `[⌄] ━━━ [rest timer][⋯]`, in the route, the iPad pane and the web pane alike. The top
@@ -276,8 +276,43 @@ has no ⋯ and no Settings, ignores the stored choices and gets the default sect
 ready at once (no read to wait for), so a member's Hide all left in the same browser
 can't strand them with nothing below the board. Every other viewer, a guest without an
 account included, keeps the stored choices, because ⋯ → View options and Settings →
-Climbs & grades → Below the climb both write them. These device-local choices use AsyncStorage (IndexedDB in
-the browser) and keep each section's existing expansion preference and order.
+Climbs & grades → Climb view both write them. These device-local choices use AsyncStorage (IndexedDB in
+the browser) and keep each section's existing expansion preference.
+
+The climber also orders the seven sections below the fold. Each sheet row carries ↑/↓
+arrows (44-point buttons named "Move Logbook up" and so on, disabled at the ends; a move
+announces the new place), drawn by the shared `SectionLayoutList`. A hidden section keeps
+its place, so showing it again puts it back. Restore defaults, under the list, brings back
+today's switches and order together. Settings lists the switches in the saved order and
+has Restore defaults too, but the order only changes in View options: Settings stays on
+the native form. Order and switches share the `playDrawerSections` record,
+`{ version: 1, sections, order }`. `order` came later under the same version, so an older
+bundle still reads the switches; if it writes the record, the order goes back to the
+default and the switches survive. `order` is left out while it matches the default, so a
+later release's default order still reaches climbers who never moved anything. Writes keep
+fields, switches and ordered ids this bundle does not know (an unknown id goes back after
+the id it followed), so a newer bundle's sections survive an OTA rollback and an edit.
+Every section with a switch is below the fold and ordered (`BELOW_FOLD_SECTION_IDS`). The
+pure rules live in `src/lib/section-layout.ts` (a section the stored
+order lacks slots in after the one it follows in the defaults);
+`src/lib/section-layout-store.ts` keeps the same layout in the synchronous settings store
+for surfaces that must know it before the first frame: one store per key, the only writer of
+that key, re-reading it on every settings change, and storing `null` for the defaults unless
+a later release's ids still need a home.
+
+Any section can be the peek at the fold, so each says something while collapsed: Logbook
+your ticks at this angle (plus crew and other angles), Climber logs the crew counts,
+Setter's notes their first line, Beta Videos a count or "None yet", Boardsesh grade its
+grade, Community the angle with the most sends, Similar climbs the closest match by name
+(or that the board needs downloading). `CollapsibleSection`'s `summary` also takes a React
+node for a line that draws itself. Only the on-screen peek may ask for what its line needs,
+once the climb has settled; a section further down shows a line only from what is cached
+and asks for nothing until the climber scrolls to it. The Climber logs card straight under
+a Logbook peek keeps its head start.
+
+The sheet has two tabs, **Below the climb** (these sections) and **Buttons** (the player's buttons, Previous and
+next, and whether the controls sit below or above the board). The buttons, their layout rule, storage and the ⋯
+stand-ins are described in [climb-view-options.md](climb-view-options.md).
 
 The first eligible visible section supplies the header preview at the fold; its header
 mounts before deferred content so hiding Logbook never strands the remaining sections.
@@ -841,6 +876,7 @@ compete. Keep the lightbulb and tick controls outside the zoom source.
 
 ## See also
 
+- `docs/contributing-to-screens.md` — how to propose and ship a change to an existing screen.
 - `docs/react-native-performance.md` — list/provider/gesture performance rules.
 - `docs/mobile-ota-updates.md` — JS-only vs native-change distribution (a presentation change is
   JS-only and rides OTA; a new native module needs a build).

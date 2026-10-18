@@ -1449,6 +1449,42 @@ export const tickMutations = {
             ? canonicalBoardId
             : null;
         const boardAssociationBecameUnavailable = boardId !== null && lockedBoardId === null;
+        // Why the association was dropped, for the warning below. A missing
+        // canonical row is a concurrent delete or a dangling tombstone chain.
+        // After a merge into another owner's board the presented uuid is no
+        // longer its link, so the survivor is either unreadable without a link
+        // or readable but no longer fits the climb; one extra read, only on this
+        // already-failing path, tells them apart.
+        let boardAssociationDropReason:
+          | 'canonical_missing'
+          | 'merged_into_unreadable_survivor'
+          | 'merged_survivor_does_not_fit'
+          | 'merged_board_unavailable'
+          | 'board_unavailable' = 'board_unavailable';
+        if (boardAssociationBecameUnavailable) {
+          if (canonicalBoardId == null) {
+            boardAssociationDropReason = 'canonical_missing';
+          } else if (canonicalBoardId !== boardId) {
+            if (presentedUuidBoard !== null && !presentedLink) {
+              const [readableSurvivor] = await tx
+                .select({ id: dbSchema.userBoards.id })
+                .from(dbSchema.userBoards)
+                .where(
+                  and(
+                    eq(dbSchema.userBoards.id, canonicalBoardId),
+                    isNull(dbSchema.userBoards.deletedAt),
+                    resourceAccessCondition('board', dbSchema.userBoards.uuid, userId, { allowUnlistedLink: false }),
+                  ),
+                )
+                .limit(1);
+              boardAssociationDropReason = readableSurvivor
+                ? 'merged_survivor_does_not_fit'
+                : 'merged_into_unreadable_survivor';
+            } else {
+              boardAssociationDropReason = 'merged_board_unavailable';
+            }
+          }
+        }
         const [createdTick] = await tx
           .insert(dbSchema.boardseshTicks)
           .values({
@@ -1493,16 +1529,21 @@ export const tickMutations = {
         }
 
         if (boardAssociationBecameUnavailable) {
-          // The board was valid when we resolved it above, but a concurrent
-          // delete or dangling tombstone chain won the canonical row lock. Keep
-          // the valid tick and deliberately leave its nullable association empty;
-          // falling back to config here could stamp it onto a different wall.
+          // The board was valid when we resolved it above, but it is no longer
+          // one this climber may attach a tick to (see boardAssociationDropReason:
+          // a concurrent delete or dangling tombstone chain, a merge into another
+          // owner's board they cannot read without a link, a merge reached by
+          // some other path, or a board the climber can no longer read or the
+          // climb no longer fits). Keep the valid tick and deliberately leave its nullable
+          // association empty; falling back to config here could stamp it onto a
+          // different wall.
           // Emit only after a new row was returned: a concurrent idempotent replay
           // that won the UUID insert must not produce this warning for our no-op.
           logger.warn('[saveTick] Board association became unavailable; saving tick without board association', {
             tickUuid: uuid,
             userId,
             requestedBoardId: boardId,
+            reason: boardAssociationDropReason,
             boardAssociationSource,
             boardType: validatedInput.boardType,
             climbUuid,

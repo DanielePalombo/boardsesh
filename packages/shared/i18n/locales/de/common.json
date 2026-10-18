@@ -213,6 +213,11 @@
           "title": "Spraywalls",
           "useOwnLook": "Meinen Look auf Spraywalls verwenden",
           "footer": "Spraywalls zeigen den Look, der beim Anlegen für das Foto gewählt wurde. Schalte das ein, um dort deinen eigenen Look zu sehen."
+        },
+        "moonboard": {
+          "title": "MoonBoard",
+          "gridLabels": "Rasterbuchstaben und -zahlen",
+          "footer": "Zeigt A bis K und die Reihennummern rund ums Board, damit du Griffe wie F5 ansagen kannst."
         }
       },
       "accessibility": {
@@ -385,6 +390,10 @@
         "contributeTitle": "Hilf mit, Boardsesh zu übersetzen",
         "contributeSubtitle": "Die Übersetzungen kommen aus der Community. Öffne die {{language}}-Dateien auf GitHub, um eine Formulierung zu korrigieren oder zu ergänzen."
       },
+      "startup": {
+        "title": "App öffnet mit",
+        "footer": "Gilt ab dem nächsten App-Start. Links, Benachrichtigungen und die Einrichtung öffnen weiterhin ihr eigenes Ziel."
+      },
       "diagnostics": {
         "recording": "Sitzungsaufzeichnungen teilen",
         "recordingDescription": "Zeichnet deinen Bildschirm in der App auf, damit wir sehen, wie ein Bug passiert. Deine Eingaben und Fotos bleiben verborgen. Schalte es ein, während du ein Problem für den Support nachstellst, und danach wieder aus."
@@ -433,11 +442,12 @@
         "leaveDeferred": "Zurückwechseln geht noch nicht. Wir versuchen es beim nächsten Öffnen der App wieder."
       },
       "climbDrawer": {
-        "description": "Wähle, was du unter dem Boulder siehst.",
-        "settingsFooter": "Wähle, was du unter dem Boulder siehst. Du kannst das auch im Menü ⋯ eines Boulders unter Ansichtsoptionen ändern.",
+        "description": "Wähle, was du unter dem Boulder siehst und in welcher Reihenfolge.",
+        "settingsFooter": "Wähle, was du unter dem Boulder siehst. Die Reihenfolge änderst du im Menü ⋯ eines Boulders unter Ansichtsoptionen.",
         "loading": "Ansichtsoptionen werden geladen…",
         "hideAll": "Alles ausblenden",
         "showAll": "Alles anzeigen",
+        "restoreDefaults": "Standard wiederherstellen",
         "sections": {
           "logbook": "Routenbuch",
           "climberLogs": "Einträge von Kletterer*innen",
@@ -449,7 +459,16 @@
         },
         "sheetTitle": "Ansichtsoptionen",
         "groupTitle": "Unter dem Boulder",
-        "footer": "Änderungen gelten sofort. Blende alles aus, um nur den Boulder ohne vertikales Scrollen zu sehen."
+        "footer": "Änderungen gelten sofort. Blende alles aus, um nur den Boulder ohne vertikales Scrollen zu sehen.",
+        "tabs": {
+          "sections": "Unter dem Boulder",
+          "buttons": "Buttons"
+        }
+      },
+      "sectionLayout": {
+        "moveUp": "{{section}} nach oben verschieben",
+        "moveDown": "{{section}} nach unten verschieben",
+        "moved": "{{section}}, {{position}} von {{count}}"
       },
       "climbList": {
         "title": "Boulderliste",
@@ -486,6 +505,41 @@
         "samplePlaylistTwo": "Aufwärmen",
         "playlistTagsDescription": "Sieh direkt in der Liste, in welchen Playlists ein Boulder steckt.",
         "quickActionsDescription": "Gibt jedem Boulder einen ⋮-Button für Warteschlange, Eintrag, Playlists und mehr. Langes Drücken geht weiterhin."
+      },
+      "playerButtons": {
+        "title": "Buttons",
+        "description": "Wähle die Buttons rund um Eintragen, ihre Reihenfolge und ihren Platz.",
+        "position": {
+          "label": "Position",
+          "below": "Unter dem Board",
+          "above": "Über dem Board",
+          "footer": "Eintragen und Board beleuchten behalten immer ihren Platz."
+        },
+        "previousNext": "Zurück und Weiter",
+        "previousNextDescription": "Das Wischen auf dem Board wechselt weiterhin zwischen Bouldern.",
+        "buttons": {
+          "mirror": "Spiegeln",
+          "favorite": "Favorit",
+          "angle": "Winkel",
+          "share": "Teilen",
+          "queue": "Warteschlange"
+        },
+        "mirrorDescription": "Nur bei Boards, die sich spiegeln lassen",
+        "angleDescription": "Nur bei Boards mit verstellbarem Winkel",
+        "fixed": {
+          "previous": "Zurück",
+          "next": "Weiter",
+          "log": "Eintragen",
+          "boardLight": "Board beleuchten"
+        },
+        "footer": "Was von Warteschlange und Spiegeln zuerst kommt, bekommt den großen Button. Ein ausgeblendeter Button bleibt im ⋯-Menü. Ohne kleine Buttons nimmt das Board ihre Reihe ein.",
+        "settingsFooter": "Die Reihenfolge änderst du im Menü ⋯ eines Boulders unter Ansichtsoptionen.",
+        "previewLabel": "Vorschau, {{position}}: {{buttons}}"
+      },
+      "climbView": {
+        "title": "Boulder-Ansicht",
+        "valueDefault": "Standard",
+        "valueCustom": "Benutzerdefiniert"
       }
     },
     "sendRecovery": {

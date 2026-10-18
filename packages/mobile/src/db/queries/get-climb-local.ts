@@ -14,16 +14,30 @@ import { effectiveStatsSql, isDetailCrossAngleStats, mapRowToClimb, type LocalCl
  * No is_hidden predicate, matching the server's getClimbByUuid: opening a climb
  * directly still works after the community hides it. The flag rides along on the
  * row so the caller can say so.
+ *
+ * A draft opens only for its owner, as on the server. `viewerId` is the signed-in
+ * account (the live token, not the owner stamp). The board sync sends a draft to
+ * its owner alone, but a phone can still hold someone else's: the previous
+ * account's drafts survive the sign-out wipe that keeps the catalogue, and a phone
+ * that pulled before that rule kept what it had, including drafts with no
+ * Boardsesh owner. Those rows stay on disk and read as missing here, so online the
+ * request goes to the server, which decides. Nothing on the phone writes a draft
+ * into `board_climbs` itself: every row comes from the server, owner included.
+ *
+ * The send and attempt counts read the viewer's ticks only (`user_id = viewerId`,
+ * or no `user_id` for this device's own offline writes), like every other local
+ * tick read (docs/offline-reads.md, the auth-scoping contract).
  */
 export type GetClimbLocalInput = {
   boardName: string;
   layoutId: number;
   angle: number;
   climbUuid: string;
+  viewerId: string | null;
 };
 
 export async function getClimbLocal(db: OfflineDatabase, input: GetClimbLocalInput): Promise<Climb | null> {
-  const { boardName, layoutId, angle, climbUuid } = input;
+  const { boardName, layoutId, angle, climbUuid, viewerId } = input;
   // Cross-angle whenever the board is angle-bound, whatever the list did (issue
   // #5405), mirroring the server's `resolveDetailCrossAngleStats`. A Woods list is
   // restricted to the browsed angle unless it opts in (#5642), but a climb set at
@@ -50,9 +64,11 @@ export async function getClimbLocal(db: OfflineDatabase, input: GetClimbLocalInp
       COALESCE(g.universal_grade, g.local_grade) AS boardsesh_difficulty,
       g.confidence AS boardsesh_confidence,
       (SELECT COUNT(*) FROM boardsesh_ticks t
-        WHERE t.climb_uuid = c.uuid AND t.board_type = ? AND t.angle = ? AND t.status IN ('flash', 'send')) AS user_ascents,
+        WHERE t.climb_uuid = c.uuid AND t.board_type = ? AND t.angle = ? AND t.status IN ('flash', 'send')
+          AND (t.user_id = ? OR t.user_id IS NULL)) AS user_ascents,
       (SELECT COUNT(*) FROM boardsesh_ticks t
-        WHERE t.climb_uuid = c.uuid AND t.board_type = ? AND t.angle = ? AND t.status = 'attempt') AS user_attempts
+        WHERE t.climb_uuid = c.uuid AND t.board_type = ? AND t.angle = ? AND t.status = 'attempt'
+          AND (t.user_id = ? OR t.user_id IS NULL)) AS user_attempts
     FROM board_climbs c
     LEFT JOIN board_climb_stats s
       ON s.climb_uuid = c.uuid AND s.board_type = ? AND s.angle = ?
@@ -60,15 +76,18 @@ export async function getClimbLocal(db: OfflineDatabase, input: GetClimbLocalInp
     LEFT JOIN board_climb_grades g
       ON g.climb_uuid = c.uuid AND g.board_type = ? AND g.angle = ${gradeAngleSql}
     WHERE c.uuid = ? AND c.board_type = ?
+      AND (COALESCE(c.is_draft, 0) = 0 OR c.user_id = ?)
     LIMIT 1
   `;
   // Bind order follows the SQL text: the two tick subqueries, the stats join, the
-  // optional set-angle join, then the grades join.
+  // optional set-angle join, the grades join, then the WHERE.
   const binds = [
     boardName,
     angle,
+    viewerId,
     boardName,
     angle,
+    viewerId,
     boardName,
     angle,
     ...(crossAngle ? [boardName] : []),
@@ -76,6 +95,7 @@ export async function getClimbLocal(db: OfflineDatabase, input: GetClimbLocalInp
     angle,
     climbUuid,
     boardName,
+    viewerId,
   ];
   const row = await db.getFirstAsync<LocalClimbRow>(query, binds);
   if (!row) return null;

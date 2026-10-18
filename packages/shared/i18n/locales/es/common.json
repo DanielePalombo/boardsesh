@@ -485,6 +485,11 @@
           "title": "Spraywalls",
           "useOwnLook": "Usar mi aspecto en los Spraywalls",
           "footer": "Los Spraywalls muestran el aspecto que eligió su creador para la foto. Actívalo para ver tu propio aspecto en ellos."
+        },
+        "moonboard": {
+          "title": "MoonBoard",
+          "gridLabels": "Letras y números de la cuadrícula",
+          "footer": "Muestra de la A a la K y los números de fila alrededor del plafón, para que puedas nombrar presas como F5."
         }
       },
       "accessibility": {
@@ -657,6 +662,10 @@
         "contributeTitle": "Ayuda a traducir Boardsesh",
         "contributeSubtitle": "Las traducciones las mantiene la comunidad. Abre los archivos de {{language}} en GitHub para corregir o añadir una frase."
       },
+      "startup": {
+        "title": "Abrir la app en",
+        "footer": "Se aplica la próxima vez que abras la app. Los enlaces, las notificaciones y la configuración inicial te siguen llevando a su destino."
+      },
       "diagnostics": {
         "recording": "Compartir grabaciones de sesión",
         "recordingDescription": "Graba tu pantalla en la app para que veamos cómo ocurre un error. Lo que escribes y tus fotos quedan ocultos. Actívalo mientras reproduces un problema para soporte y luego desactívalo."
@@ -705,11 +714,12 @@
         "leaveDeferred": "Todavía no se puede volver. Lo intentaremos la próxima vez que abras la app."
       },
       "climbDrawer": {
-        "description": "Elige qué ves debajo del bloque.",
-        "settingsFooter": "Elige qué ves debajo del bloque. También puedes cambiarlo desde el menú ⋯ de un bloque, en Opciones de vista.",
+        "description": "Elige qué ves debajo del bloque y en qué orden.",
+        "settingsFooter": "Elige qué ves debajo del bloque. Para cambiar el orden, abre el menú ⋯ de un bloque y elige Opciones de vista.",
         "loading": "Cargando opciones de vista…",
         "hideAll": "Ocultar todo",
         "showAll": "Mostrar todo",
+        "restoreDefaults": "Restablecer valores predeterminados",
         "sections": {
           "logbook": "Logbook",
           "climberLogs": "Registros de escaladores",
@@ -721,7 +731,16 @@
         },
         "sheetTitle": "Opciones de vista",
         "groupTitle": "Debajo del bloque",
-        "footer": "Los cambios se aplican al momento. Oculta todo para ver solo el bloque, sin desplazamiento vertical."
+        "footer": "Los cambios se aplican al momento. Oculta todo para ver solo el bloque, sin desplazamiento vertical.",
+        "tabs": {
+          "sections": "Debajo del bloque",
+          "buttons": "Botones"
+        }
+      },
+      "sectionLayout": {
+        "moveUp": "Subir {{section}}",
+        "moveDown": "Bajar {{section}}",
+        "moved": "{{section}}, {{position}} de {{count}}"
       },
       "climbList": {
         "title": "Lista de bloques",
@@ -758,6 +777,41 @@
         "samplePlaylistTwo": "Calentamiento",
         "playlistTagsDescription": "Mira en qué playlists está cada bloque, directamente en la lista.",
         "quickActionsDescription": "Añade un botón ⋮ a cada bloque que abre cola, encadene, listas y más. Siempre puedes mantener pulsado en su lugar."
+      },
+      "playerButtons": {
+        "title": "Botones",
+        "description": "Elige los botones alrededor de Registrar, su orden y dónde van.",
+        "position": {
+          "label": "Posición",
+          "below": "Debajo del plafón",
+          "above": "Encima del plafón",
+          "footer": "Registrar y Luz del plafón siempre mantienen su sitio."
+        },
+        "previousNext": "Anterior y siguiente",
+        "previousNextDescription": "Deslizar el plafón sigue cambiando de bloque.",
+        "buttons": {
+          "mirror": "Espejo",
+          "favorite": "Favorito",
+          "angle": "Ángulo",
+          "share": "Compartir",
+          "queue": "Cola"
+        },
+        "mirrorDescription": "Solo en plafones que se espejean",
+        "angleDescription": "Solo en plafones con ángulo ajustable",
+        "fixed": {
+          "previous": "Anterior",
+          "next": "Siguiente",
+          "log": "Registrar",
+          "boardLight": "Luz del plafón"
+        },
+        "footer": "El primero entre Cola y Espejo se queda con el botón grande. Un botón oculto sigue en el menú ⋯. Sin botones pequeños, el plafón ocupa su fila.",
+        "settingsFooter": "Para cambiar el orden, abre el menú ⋯ de un bloque y elige Opciones de vista.",
+        "previewLabel": "Vista previa, {{position}}: {{buttons}}"
+      },
+      "climbView": {
+        "title": "Vista del bloque",
+        "valueDefault": "Predeterminada",
+        "valueCustom": "Personalizada"
       }
     },
     "sendRecovery": {

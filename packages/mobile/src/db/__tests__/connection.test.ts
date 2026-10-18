@@ -60,6 +60,9 @@ import {
   getDownloadedScopeKeys,
   scopeSyncMetaKeys,
   BOARD_DATA_TABLES,
+  assertLocalUserDataOwner,
+  getLocalUserId,
+  stampLocalUserId,
 } from '@boardsesh/offline-sync';
 import { createTestDatabase, type TestSqliteDb } from '@boardsesh/offline-sync/testing';
 import { SPRAY_PHOTO_PENDING_PREFIX } from '../../offline/spray-photo-retry';
@@ -261,6 +264,121 @@ describe('clearUserData', () => {
       expect(await getCheckpoint(db, getCheckpointKey(tableName, 'kilter:1:1'))).not.toBeNull();
     }
     expect(await isScopeDownloadComplete(db, 'kilter:1:1')).toBe(true);
+  });
+
+  // #6545. With the catalogue revalidation pass gone, this wipe is what hands a
+  // phone from one account to the next when no explicit sign-out wiped it: the
+  // sign-outs the climber did not choose, and the owner-stamp recovery in
+  // OfflineSyncBridge, which runs exactly this sequence.
+  it('hands the phone from account A to account B and keeps the downloaded catalogue', async () => {
+    await seedSignedInDevice();
+    await stampLocalUserId(db, 'account-a');
+    // Another account's published climb, and A's own draft: catalogue rows that stay.
+    await db.runAsync(
+      `INSERT INTO board_climbs (uuid, board_type, user_id, is_draft, is_listed) VALUES (?, 'kilter', ?, ?, 1)`,
+      ['published-by-someone', 'someone-else', 0],
+    );
+    await db.runAsync(
+      `INSERT INTO board_climbs (uuid, board_type, user_id, is_draft, is_listed) VALUES (?, 'kilter', ?, ?, 1)`,
+      ['draft-by-a', 'account-a', 1],
+    );
+    // First-ascent credits. climb-1 has no Boardsesh owner: a manufacturer credit,
+    // the same for every viewer. The Boardsesh climb's credit is the one the stats
+    // sync projected for A.
+    await db.runAsync(
+      `UPDATE board_climb_stats SET fa_username = 'manufacturer-fa', fa_at = '2019-01-01T00:00:00Z' WHERE climb_uuid = 'climb-1'`,
+    );
+    await db.runAsync(
+      `INSERT INTO board_climb_stats (board_type, climb_uuid, angle, ascensionist_count, fa_username, fa_at)
+       VALUES ('kilter', 'published-by-someone', 40, 4, 'private-climber', '2026-01-01T00:00:00Z')`,
+    );
+    // A spray wall A could see, with a climb on it and its scope markers.
+    await db.runAsync(`INSERT INTO spray_walls (layout_id, board_uuid, photo_key) VALUES (?, ?, ?)`, [
+      4,
+      'wall-4',
+      'spray-walls/wall-4/photo-1.jpg',
+    ]);
+    await db.runAsync(`INSERT INTO board_climbs (uuid, board_type, layout_id) VALUES (?, 'spray', 4)`, ['spray-climb']);
+    for (const key of scopeSyncMetaKeys('spray:4:4')) {
+      await db.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [key, '1']);
+    }
+
+    expect(await assertLocalUserDataOwner(db, 'account-b')).toBe('mismatch');
+    await clearUserData(db);
+    await stampLocalUserId(db, 'account-b');
+
+    expect(await getLocalUserId(db)).toBe('account-b');
+    expect(await countRows('spray_walls')).toBe(0);
+    expect(await countRows("board_climbs WHERE board_type = 'spray'")).toBe(0);
+    for (const key of scopeSyncMetaKeys('spray:4:4')) {
+      expect(await db.getFirstAsync('SELECT key FROM sync_meta WHERE key = ?', [key]), key).toBeNull();
+    }
+    expect(await db.getAllAsync("SELECT uuid FROM board_climbs WHERE board_type = 'kilter' ORDER BY uuid")).toEqual([
+      { uuid: 'climb-1' },
+      { uuid: 'draft-by-a' },
+      { uuid: 'published-by-someone' },
+    ]);
+    for (const tableName of BOARD_DATA_TABLES) {
+      expect(await getCheckpoint(db, getCheckpointKey(tableName, 'kilter:1:1')), tableName).not.toBeNull();
+    }
+    expect(await isScopeDownloadComplete(db, 'kilter:1:1')).toBe(true);
+    const credit = (climbUuid: string) =>
+      db.getFirstAsync('SELECT ascensionist_count, fa_username, fa_at FROM board_climb_stats WHERE climb_uuid = ?', [
+        climbUuid,
+      ]);
+    expect(await credit('climb-1')).toEqual({
+      ascensionist_count: 12,
+      fa_username: 'manufacturer-fa',
+      fa_at: '2019-01-01T00:00:00Z',
+    });
+    expect(await credit('published-by-someone')).toEqual({ ascensionist_count: 4, fa_username: null, fa_at: null });
+  });
+});
+
+// What OfflineSyncBridge does with an UNSTAMPED database (#6560 review): a
+// restored backup or a reinstall can carry another climber's synced rows with no
+// stamp. The bridge asks `assertLocalUserDataOwner`, wipes on 'mismatch', then
+// stamps. These run that exact sequence against the real DDL.
+describe('an unstamped database meeting the signed-in account', () => {
+  async function insertTick(uuid: string, userId: string | null): Promise<void> {
+    await db.runAsync(
+      `INSERT INTO boardsesh_ticks (uuid, user_id, board_type, climb_uuid, angle, status) VALUES (?, ?, 'kilter', 'climb-1', 40, 'send')`,
+      [uuid, userId],
+    );
+  }
+
+  async function bridgeHandover(currentUserId: string): Promise<string> {
+    const ownership = await assertLocalUserDataOwner(db, currentUserId);
+    if (ownership === 'mismatch') await clearUserData(db);
+    if (ownership !== 'ok') await stampLocalUserId(db, currentUserId);
+    return ownership;
+  }
+
+  it("wipes another account's ticks instead of claiming them, and keeps the catalogue", async () => {
+    await seedSignedInDevice();
+    await insertTick('tick-by-a', 'account-a');
+
+    expect(await bridgeHandover('account-b')).toBe('mismatch');
+
+    expect(await db.getAllAsync('SELECT uuid FROM boardsesh_ticks')).toEqual([]);
+    expect(await getLocalUserId(db)).toBe('account-b');
+    expect(await countRows('board_climbs')).toBe(1);
+    expect(await isScopeDownloadComplete(db, 'kilter:1:1')).toBe(true);
+  });
+
+  it("keeps the signed-in account's own unsynced ticks and outbox, and stamps", async () => {
+    await insertTick('synced-tick-by-b', 'account-b');
+    await insertTick('offline-tick', null);
+    await enqueue(db, 'boardsesh_ticks', 'create', { climbUuid: 'climb-1' }, 'offline-tick');
+
+    expect(await bridgeHandover('account-b')).toBe('unstamped');
+
+    expect(await db.getAllAsync('SELECT uuid FROM boardsesh_ticks ORDER BY uuid')).toEqual([
+      { uuid: 'offline-tick' },
+      { uuid: 'synced-tick-by-b' },
+    ]);
+    expect(await getPendingCount(db)).toBe(1);
+    expect(await getLocalUserId(db)).toBe('account-b');
   });
 });
 

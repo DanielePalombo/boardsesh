@@ -120,7 +120,7 @@ Fastlane owns tester-track assignment, release notes from
 The upload commits both tracks in one edit and fails if another package-wide
 review is already pending. It never cancels that review or retries the commit
 with relaxed flags. Let the existing review finish, then rerun the failed job.
-Production remains a separate draft/submission flow.
+Production is a separate draft and release flow (see "Review submission and rollout are started by hand" below).
 
 **Catch up open testing without rebuilding:** dispatch **Android Open Beta
 Promotion** (`mobile-store-android-beta.yml`) on `main` with the exact published
@@ -437,11 +437,40 @@ makes a repeat run replace rather than append. The Android lane promotes the
 internal-track release carrying the tagged versionCode to a production release
 in draft status.
 
-Review submission and rollout remain manual:
+Review submission and rollout are started by hand:
 
 - **App Store Connect:** confirm the attached TestFlight build, metadata and
   screenshots, then submit it for review.
-- **Play Console:** promote the verified internal release to production.
+- **Google Play:** dispatch **Android Production Release**
+  (`mobile-store-android-production.yml`) on `main` with the exact published
+  internal versionCode. Its default is a GET-only plan; select `apply` to
+  submit that build to production. `rollout_percent` (default `100`) sets the
+  share of production users: `100` completes the release and replaces both the
+  live release and the store-draft workflow's draft; anything lower writes an
+  `inProgress` release beside the current completed one. Dispatch again with a
+  higher percent to widen it. The workflow shares the native upload lock and
+  refuses a missing source, a downgrade, an ambiguous production track, shrinking
+  a completed release, or a pending package review. The equivalent Fastlane lane
+  is `android production version_code:<code> rollout:<percent>` (plan), with
+  `apply:true` for submission. Play review and managed publishing can still hold
+  the build after a successful commit: confirm it with **Mobile Store Android
+  Audit** on the `production` track.
+
+Use the versionCode the store-draft workflow drafted: it is the current internal
+build. Play keeps only the newest completed internal release, so once a newer native
+build uploads, an older draft can no longer be released this way; release the newer
+build instead. After a build is released, the store-draft workflow's Android job
+reads the production track first (GET-only) and leaves it alone once that build is in
+review, rolling out or live, or when production carries a newer build (a newer draft
+included). A release-branch checkout that predates the guard skips the Play draft too:
+merge `main` into the train, or draft from `main`. That job and Android Production
+Release share the `play-production-track` job lock, so the guard's read and the draft
+write never interleave with a release. Before the lock, a draft run read 2.6.0 as a
+draft four seconds before a release committed it, then wrote a second draft on top.
+
+Until Android reaches production, the daily stable OTA controller has no Android
+devices to judge on that native runtime. Release Android promptly after its store
+draft appears (see `docs/mobile-ota-updates.md`, "Daily stable runbook").
 
 Before submission, dispatch **Mobile Store Audit** (`mobile-store-audit.yml`) on
 `main` with the exact marketing version and iOS build number. It reads App Store
@@ -544,8 +573,11 @@ Connect before concluding that an items-only review slot is available.
 
 Android review remains a separate operation. Before sending a production release
 for review, verify managed publishing in Play Console and establish whether approval
-should publish immediately or wait. Existing metadata and draft lanes skip Android
-changelogs; deliver the reviewed notes explicitly. A release edit must coordinate
+should publish immediately or wait. The metadata and draft lanes do not upload
+Android changelogs. **Android Production Release** takes the release name and notes
+from the build's production draft when it has them (so notes edited by hand in Play
+Console survive), otherwise from its internal release, and lists the note languages
+in its receipt. A release edit must coordinate
 with every Play writer and commit with `changesInReviewBehavior=ERROR_IF_IN_REVIEW`
 so it cannot cancel an existing review by default.
 
@@ -567,7 +599,9 @@ after the shipped fingerprint moves on.
 4. Complete native QA against the exact uploaded candidates.
 5. Screenshots re-capture themselves after the native build (the probe decides
    whether to fan out); listing text pushes itself.
-6. Verify the store drafts select the tagged builds, then submit both manually.
+6. Verify the store drafts select the tagged builds. Submit the App Store version
+   for review by hand; release Android with **Android Production Release** (plan,
+   then `apply`).
 7. After approval, confirm both immutable release anchors were created, then
    if using a train, merge it into `main` as a **merge commit** and reset it.
 8. Re-record the homepage showcase video's app footage so the site shows the

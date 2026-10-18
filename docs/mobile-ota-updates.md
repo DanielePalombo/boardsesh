@@ -361,6 +361,24 @@ Rule: any imperative native call that could be OTA-ahead of the native binary mu
 `.catch` / capability probe / `requireOptionalNativeModule` null-check) so it degrades to a no-op
 instead of throwing. For `@expo/ui` sheets the guard lives in `patches/@expo%2Fui@57.0.11.patch`.
 
+### Invariant: an OTA can't claim a manifest flag the binary lacks
+
+The same gap runs the other way for facts compiled into the binary: Android manifest flags,
+Info.plist keys, entitlements. An OTA lands on binaries built before and after such a change, and
+nothing in the JS bundle says which one it is running on. JS that depends on one reads the
+installed binary through `expo-application` (`nativeBuildVersion` is the Android versionCode,
+`nativeApplicationVersion` the marketing version; no OTA can move either) against a floor that
+names the first build carrying it, and treats an unreadable value as "not there".
+
+Example: `packages/mobile/src/lib/ble/android-scan-location-gate.ts` treats `BLUETOOTH_SCAN`'s
+`neverForLocation` flag as present only from versionCode 2000761
+(`FIRST_ANDROID_BUILD_WITH_NEVER_FOR_LOCATION`, the first release build containing db21745fe7).
+Older installs keep the "allow Location to see boards" hint they still need. Dev-client APKs take
+the workflow run number as their versionCode, so they read as older: the safe direction. A native
+rebuild from a release anchor older than the flag would read as newer, which is one more reason
+backports to an older fingerprint ship as OTAs only. `src/lib/spray/camera-capability.ts` does the
+same for the camera permission strings with a marketing-version floor.
+
 ## Publishing a production update
 
 **Automatic.** A mobile-affecting push to `main` is detected by
@@ -628,8 +646,9 @@ leaves the PR-number check in `scripts/ota-preview-cleanup.ts` as the only thing
 run and those branches. Protection is the second lock.
 
 The same file declares the daily controller's release policy: canary steps 5, 10, 25, 50,
-four hours per step, at least 20 hours overall and eight hours at 50%, then a healthy finish in the
-22:00 UTC daily window. The controller stays read-only for production until
+four hours per step, at least 20 hours overall and eight hours at 50%, then a finish in the
+22:00 UTC daily window once every changed platform is healthy or has no fleet yet (see the daily
+stable runbook). The controller stays read-only for production until
 `OTA_STABLE_RELEASE_ENABLED=true`. Health thresholds remain provisional until the fleet's normal
 faulty-device rate has been measured; see the daily stable runbook below.
 
@@ -958,7 +977,23 @@ read-only plan that skips boot execution; the controller's other jobs retain the
 
 Each of 5%, 10%, 25% and 50% must soak for at least four hours. Completion additionally needs at
 least 20 hours overall, eight hours at 50%, the 22:00 UTC hour and healthy evidence on every changed platform.
-Insufficient samples with valid counts may progress through 50%, then hold. Missing or malformed
+Insufficient samples with valid counts may progress through 50%, then hold.
+One exception keeps a store lag from freezing both platforms. A changed platform has **no fleet yet**
+when its store binary has not reached people: Android 2.6.0 sat as a Play draft while iOS 2.6.0 was live,
+its canary had 0 devices and its control 1, and the release held at 50% for days (#6524). Precisely, the
+platform's verdict is `insufficient-evidence`, its canary and control together have fewer than 5 devices
+(`noFleetBelowDevicesPerPlatform`, counting each cohort as the larger of devices on the update and
+reporting devices), no canary device is faulty, and the canary's launch and JS issue counters come from
+the snapshot history (the degraded `state` answer of a server without ClickHouse never counts) and read zero. Such a platform does not block the finish when at least one other changed platform is
+healthy; the finish reason names it with its device count. A runtime with 5 to 14 devices has started to
+reach people and waits for the normal 15-device verdict.
+
+A no-fleet finish ships that platform's bundle at 100% with no device evidence; its only launch proof is
+the frozen candidate's native boot check. Nothing reverts it automatically later: the next canary uses
+it as its control. If it turns out bad once the store binary ships, publish known-good bytes through the
+trusted manual route. A lone changed platform with no fleet (the other platform unchanged) still holds
+at 50%, because there is no healthy sibling to prove the health feed works. Release that store binary,
+or dispatch `command=abort` to clear the release so later candidates can start. Missing or malformed
 health data holds progression. An unhealthy platform reverts the owned canaries, except the partial-finish
 case below. There is only one active production canary; staging and beta continue independently.
 Start and step clocks begin after every changed platform write is confirmed, so a partial write never shortens a soak.

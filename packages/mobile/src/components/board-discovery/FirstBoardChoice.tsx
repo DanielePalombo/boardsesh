@@ -8,6 +8,7 @@ import { Button } from '../Button';
 import { ActivityIndicator } from '../ActivityIndicator';
 import type { IconName } from '../icon-map';
 import { useTheme } from '../../providers/theme-provider';
+import type { BoardName } from '@boardsesh/shared-schema';
 import type { FirstBoardGymState } from '../../lib/boards/first-board-gym-state';
 import { NearbySearchStatus } from './NearbySearchStatus';
 import { spacing } from '../../theme/tokens';
@@ -24,6 +25,10 @@ type FirstBoardChoiceProps = {
   onOpenSettings: () => void;
   /** Asks for the boards near the climber again, after `nearby_error`. */
   onRetryNearby: () => void;
+  /** The one board type the gym search is narrowed to, or null; see `NearbySearchStatus`. */
+  nearbyBoardType?: BoardName | null;
+  /** Drops `nearbyBoardType`. */
+  onShowAllNearby?: () => void;
   /**
    * "Add my spray wall", under My own board for the Climbs no-board entry.
    * The builder behind My own board cannot make a spray wall, so
@@ -57,6 +62,8 @@ export function FirstBoardChoice({
   onFindGymOnMap,
   onOpenSettings,
   onRetryNearby,
+  nearbyBoardType = null,
+  onShowAllNearby,
   onAddSprayWall,
 }: FirstBoardChoiceProps) {
   const { t } = useTranslation('boards');
@@ -93,6 +100,8 @@ export function FirstBoardChoice({
           onFindGymOnMap={onFindGymOnMap}
           onOpenSettings={onOpenSettings}
           onRetryNearby={onRetryNearby}
+          boardType={nearbyBoardType}
+          onShowAll={onShowAllNearby}
         />
       )}
 
@@ -110,12 +119,6 @@ export function FirstBoardChoice({
 
       <View style={styles.scan}>
         <Button title={t('mobile.firstBoard.scan')} variant="text" icon="bluetooth" onPress={onScan} />
-        {/* Always visible, not only after a scan comes up empty: the scan cannot
-            see MoonBoards or boxes that don't advertise a serial, and a climber
-            standing at one should know that before they wait on it. */}
-        <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.footnote}>
-          {t('mobile.firstBoard.scanFootnote')}
-        </Text>
       </View>
     </View>
   );
@@ -188,13 +191,9 @@ const styles = StyleSheet.create({
   scan: {
     paddingHorizontal: spacing[4],
     alignItems: 'flex-start',
-    gap: spacing[1],
   },
   textAction: {
     paddingHorizontal: spacing[4],
     alignItems: 'flex-start',
-  },
-  footnote: {
-    paddingHorizontal: spacing[1],
   },
 });
