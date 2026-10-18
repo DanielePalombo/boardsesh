@@ -1,4 +1,5 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { MoreForm } from '../../MoreForm';
 import { normaliseStartupScreen } from '../../../lib/app-entry-route';
@@ -8,11 +9,18 @@ import { trackSettingChanged } from '../../../lib/settings-analytics';
 import { useSetting, type StartupScreen } from '../../../settings';
 import { useHomeSectionControls } from '../../home/use-home-section-controls';
 import { buildHomeSettingsModel } from './home-settings-model';
+import { HomeSectionsFormList } from './HomeSectionsFormList';
+
+// A first guess at one row's height at the default text size, until the list
+// reports what it really drew. Scaled by the text size so the guess is close.
+const ROW_HEIGHT_GUESS = 68;
 
 /**
- * Settings › Home. "Open the app on" first, then the switches and presets, which
- * are the Customize Home sheet's own (`useHomeSectionControls`), so the two never
- * disagree. Every change reports one `Setting Changed` under the `homeScreen` page.
+ * Settings › Home. "Open the app on" first, then the sections with their
+ * switches and ↑/↓ arrows, then the presets. The rows and actions are the
+ * Customize Home sheet's own (`useHomeSectionControls`) over the same store, so
+ * the page, the sheet and Home always agree. Every change reports one
+ * `Setting Changed` under the `homeScreen` page.
  */
 export function HomeSettingsScreen() {
   const { t } = useTranslation('common');
@@ -32,6 +40,7 @@ export function HomeSettingsScreen() {
   const {
     rows,
     onVisibleChange,
+    onMove,
     showAll,
     applyFocused,
     restoreDefaults,
@@ -47,13 +56,30 @@ export function HomeSettingsScreen() {
     },
     [onVisibleChange],
   );
+  const movableRows = useMemo(() => rows.filter((row) => row.movable), [rows]);
+  const fixedRows = useMemo(() => rows.filter((row) => !row.movable), [rows]);
+  const { fontScale } = useWindowDimensions();
+  const [measuredListHeight, setMeasuredListHeight] = useState<number | null>(null);
+  const listHeight = measuredListHeight ?? Math.ceil(movableRows.length * ROW_HEIGHT_GUESS * Math.max(fontScale, 1));
+  const movableListContent = useMemo(
+    () => (
+      <HomeSectionsFormList
+        rows={movableRows}
+        onVisibleChange={onVisibleChange}
+        onMove={onMove}
+        onHeightChange={setMeasuredListHeight}
+      />
+    ),
+    [movableRows, onVisibleChange, onMove],
+  );
   const model = useMemo(
     () =>
       buildHomeSettingsModel({
         t,
         startupScreen,
         onStartupScreenChange,
-        rows,
+        movableList: { content: movableListContent, height: listHeight },
+        fixedRows,
         onSectionChange,
         canShowAll,
         onShowAll: showAll,
@@ -66,7 +92,9 @@ export function HomeSettingsScreen() {
       t,
       startupScreen,
       onStartupScreenChange,
-      rows,
+      movableListContent,
+      listHeight,
+      fixedRows,
       onSectionChange,
       canShowAll,
       showAll,

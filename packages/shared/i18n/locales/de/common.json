@@ -477,7 +477,7 @@
         "groupTitle": "Auf Start",
         "customize": "Start anpassen",
         "description": "Wähle, was Start zeigt und in welcher Reihenfolge. Fokus zeigt dein Board, deine Session und deine Playlists.",
-        "settingsFooter": "Wähle, was Start zeigt. Die Reihenfolge änderst du mit Start anpassen auf dem Start-Tab.",
+        "settingsFooter": "Wähle, was Start zeigt und in welcher Reihenfolge. Start anpassen auf dem Start-Tab ändert dieselbe Liste.",
         "footer": "Änderungen gelten sofort und nur auf diesem Handy. Sie ändern nicht, wer dein Klettern sehen kann.",
         "showAll": "Alles anzeigen",
         "focused": "Fokus",

@@ -477,7 +477,7 @@
         "groupTitle": "On Home",
         "customize": "Customize Home",
         "description": "Choose what Home shows, and in what order. Focused shows your board, session and playlists.",
-        "settingsFooter": "Choose what Home shows. To change the order, tap Customize Home on Home.",
+        "settingsFooter": "Choose what Home shows, and in what order. Customize Home, on Home itself, changes the same list.",
         "footer": "Changes apply right away, on this phone only. They don't change who can see your climbing.",
         "showAll": "Show all",
         "focused": "Focused",

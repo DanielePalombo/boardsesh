@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, type ComponentType } from 'react';
-import { FlatList, StyleSheet, View, type FlatListProps } from 'react-native';
+import { FlatList, StyleSheet, View, type ColorValue, type FlatListProps } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../Icon';
 import { PressableSurface } from '../PressableSurface';
@@ -67,6 +67,8 @@ const MOVABLE_SEPARATOR_INSET = ARROWS_INSET + ARROW_SIZE * 2 + spacing[4];
 
 type RowProps<Id extends string> = PlacedSectionLayoutRow<Id> & {
   disabled: boolean;
+  /** Unset draws the rows' own grouped surface. */
+  rowBackgroundColor: ColorValue | undefined;
   onVisibleChange: (sectionId: Id, visible: boolean) => void;
   onMove: SectionMoveHandler<Id>;
 };
@@ -85,6 +87,7 @@ function SectionLayoutRowBase<Id extends string>({
   canMoveUp,
   canMoveDown,
   disabled,
+  rowBackgroundColor,
   onVisibleChange,
   onMove,
 }: RowProps<Id>) {
@@ -113,7 +116,7 @@ function SectionLayoutRowBase<Id extends string>({
     <View
       style={[
         styles.row,
-        { backgroundColor: systemColors.secondaryBackground },
+        { backgroundColor: rowBackgroundColor ?? systemColors.secondaryBackground },
         first && styles.firstRow,
         last && styles.lastRow,
         gapAbove && styles.gapAbove,
@@ -185,6 +188,12 @@ type SectionLayoutListProps<Id extends string> = Omit<
   rows: readonly SectionLayoutRowModel<Id>[];
   /** Greys every switch and arrow out, such as while a stored layout still loads. */
   disabled?: boolean;
+  /**
+   * The rows' surface. Unset draws the grouped surface a sheet needs;
+   * `'transparent'` lets a card the list sits in show through, such as a
+   * native Settings form's section.
+   */
+  rowBackgroundColor?: ColorValue;
   onVisibleChange: (sectionId: Id, visible: boolean) => void;
   onMove: SectionMoveHandler<Id>;
   /** The list to render into: `BottomSheetFlatList` inside a sheet, React Native's `FlatList` elsewhere. */
@@ -200,6 +209,7 @@ type SectionLayoutListProps<Id extends string> = Omit<
 export function SectionLayoutList<Id extends string>({
   rows,
   disabled = false,
+  rowBackgroundColor,
   onVisibleChange,
   onMove,
   ListComponent = FlatList,
@@ -208,9 +218,15 @@ export function SectionLayoutList<Id extends string>({
   const placedRows = useMemo(() => placeSectionLayoutRows(rows), [rows]);
   const renderItem = useCallback(
     ({ item }: { item: PlacedSectionLayoutRow<Id> }) => (
-      <SectionLayoutRow {...item} disabled={disabled} onVisibleChange={onVisibleChange} onMove={onMove} />
+      <SectionLayoutRow
+        {...item}
+        disabled={disabled}
+        rowBackgroundColor={rowBackgroundColor}
+        onVisibleChange={onVisibleChange}
+        onMove={onMove}
+      />
     ),
-    [disabled, onVisibleChange, onMove],
+    [disabled, rowBackgroundColor, onVisibleChange, onMove],
   );
   return (
     <ListComponent

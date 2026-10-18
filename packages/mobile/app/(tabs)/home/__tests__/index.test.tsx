@@ -15,6 +15,11 @@ const recorded = vi.hoisted(() => ({
   customizeSheet: [] as boolean[],
 }));
 const focus = vi.hoisted(() => ({ hasBeenFocused: true }));
+const homeBoardState = vi.hoisted(() => ({
+  board: null as { uuid: string; boardType: string; layoutId: number; name: string; gymName: string | null } | null,
+  isResolving: false,
+  boards: [] as unknown[],
+}));
 const refresh = vi.hoisted(() => ({
   onRefresh: null as (() => void) | null,
   refreshing: false,
@@ -173,7 +178,7 @@ vi.mock('../../../../src/lib/graphql/query-keys', () => ({
 }));
 vi.mock('@boardsesh/playlists-react', () => ({ SMART_PLAYLIST_COUNTS_QUERY_KEY: 'mySmartPlaylistCounts' }));
 vi.mock('../../../../src/lib/graphql/hooks/use-home-board', () => ({
-  useHomeBoard: () => ({ board: null, isResolving: false, boards: [] }),
+  useHomeBoard: () => homeBoardState,
 }));
 vi.mock('../../../../src/providers/auth-provider', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock('../../../../src/providers/theme-provider', () => ({
@@ -213,6 +218,8 @@ beforeEach(() => {
   settings.values.clear();
   homeSectionsStore.restoreDefaults();
   focus.hasBeenFocused = true;
+  homeBoardState.board = null;
+  homeBoardState.isResolving = false;
   recorded.crewFeedEnabled = [];
   recorded.sessionFeedEnabled = [];
   recorded.railProps = [];
@@ -366,5 +373,18 @@ describe('Home sections', () => {
     expect(refresh.invalidateQueries.mock.calls.map(([filters]) => filters)).toContainEqual({
       queryKey: ['recentBetaLinks'],
     });
+  });
+
+  it('asks Fresh beta once, for the home board, on a cold start that opens on Home', () => {
+    homeBoardState.board = { uuid: 'board-1', boardType: 'kilter', layoutId: 8, name: 'Home wall', gymName: null };
+    homeBoardState.isResolving = true;
+    homeSectionsStore.setVisible('beta', true);
+    const { rerender } = render(createElement(HomeTab));
+    homeBoardState.isResolving = false;
+    rerender(createElement(HomeTab));
+    const asked = recorded.betaProps.filter((props) => props.enabled);
+    expect(asked.length).toBeGreaterThan(0);
+    // Never once for every board first: the board is set before the shelf may ask.
+    expect(asked.every((props) => props.boardType === 'kilter' && props.layoutId === 8)).toBe(true);
   });
 });

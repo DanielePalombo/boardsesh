@@ -9,10 +9,8 @@ function makeInput(overrides: Partial<HomeSettingsModelInput> = {}): HomeSetting
     t: echo,
     startupScreen: 'climbs',
     onStartupScreenChange: vi.fn(),
-    rows: [
-      { id: 'board', label: 'Your board', visible: false, movable: true },
-      { id: 'feed', label: 'Feed', visible: true, movable: false },
-    ],
+    movableList: { content: 'movable rows', height: 340 },
+    fixedRows: [{ id: 'feed', label: 'Feed', description: 'Always last', visible: true, movable: false }],
     onSectionChange: vi.fn(),
     canShowAll: true,
     onShowAll: vi.fn(),
@@ -33,10 +31,11 @@ function findRow(input: HomeSettingsModelInput, key: string): MoreRow {
 }
 
 describe('buildHomeSettingsModel', () => {
-  it('runs the start-up tab first, then the sections, then the presets', () => {
+  it('runs the start-up tab first, then the sections, the feed, then the presets', () => {
     expect(buildHomeSettingsModel(makeInput()).sections.map((section) => section.key)).toEqual([
       'startup',
       'sections',
+      'fixedSections',
       'presets',
     ]);
   });
@@ -76,15 +75,21 @@ describe('buildHomeSettingsModel', () => {
     });
   });
 
-  it('lists the sections as switches in the order given, and the presets with their states', () => {
+  it('hosts the movable sections as one full-bleed row at their drawn height, the feed as a switch', () => {
     const onSectionChange = vi.fn();
     const model = buildHomeSettingsModel(makeInput({ onSectionChange }));
-    const [, sections, presets] = model.sections;
-    expect(sections.rows.map((row) => row.key)).toEqual(['board', 'feed']);
-    const board = sections.rows[0];
-    if (board.kind !== 'toggle') throw new Error('board is not a toggle');
-    board.onValueChange(true);
-    expect(onSectionChange).toHaveBeenCalledWith('board', true);
+    const [, sections, fixed, presets] = model.sections;
+    expect(sections.title).toBe('mobile.settings.homeSections.groupTitle');
+    expect(sections.rows).toEqual([
+      { kind: 'custom', key: 'movableSections', content: 'movable rows', height: 340, fullBleed: true },
+    ]);
+    expect(fixed.footer).toBe('mobile.settings.homeSections.settingsFooter');
+    expect(fixed.rows.map((row) => row.key)).toEqual(['feed']);
+    const feed = fixed.rows[0];
+    if (feed.kind !== 'toggle') throw new Error('feed is not a toggle');
+    expect(feed.subtitle).toBe('Always last');
+    feed.onValueChange(false);
+    expect(onSectionChange).toHaveBeenCalledWith('feed', false);
     expect(presets.rows.map((row) => [row.key, row.kind === 'button' ? row.disabled : null])).toEqual([
       ['showAll', false],
       ['focused', false],

@@ -15,7 +15,7 @@ import { trackSettingChanged } from '../../lib/settings-analytics';
 import type { SectionLayoutRowModel } from '../section-layout/SectionLayoutList';
 
 // Every Home edit reports `Setting Changed` under this page, from the Customize
-// sheet and from Settings › General alike. Values are section ids or preset
+// sheet and from Settings › Home alike. Values are section ids or preset
 // names, never labels.
 const ANALYTICS_PAGE = 'homeScreen';
 

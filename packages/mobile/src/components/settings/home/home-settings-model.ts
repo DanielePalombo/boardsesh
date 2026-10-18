@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { HomeSectionId } from '../../../lib/home-sections';
 import type { StartupScreen } from '../../../settings';
 import type { MoreFormModel, MoreOption } from '../../MoreForm.types';
@@ -9,8 +10,13 @@ export type HomeSettingsModelInput = {
   /** The tab an ordinary launch opens on (#6536). */
   startupScreen: StartupScreen;
   onStartupScreenChange: (screen: StartupScreen) => void;
-  /** Home's sections in the climber's order, from `useHomeSectionControls`. */
-  rows: readonly SectionLayoutRowModel<HomeSectionId>[];
+  /**
+   * The sections that move, as one hosted row: `HomeSectionsFormList`, the
+   * sheet's switch-and-arrows rows. The form has no reorderable row of its own.
+   */
+  movableList: { content: ReactNode; height: number };
+  /** The sections that keep their place (the feed, always last), as native switches. */
+  fixedRows: readonly SectionLayoutRowModel<HomeSectionId>[];
   onSectionChange: (sectionId: HomeSectionId, visible: boolean) => void;
   canShowAll: boolean;
   onShowAll: () => void;
@@ -22,9 +28,9 @@ export type HomeSettingsModelInput = {
 
 /**
  * Settings › Home, on the native form like Board and Climbs & grades: whether
- * the app opens on Climbs or Home, then a switch per section in the saved order,
- * then Show all, Focused and Restore defaults. No arrows: the order changes in
- * the Customize Home sheet on Home itself.
+ * the app opens on Climbs or Home; the sections with their switches and ↑/↓
+ * arrows (the one React Native row, #6480's exception, at Marco's ask); the feed,
+ * which stays last; then Show all, Focused and Restore defaults.
  */
 export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormModel {
   const { t } = input;
@@ -59,8 +65,20 @@ export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormM
       {
         key: 'sections',
         title: t('mobile.settings.homeSections.groupTitle'),
+        rows: [
+          {
+            kind: 'custom',
+            key: 'movableSections',
+            content: input.movableList.content,
+            height: input.movableList.height,
+            fullBleed: true,
+          },
+        ],
+      },
+      {
+        key: 'fixedSections',
         footer: t('mobile.settings.homeSections.settingsFooter'),
-        rows: input.rows.map((row) => ({
+        rows: input.fixedRows.map((row) => ({
           kind: 'toggle',
           key: row.id,
           label: row.label,

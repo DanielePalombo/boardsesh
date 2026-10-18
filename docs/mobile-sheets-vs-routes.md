@@ -330,11 +330,13 @@ overflow so those inputs can open the content gate. Hide all removes that overfl
 ### Home section controls
 
 Home's **Customize Home** sheet (`HomeCustomizeSheet`) follows the play drawer's pattern: a
-managed `ModalSheet` mounted on the Home tab on first open, Show all and Focused above the
-list, Restore defaults under it. Both sheets are built from the pieces in
-`src/components/section-layout/SectionLayoutSheet.tsx` (frame, intro, footer, sheet list).
-Settings › Home stays on the native form: the switches in the saved order, then Show all,
-Focused and Restore defaults, with no arrows. Its layout lives in `homeSectionsStore`
+managed `ModalSheet` mounted on the Home tab on first open, Show all and Focused at the head
+of the list (they scroll with it), Restore defaults under it. Both sheets are built from the
+pieces in `src/components/section-layout/SectionLayoutSheet.tsx` (frame, intro, footer,
+sheet list). Settings › Home is the native form with one exception (#6480, Marco's ask on
+#6546): the movable sections, with switches and arrows, are the same `SectionLayoutList`
+rows hosted in one full-bleed `custom` row, because the form has no reorderable row. Open
+the app on, the feed's switch and Show all / Focused / Restore defaults stay native. Its layout lives in `homeSectionsStore`
 (`homeSectionsV1`, via `settingsLayoutStorage`); see `docs/ui/02-home.md`.
 
 ## The decision tree

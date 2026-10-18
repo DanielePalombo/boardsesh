@@ -1,28 +1,25 @@
 // @vitest-environment jsdom
-import { createElement, useSyncExternalStore } from 'react';
+import { createElement, isValidElement, useSyncExternalStore, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render } from '@testing-library/react';
-import type { MoreButtonRow, MoreFormModel, MoreSegmentedRow, MoreToggleRow } from '../../../MoreForm.types';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type {
+  MoreButtonRow,
+  MoreCustomRow,
+  MoreFormModel,
+  MoreSegmentedRow,
+  MoreToggleRow,
+} from '../../../MoreForm.types';
 import type { SettingsChange } from '../../../../settings/hooks';
 
-// The real controls and store behind the native form; only the form, the
-// reporting and the settings file are stand-ins.
+// The real controls, store, switch-and-arrow rows and Customize sheet; only the
+// native form, the platform primitives, the reporting and the settings file are
+// stand-ins.
 const captured = vi.hoisted(() => ({ model: null as MoreFormModel | null }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
   values: new Map<string, unknown>(),
 }));
-
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('../../../MoreForm', () => ({
-  MoreForm: ({ model }: { model: MoreFormModel }) => {
-    captured.model = model;
-    return null;
-  },
-}));
-vi.mock('../../../../lib/analytics', () => ({ track: analytics.track }));
-vi.mock('../../../../lib/haptics', () => ({ hapticSelection: vi.fn() }));
 const settingsFile = vi.hoisted(() => ({
   subscribe: (listener: (change: SettingsChange) => void) => {
     settings.listeners.add(listener);
@@ -36,6 +33,93 @@ const settingsFile = vi.hoisted(() => ({
     for (const listener of settings.listeners) listener({ kind: 'setting', key: key as never });
   },
 }));
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key),
+  }),
+}));
+vi.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
+  DynamicColorIOS: (appearances: { light: string }) => appearances.light,
+  PlatformColor: (name: string) => name,
+  useWindowDimensions: () => ({ width: 375, height: 667, fontScale: 1, scale: 2 }),
+  View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
+    createElement('div', { 'data-testid': testID }, children),
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  FlatList: () => null,
+}));
+vi.mock('../../../MoreForm', () => ({
+  MoreForm: ({ model }: { model: MoreFormModel }) => {
+    captured.model = model;
+    return null;
+  },
+}));
+vi.mock('../../../SwitchRow', () => ({
+  SwitchRow: ({
+    label,
+    value,
+    onValueChange,
+  }: {
+    label: string;
+    value: boolean;
+    onValueChange: (next: boolean) => void;
+  }) =>
+    createElement('input', {
+      type: 'checkbox',
+      role: 'switch',
+      'aria-label': label,
+      checked: value,
+      onChange: () => onValueChange(!value),
+    }),
+}));
+vi.mock('../../../PressableSurface', () => ({
+  PressableSurface: ({
+    children,
+    onPress,
+    disabled,
+    testID,
+  }: {
+    children?: ReactNode;
+    onPress: () => void;
+    disabled?: boolean;
+    testID?: string;
+  }) => createElement('button', { onClick: onPress, disabled, 'data-testid': testID }, children),
+}));
+vi.mock('../../../Icon', () => ({ Icon: () => null }));
+vi.mock('../../../Text', () => ({
+  Text: ({ children }: { children?: ReactNode }) => createElement('p', null, children),
+}));
+vi.mock('../../../Button', () => ({
+  Button: ({ title, onPress, testID }: { title: string; onPress: () => void; testID?: string }) =>
+    createElement('button', { onClick: onPress, 'data-testid': testID }, title),
+}));
+vi.mock('../../../ModalSheet', () => ({
+  ModalSheet: ({ header, children }: { header?: ReactNode; children?: ReactNode }) =>
+    createElement('section', { 'data-testid': 'sheet' }, header, children),
+}));
+vi.mock('../../../SheetTopBar', () => ({ SheetTopBar: () => null }));
+vi.mock('../../../use-ios-sheet-background-style', () => ({ useIosSheetBackgroundStyle: () => undefined }));
+vi.mock('@expo/ui/community/bottom-sheet', () => ({
+  BottomSheetFlatList: ({
+    data,
+    renderItem,
+  }: {
+    data: Array<{ id: string }>;
+    renderItem: (entry: { item: { id: string }; index: number }) => ReactNode;
+  }) =>
+    createElement(
+      'ol',
+      null,
+      ...data.map((item, index) => createElement('li', { key: item.id }, renderItem({ item, index }))),
+    ),
+}));
+vi.mock('../../../../providers/theme-provider', () => ({
+  useTheme: () => ({ systemColors: {}, brandColors: { primary: 'brand' } }),
+}));
+vi.mock('../../../../lib/analytics', () => ({ track: analytics.track }));
+vi.mock('../../../../lib/haptics', () => ({ hapticSelection: vi.fn() }));
+vi.mock('../../../../lib/announce-queued', () => ({ announceQueued: vi.fn() }));
 vi.mock('../../../../settings/hooks', () => ({
   subscribeSettings: settingsFile.subscribe,
   getSetting: settingsFile.get,
@@ -49,26 +133,35 @@ vi.mock('../../../../settings', () => ({
 }));
 
 import { HomeSettingsScreen } from '../HomeSettingsScreen';
-import { homeSectionsStore } from '../../../../lib/home-sections';
+import { HomeCustomizeSheet } from '../../../home/HomeCustomizeSheet';
+import { homeSectionsStore, visibleTopHomeSections } from '../../../../lib/home-sections';
+
+const SECTION_KEY = 'mobile.settings.homeSections.sections';
 
 function rows() {
   return captured.model?.sections.flatMap((section) => section.rows) ?? [];
 }
-function toggle(key: string): MoreToggleRow {
+function rowOfKind(key: string, kind: string) {
   const row = rows().find((candidate) => candidate.key === key);
-  if (row?.kind !== 'toggle') throw new Error(`no toggle ${key}`);
+  if (row?.kind !== kind) throw new Error(`no ${kind} row ${key}`);
   return row;
 }
-function segmented(key: string): MoreSegmentedRow {
-  const row = rows().find((candidate) => candidate.key === key);
-  if (row?.kind !== 'segmented') throw new Error(`no segmented row ${key}`);
-  return row;
+const toggle = (key: string) => rowOfKind(key, 'toggle') as MoreToggleRow;
+const button = (key: string) => rowOfKind(key, 'button') as MoreButtonRow;
+const segmented = (key: string) => rowOfKind(key, 'segmented') as MoreSegmentedRow;
+const hostedRow = () => rowOfKind('movableSections', 'custom') as MoreCustomRow;
+
+/** Draws the hosted React Native row the way the native form would, into its own container. */
+function renderHostedRows() {
+  const { content } = hostedRow();
+  if (!isValidElement(content)) throw new Error('hosted row has no element');
+  return render(content);
 }
-function button(key: string): MoreButtonRow {
-  const row = rows().find((candidate) => candidate.key === key);
-  if (row?.kind !== 'button') throw new Error(`no button ${key}`);
-  return row;
+
+function switchLabels(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('[role="switch"]')].map((element) => element.getAttribute('aria-label') ?? '');
 }
+
 function settingChangedCalls() {
   return analytics.track.mock.calls
     .filter(([event]) => event === 'Setting Changed')
@@ -87,27 +180,77 @@ afterEach(() => {
 });
 
 describe('HomeSettingsScreen', () => {
-  it('lists a switch per section in the saved order, then the presets', () => {
+  it('runs Open the app on, the sections, the feed, then the presets', () => {
+    render(createElement(HomeSettingsScreen));
+    expect(captured.model?.sections.map((section) => section.key)).toEqual([
+      'startup',
+      'sections',
+      'fixedSections',
+      'presets',
+    ]);
+    expect(captured.model?.sections[2].rows.map((row) => row.key)).toEqual(['feed']);
+    expect(captured.model?.sections[3].rows.map((row) => row.key)).toEqual(['showAll', 'focused', 'restoreDefaults']);
+  });
+
+  it('hosts the movable sections with switches and arrows, in the saved order, the feed left out', () => {
     homeSectionsStore.move('climbingNow', -1);
     render(createElement(HomeSettingsScreen));
-    expect(captured.model?.sections.map((section) => section.key)).toEqual(['startup', 'sections', 'presets']);
-    expect(captured.model?.sections[1].rows.map((row) => row.key)).toEqual([
+    expect(hostedRow().fullBleed).toBe(true);
+    // A first guess until the list reports what it drew: five rows at the default text size.
+    expect(hostedRow().height).toBe(5 * 68);
+    const { container } = renderHostedRows();
+    expect(switchLabels(container)).toEqual([
+      `${SECTION_KEY}.board`,
+      `${SECTION_KEY}.session`,
+      `${SECTION_KEY}.climbingNow`,
+      `${SECTION_KEY}.playlists`,
+      `${SECTION_KEY}.beta`,
+    ]);
+    expect(container.querySelector('[data-testid="section-layout-move-up-board"]')).not.toBeNull();
+    const lastDown = container.querySelector('[data-testid="section-layout-move-down-beta"]') as HTMLButtonElement;
+    expect(lastDown.disabled).toBe(true);
+  });
+
+  it('agrees with the sheet and Home: a move on the page is where both draw it', () => {
+    render(createElement(HomeSettingsScreen));
+    const hosted = renderHostedRows();
+    act(() => {
+      fireEvent.click(hosted.container.querySelector('[data-testid="section-layout-move-up-beta"]') as HTMLElement);
+    });
+    expect(settingChangedCalls()).toEqual([{ page: 'homeScreen', key: 'moveUp', value: 'beta' }]);
+    expect(homeSectionsStore.getLayout().order).toEqual([
       'board',
       'session',
-      'climbingNow',
       'playlists',
       'beta',
+      'climbingNow',
       'feed',
     ]);
-    expect(captured.model?.sections[2].rows.map((row) => row.key)).toEqual(['showAll', 'focused', 'restoreDefaults']);
+
+    act(() => {
+      homeSectionsStore.setVisible('beta', true);
+    });
+    // Home draws the switched-on sections above the feed in the stored order.
+    expect(visibleTopHomeSections(homeSectionsStore.getLayout())).toEqual(['beta', 'climbingNow']);
+
+    cleanup();
+    render(createElement(HomeCustomizeSheet, { visible: true, onClose: vi.fn() }));
+    expect(screen.getAllByRole('switch').map((element) => element.getAttribute('aria-label'))).toEqual([
+      `${SECTION_KEY}.board`,
+      `${SECTION_KEY}.session`,
+      `${SECTION_KEY}.playlists`,
+      `${SECTION_KEY}.beta`,
+      `${SECTION_KEY}.climbingNow`,
+      `${SECTION_KEY}.feed`,
+    ]);
   });
 
   it('reports a switch once, under the Home page', () => {
     render(createElement(HomeSettingsScreen));
-    act(() => toggle('beta').onValueChange(true));
-    expect(settingChangedCalls()).toEqual([{ page: 'homeScreen', key: 'beta', value: true }]);
-    expect(homeSectionsStore.getLayout().visible.beta).toBe(true);
-    expect(toggle('beta').value).toBe(true);
+    act(() => toggle('feed').onValueChange(false));
+    expect(settingChangedCalls()).toEqual([{ page: 'homeScreen', key: 'feed', value: false }]);
+    expect(homeSectionsStore.getLayout().visible.feed).toBe(false);
+    expect(toggle('feed').value).toBe(false);
   });
 
   it('offers Focused and Restore defaults only when they would change something', () => {

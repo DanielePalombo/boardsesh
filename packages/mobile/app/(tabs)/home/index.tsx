@@ -123,15 +123,16 @@ export default function HomeTab() {
   const [selectedBoard, setSelectedBoard] = useState<UserBoard | null>(null);
   // Once home-board inference settles, point the crew/gym filter at the home
   // board. The view stays on `crew`; with no home board it's the unfiltered crew.
-  const hasDefaultedScope = useRef(false);
-  useEffect(() => {
-    if (hasDefaultedScope.current || isResolvingHomeBoard) return;
-    hasDefaultedScope.current = true;
+  // During render, not in an effect: React re-renders with the board before it
+  // commits, so nothing that waits on `scopeReady` (Fresh beta, the feeds) ever
+  // asks once for every board and again for this one.
+  const [hasDefaultedScope, setHasDefaultedScope] = useState(false);
+  if (!hasDefaultedScope && !isResolvingHomeBoard) {
+    setHasDefaultedScope(true);
     // Screenshot mode stays on the global "Everyone" feed, so don't scope the
     // gym view to the home board (that would turn it into one board's feed).
-    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1') return;
-    if (homeBoard) setSelectedBoard(homeBoard);
-  }, [homeBoard, isResolvingHomeBoard]);
+    if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' && homeBoard) setSelectedBoard(homeBoard);
+  }
 
   const feedInput = useMemo(() => deriveFeedScopeInput(mode, selectedBoard?.uuid ?? null), [mode, selectedBoard]);
   // "Climbing now" adds the selected board's sessions only when the climber is
@@ -144,7 +145,7 @@ export default function HomeTab() {
   // NativeTabs mounts every tab at launch, so the feeds also wait for Home's
   // first focus (see useHasBeenFocused); a launch on Climbs no longer pays them.
   const hasBeenFocused = useHasBeenFocused();
-  const scopeReady = !isResolvingHomeBoard && hasBeenFocused;
+  const scopeReady = hasDefaultedScope && !isResolvingHomeBoard && hasBeenFocused;
   const feedEnabled = isAuthenticated && scopeReady && feedVisible;
   const sessionFeed = useSessionGroupedFeed(feedInput, feedEnabled && mode === 'gym');
   const crewFeed = useCrewFeed(feedEnabled && mode === 'crew');
@@ -264,6 +265,9 @@ export default function HomeTab() {
   // The spinner follows the feed's refetch while the feed shows, as it always
   // has. Without the feed it follows the sections' own refetches.
   const [sectionsRefreshing, setSectionsRefreshing] = useState(false);
+  // Which pull is the latest, so an earlier one settling can't drop the spinner
+  // while a later one is still out.
+  const latestRefreshRef = useRef(0);
   const handleRefresh = useCallback(() => {
     // Only what is on screen. Each section subscribes to its own query, so the
     // screen refreshes it by key; Your board reads the phone and has nothing to fetch.
@@ -278,8 +282,12 @@ export default function HomeTab() {
     }
     if (betaVisible) sectionRefetches.push(queryClient.invalidateQueries({ queryKey: [RECENT_BETA_LINKS_QUERY_KEY] }));
     if (sectionRefetches.length > 0) {
+      latestRefreshRef.current += 1;
+      const refresh = latestRefreshRef.current;
       setSectionsRefreshing(true);
-      void Promise.allSettled(sectionRefetches).then(() => setSectionsRefreshing(false));
+      void Promise.allSettled(sectionRefetches).then(() => {
+        if (latestRefreshRef.current === refresh) setSectionsRefreshing(false);
+      });
     }
     if (!feedVisible) return;
     void sessionVoteSummaries.refetch();
