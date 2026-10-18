@@ -3,10 +3,11 @@
 // imports), so the order, labels, active states and visibility rules are locked
 // by a unit test instead of three hand-written platform trees.
 //
-// Order: Filters · N, Recent, then the pinnable chips in catalog order
-// (lib/pinnable-chips.ts): Grade, Grade accuracy, Your progress, Collection,
-// Climb type, Tall, Wide, Beta videos, Popularity, Min rating, Sort.
-//   • Recent shows only when there are saved searches.
+// Order: Filters · N, then the pinnable chips in catalog order
+// (lib/pinnable-chips.ts): Recent, Grade, Grade accuracy, Your progress,
+// Collection, Climb type, Tall, Wide, Beta videos, Popularity, Min rating, Sort.
+//   • Recent shows only while pinned (the default) and there are saved
+//     searches. Unpinning it hides the chip, never the searches.
 //   • Your progress hides when signed out (`canFilterProgress`); its pin persists.
 //   • Tall / Wide show only on board sizes that have them (`dimensionChips`) and
 //     only while pinned. Their long-press Lock / Unlock is iOS-only (CapsuleRow
@@ -16,7 +17,7 @@
 
 import type { TFunction } from 'i18next';
 import { PROGRESS_FILTER_VALUES, SORT_OPTIONS, GRADE_ACCURACY_VALUES } from '@boardsesh/climb-filters';
-import { getFilterKey } from '../../lib/filter-key';
+import { applyRecentFilterById, findCurrentRecentFilter } from '../../lib/recent-filter-selection';
 import {
   POPULARITY_BUCKETS,
   popularityTag,
@@ -103,13 +104,10 @@ export function buildClimbCapsules(props: FilterChipRowProps, t: TFunction<'clim
     onPress: onOpenFilters,
   });
 
-  // Recent ▾: always reachable while there are saved searches. Each one is
+  // Recent ▾: shown while pinned and there are saved searches. Each one is
   // something to apply, so a tap re-applies even the checked (current) one.
-  if (recentFilters.length > 0) {
-    const currentRecentKey = getFilterKey(currentFilters, currentSearchText);
-    const current = recentFilters.find(
-      (recent) => getFilterKey(recent.filters, recent.searchText) === currentRecentKey,
-    );
+  if (isPinned('recent') && recentFilters.length > 0) {
+    const current = findCurrentRecentFilter(recentFilters, currentFilters, currentSearchText);
     capsules.push({
       kind: 'menu',
       key: 'recent',
@@ -119,10 +117,7 @@ export function buildClimbCapsules(props: FilterChipRowProps, t: TFunction<'clim
       optionStyle: 'commands',
       options: recentFilters.map((recent) => ({ value: recent.id, label: recent.label })),
       selected: current?.id,
-      onSelect: (id) => {
-        const recent = recentFilters.find((entry) => entry.id === id);
-        if (recent) onApplyRecent(recent.filters, recent.searchText);
-      },
+      onSelect: (id) => applyRecentFilterById(recentFilters, id, onApplyRecent),
       actions: [
         { key: 'clear', label: t('mobile.search.clearRecentSearches'), destructive: true, onPress: onClearRecent },
       ],
