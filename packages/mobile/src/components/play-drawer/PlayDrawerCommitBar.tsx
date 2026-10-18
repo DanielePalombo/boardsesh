@@ -190,9 +190,15 @@ const styles = StyleSheet.create({
   // controls + 8/12 padding) is untouched.
   row: {
     flex: 1,
+    // The host row is horizontal, so `flex` above only widens this column; its
+    // height has to come from here.
+    minHeight: glassSize.inline,
   },
+  // `flexGrow`, never `flex: 1`: in RN that sets flexBasis 0, which collapsed
+  // this content-sized row to 0pt and let the 44pt buttons spill over the
+  // action bar above it.
   controls: {
-    flex: 1,
+    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
