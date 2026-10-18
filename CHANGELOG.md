@@ -4,11 +4,88 @@ User-facing changes to Boardsesh, newest first. Auto-generated from the "Release
 Notes" section of merged pull requests — do not edit by hand (a CI check rejects
 manual changes). See docs/mobile-ota-updates.md.
 
+## 2026-10-18
+
+### New
+
+- The board scan now finds MoonBoards and newer Kilter boxes, closest first. ([#6574](https://github.com/boardsesh/boardsesh/pull/6574))
+  Found a board we don't know yet? Pick it from your gym or set it up as your own.
+- Rerun a recent search in one tap: your last 10 searches now sit as chips in Filters. ([#6542](https://github.com/boardsesh/boardsesh/pull/6542))
+  Don't use the Recent chip? Unpin it there to free up your filter row. Your searches stay saved.
+- You'll now hear about comments on your sessions, climbs, playlists, boards and gyms, and when someone reports one of your climbs. ([#6557](https://github.com/boardsesh/boardsesh/pull/6557))
+- Choose whether Boardsesh opens on Climbs or Home: Settings › General › Open the app on. ([#6536](https://github.com/boardsesh/boardsesh/pull/6536))
+- MoonBoard row numbers and column letters are easy to read in dark mode ([#6541](https://github.com/boardsesh/boardsesh/pull/6541))
+  Prefer a clean board? Turn them off in Settings › Board
+- Put what's below the climb in your own order: ⋯ → View options, then the arrows ([#6543](https://github.com/boardsesh/boardsesh/pull/6543))
+  Collapsed sections now tell you what's inside: video counts, the busiest angle, the closest match
+  Choose your player buttons and put them above the board: ⋯ → View options → Buttons
+  Mirror and Change angle stay one tap away in ⋯ when their buttons are off
+  Restore defaults brings back the standard view in one tap
+
+### Fixed
+
+- Bluetooth scan lists each private board in range as its own row ([#6552](https://github.com/boardsesh/boardsesh/pull/6552))
+- The Bluetooth picker remembers a private board you connected to while signed in ([#6553](https://github.com/boardsesh/boardsesh/pull/6553))
+- Downloaded boards stay downloaded: the app no longer re-downloads every board about once a week. ([#6560](https://github.com/boardsesh/boardsesh/pull/6560))
+- Similar climbs with no matches now say "None found" in the collapsed header ([#6567](https://github.com/boardsesh/boardsesh/pull/6567))
+- Long climb names in the "On the wall" pill now end in "…" instead of sliding under the header buttons ([#6527](https://github.com/boardsesh/boardsesh/pull/6527))
+
+## 2026-10-17
+
+### New
+
+- Keep board history one tap away, with more room to browse. ([#6523](https://github.com/boardsesh/boardsesh/pull/6523))
+  Change angle, tune your climb list and switch boards from ⋯.
+
+## 2026-10-16
+
+### New
+
+- Find your hearted climbs under Climbs → Collection → Liked. ([#6077](https://github.com/boardsesh/boardsesh/pull/6077))
+- The privacy policy now explains how spray wall photos help train hold finding, and how to switch that off. ([#6211](https://github.com/boardsesh/boardsesh/pull/6211))
+- New spray walls have a "Help train hold finding" switch, so your wall can teach the app to spot holds. Walls you already have start with it off. ([#6212](https://github.com/boardsesh/boardsesh/pull/6212))
+- Add a spray wall from its photo, then name it at the end. ([#6495](https://github.com/boardsesh/boardsesh/pull/6495))
+  Swipe through your wall's backgrounds and hold-lighting previews.
+  Preview just your marked holds while tracing to spot anything missed.
+
+### Improved
+
+- Follow your board download through grades and finishing, wherever you browse. ([#6368](https://github.com/boardsesh/boardsesh/pull/6368))
+  Grades start downloading sooner, and waiting boards stay visible as your queue changes.
+
+### Fixed
+
+- Other editors can't move your spray wall listing to a gym they don't manage. ([#6521](https://github.com/boardsesh/boardsesh/pull/6521))
+- Backing out of Sign in with Apple closes the sheet without opening browser sign-in. ([#4547](https://github.com/boardsesh/boardsesh/pull/4547))
+- Your Spraywall has the same name in English, Spanish, French and German. ([#6195](https://github.com/boardsesh/boardsesh/pull/6195))
+- See the first climb with Grade open, even when using compact rows. ([#6520](https://github.com/boardsesh/boardsesh/pull/6520))
+- Reach every playlist when adding a climb, even with larger text. ([#6517](https://github.com/boardsesh/boardsesh/pull/6517))
+  Keep form fields and session notes above the keyboard.
+- Open your playlists straight from your profile menu. ([#6515](https://github.com/boardsesh/boardsesh/pull/6515))
+- Tap anywhere on the climb drawer’s menu button to open climb actions. ([#6516](https://github.com/boardsesh/boardsesh/pull/6516))
+- Your saved queue comes back with the right climb details and grades. ([#6453](https://github.com/boardsesh/boardsesh/pull/6453))
+- New spray walls start with Link only, ready to share with your crew. ([#6514](https://github.com/boardsesh/boardsesh/pull/6514))
+- Pick tries, stars and grade as soon as Log ascent opens. ([#6507](https://github.com/boardsesh/boardsesh/pull/6507))
+  Expand to change Date/Time; your selections stay put when collapsing.
+  Blocked Flash/Send buttons keep their violet colour.
+- Filter chips above the climbs list have a bit more breathing room on Android ([#6509](https://github.com/boardsesh/boardsesh/pull/6509))
+- The PR test list no longer shuffles a few seconds after it opens ([#6510](https://github.com/boardsesh/boardsesh/pull/6510))
+- Sign out from your Account menu on iPhone without getting stuck. ([#6506](https://github.com/boardsesh/boardsesh/pull/6506))
+
 ## 2026-10-14
 
 ### App update
 
 A new version shipped to the App Store and Play Store.
+
+### New
+
+- Settings is down to six pages with familiar names: General, Privacy, Account, Connected apps, Board, and Climbs & grades. ([#6477](https://github.com/boardsesh/boardsesh/pull/6477))
+  Every privacy switch is on one Privacy page, and follow requests get their own list.
+  Settings text is easier to read in dark mode.
+  My gyms and Moderation moved to your avatar menu.
+- Choose your update track and test PR previews from What’s New. ([#6476](https://github.com/boardsesh/boardsesh/pull/6476))
+  See when you received an early rollout; bug reports include your release.
 
 ### Improved
 
@@ -16,6 +93,13 @@ A new version shipped to the App Store and Play Store.
 
 ### Fixed
 
+- Every published climb is open to everyone again, whatever its setter's account privacy; drafts stay yours alone. ([#6355](https://github.com/boardsesh/boardsesh/pull/6355))
+  Climbs you set to Only me or Followers are public now. Save a climb as a draft to keep it to yourself.
+  Setting a climb no longer asks who can see it.
+  Published climbs show who set them, even with a private account. Your ticks, sessions and comments stay private.
+- Your climb list stops reloading for every queued send or heart. ([#6452](https://github.com/boardsesh/boardsesh/pull/6452))
+- Your climb list stays steady while followed setters load. ([#6450](https://github.com/boardsesh/boardsesh/pull/6450))
+- See your crew's avatars beside the climbs they queue. ([#6465](https://github.com/boardsesh/boardsesh/pull/6465))
 - Choose climb ratings and open Advanced in logbook filters again on iOS. ([#6372](https://github.com/boardsesh/boardsesh/pull/6372))
 - Scroll climbs with floating grey filters and compact glass grade buttons. The filter icon shows how many filters are active. ([#6449](https://github.com/boardsesh/boardsesh/pull/6449))
 
