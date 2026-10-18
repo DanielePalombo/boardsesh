@@ -387,4 +387,32 @@ describe('Home sections', () => {
     // Never once for every board first: the board is set before the shelf may ask.
     expect(asked.every((props) => props.boardType === 'kilter' && props.layoutId === 8)).toBe(true);
   });
+
+  it('keeps the spinner up until the latest of two pulls settles', async () => {
+    const settles: Array<() => void> = [];
+    refresh.invalidateQueries.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settles.push(resolve);
+        }),
+    );
+    homeSectionsStore.apply({
+      ...HOME_SECTIONS.defaults,
+      visible: { ...HOME_SECTIONS.defaults.visible, session: true, climbingNow: false, feed: false },
+    });
+    render(createElement(HomeTab));
+    act(() => refresh.onRefresh?.());
+    act(() => refresh.onRefresh?.());
+    expect(settles).toHaveLength(2);
+    expect(refresh.refreshing).toBe(true);
+    await act(async () => {
+      settles[0]();
+    });
+    // The first pull is done, the second is still out.
+    expect(refresh.refreshing).toBe(true);
+    await act(async () => {
+      settles[1]();
+    });
+    expect(refresh.refreshing).toBe(false);
+  });
 });

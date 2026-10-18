@@ -14,7 +14,10 @@ import type { SettingsChange } from '../../../../settings/hooks';
 // The real controls, store, switch-and-arrow rows and Customize sheet; only the
 // native form, the platform primitives, the reporting and the settings file are
 // stand-ins.
-const captured = vi.hoisted(() => ({ model: null as MoreFormModel | null }));
+const captured = vi.hoisted(() => ({
+  model: null as MoreFormModel | null,
+  layoutHandlers: new Map<string, (event: { nativeEvent: { layout: { width: number; height: number } } }) => void>(),
+}));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
@@ -44,8 +47,18 @@ vi.mock('react-native', () => ({
   DynamicColorIOS: (appearances: { light: string }) => appearances.light,
   PlatformColor: (name: string) => name,
   useWindowDimensions: () => ({ width: 375, height: 667, fontScale: 1, scale: 2 }),
-  View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
-    createElement('div', { 'data-testid': testID }, children),
+  View: ({
+    children,
+    testID,
+    onLayout,
+  }: {
+    children?: ReactNode;
+    testID?: string;
+    onLayout?: (event: { nativeEvent: { layout: { width: number; height: number } } }) => void;
+  }) => {
+    if (testID && onLayout) captured.layoutHandlers.set(testID, onLayout);
+    return createElement('div', { 'data-testid': testID }, children);
+  },
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
   FlatList: () => null,
 }));
@@ -173,6 +186,7 @@ beforeEach(() => {
   homeSectionsStore.restoreDefaults();
   analytics.track.mockClear();
   captured.model = null;
+  captured.layoutHandlers.clear();
 });
 
 afterEach(() => {
@@ -209,6 +223,17 @@ describe('HomeSettingsScreen', () => {
     expect(container.querySelector('[data-testid="section-layout-move-up-board"]')).not.toBeNull();
     const lastDown = container.querySelector('[data-testid="section-layout-move-down-beta"]') as HTMLButtonElement;
     expect(lastDown.disabled).toBe(true);
+  });
+
+  it('sizes the hosted row to what the list drew, and keeps the guess while nothing is drawn yet', () => {
+    render(createElement(HomeSettingsScreen));
+    renderHostedRows();
+    const reportLayout = captured.layoutHandlers.get('home-settings-sections');
+    if (!reportLayout) throw new Error('hosted rows report no layout');
+    act(() => reportLayout({ nativeEvent: { layout: { width: 0, height: 0 } } }));
+    expect(hostedRow().height).toBe(5 * 68);
+    act(() => reportLayout({ nativeEvent: { layout: { width: 343, height: 321.4 } } }));
+    expect(hostedRow().height).toBe(322);
   });
 
   it('agrees with the sheet and Home: a move on the page is where both draw it', () => {

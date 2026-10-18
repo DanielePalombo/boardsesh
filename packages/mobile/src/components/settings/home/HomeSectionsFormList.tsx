@@ -1,5 +1,6 @@
-import { Fragment, memo, useCallback } from 'react';
-import { Platform, View, type FlatListProps, type LayoutChangeEvent } from 'react-native';
+import { Fragment, memo, useCallback, type ReactNode } from 'react';
+import { Platform, StyleSheet, View, type FlatListProps, type LayoutChangeEvent } from 'react-native';
+import { Surface } from 'react-native-paper';
 import {
   SectionLayoutList,
   type PlacedSectionLayoutRow,
@@ -7,7 +8,7 @@ import {
   type SectionMoveHandler,
 } from '../../section-layout/SectionLayoutList';
 import type { HomeSectionId } from '../../../lib/home-sections';
-import { useTheme } from '../../../providers/theme-provider';
+import { spacing } from '../../../theme/tokens';
 
 type HomeSectionRow = PlacedSectionLayoutRow<HomeSectionId>;
 
@@ -43,8 +44,9 @@ type HomeSectionsFormListProps = {
  * Settings › Home's reorderable rows (Marco's ask on #6546): the Customize Home
  * sheet's switch-and-arrows rows, hosted in the native Settings form as its one
  * React Native row, since the form has no reorderable row of its own. The rows
- * sit on the form's card on iOS and Android; the browser's full-bleed row has
- * no card, so there they keep their own grouped surface.
+ * sit on the form's card on iOS and Android. The browser's full-bleed row has
+ * no card and bleeds to the screen edge, so there they draw the browser form's
+ * own card (Paper `Surface`, as `MoreForm.web` does) inset back to the others.
  */
 export const HomeSectionsFormList = memo(function HomeSectionsFormList({
   rows,
@@ -52,20 +54,40 @@ export const HomeSectionsFormList = memo(function HomeSectionsFormList({
   onMove,
   onHeightChange,
 }: HomeSectionsFormListProps) {
-  const { systemColors } = useTheme();
   const handleLayout = useCallback(
-    (event: LayoutChangeEvent) => onHeightChange(Math.ceil(event.nativeEvent.layout.height)),
+    (event: LayoutChangeEvent) => {
+      const drawnHeight = Math.ceil(event.nativeEvent.layout.height);
+      // A host that has not been laid out yet reports nothing; keep the guess.
+      if (drawnHeight > 0) onHeightChange(drawnHeight);
+    },
     [onHeightChange],
   );
   return (
     <View onLayout={handleLayout} testID="home-settings-sections">
-      <SectionLayoutList
-        ListComponent={StaticRowList}
-        rows={rows}
-        rowBackgroundColor={Platform.OS === 'web' ? systemColors.secondaryGroupedBackground : 'transparent'}
-        onVisibleChange={onVisibleChange}
-        onMove={onMove}
-      />
+      <BrowserCard>
+        <SectionLayoutList
+          ListComponent={StaticRowList}
+          rows={rows}
+          rowBackgroundColor="transparent"
+          onVisibleChange={onVisibleChange}
+          onMove={onMove}
+        />
+      </BrowserCard>
     </View>
   );
+});
+
+/** The browser form's card, inset to cancel the full-bleed row's margin. Native forms draw their own. */
+function BrowserCard({ children }: { children: ReactNode }) {
+  if (Platform.OS !== 'web') return children;
+  return (
+    <Surface style={styles.browserCard} elevation={1}>
+      {children}
+    </Surface>
+  );
+}
+
+const styles = StyleSheet.create({
+  // MoreForm.web's `card`, plus the `spacing[4]` its `fullBleed` takes away.
+  browserCard: { marginHorizontal: spacing[4], borderRadius: 12, overflow: 'hidden' },
 });
