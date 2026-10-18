@@ -355,10 +355,10 @@ describe('deriveCheckConclusion (informational compatibility)', () => {
 });
 
 describe('enforcementNote', () => {
-  it('tells a main-targeting native PR that merging starts replacement builds', () => {
-    expect(
-      enforcementNote({ overall: 'native-change-required', baseBranch: 'main', allowNativeOnMain: false }),
-    ).toContain('starts fingerprint-gated TestFlight and Play builds');
+  it('tells a main-targeting native PR that its builds come from the synced release train', () => {
+    const note = enforcementNote({ overall: 'native-change-required', baseBranch: 'main', allowNativeOnMain: false });
+    expect(note).toContain('starts fingerprint-gated TestFlight and Play builds once the sync lands');
+    expect(note).toContain('Store builds come from `release/next`, which is synced from `main` automatically');
   });
 
   it('tells a train PR that this is where the store builds come from', () => {

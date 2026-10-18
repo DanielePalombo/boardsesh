@@ -90,11 +90,12 @@ function workflowName(path: string): string {
   return declared as string;
 }
 
-/** Read the trusted native release branches so captures cannot lose a source. */
+/** Read the branches a deploy builds on push, so captures cannot lose a source. */
 function deployBranches(deployPath: string): string[] {
   const push = (parseWorkflow(deployPath).on ?? {}).push as PushTrigger | undefined;
   const branches = push?.branches ?? [];
-  expect(branches, `${deployPath} must build from both trusted release branches`).toEqual(['main', 'release/next']);
+  // Only the release train builds on push; release-train-sync.yml keeps it level with main.
+  expect(branches, `${deployPath} must build on push from the release train only`).toEqual(['release/next']);
   return branches;
 }
 
@@ -530,7 +531,7 @@ describe('screenshot captures follow the native deploys', () => {
     expect(workflowRun?.workflows).toEqual([workflowName(entry.deploy)]);
     expect(workflowRun?.types).toEqual(['completed']);
 
-    // Captures must subscribe to every branch that can build a native candidate.
+    // Captures must subscribe to every branch whose push builds a native candidate.
     const releaseBranches = deployBranches(entry.deploy);
     expect(
       workflowRun?.branches,
