@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import type { SettingsChange } from '../../../settings/hooks';
 
 const settings = vi.hoisted(() => ({
@@ -119,6 +119,7 @@ vi.mock('@expo/ui/community/bottom-sheet', () => ({
 }));
 
 import { HomeCustomizeSheet } from '../HomeCustomizeSheet';
+import { useHomeSectionControls } from '../use-home-section-controls';
 import { homeSectionsStore, isDefaultHomeLayout, isFocusedHomeLayout } from '../../../lib/home-sections';
 
 const SECTION_KEY = 'mobile.settings.homeSections.sections';
@@ -197,5 +198,20 @@ describe('HomeCustomizeSheet', () => {
     });
     expect(isDefaultHomeLayout(homeSectionsStore.getLayout())).toBe(true);
     expect(settings.values.get('homeSectionsV1')).toBeNull();
+  });
+
+  it('refuses a move that cannot happen, without reporting it', () => {
+    const { result } = renderHook(() => useHomeSectionControls());
+    let moved: boolean | undefined;
+    act(() => {
+      moved = result.current.onMove('climbingNow', 1);
+    });
+    expect(moved).toBe(false);
+    expect(analytics.trackSettingChanged).not.toHaveBeenCalled();
+    act(() => {
+      moved = result.current.onMove('board', 1);
+    });
+    expect(moved).toBe(true);
+    expect(homeSectionsStore.getLayout().order).toEqual(['session', 'board', 'playlists', 'climbingNow', 'feed']);
   });
 });

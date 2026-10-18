@@ -9,7 +9,7 @@ import {
   useHomeSectionLayout,
   type HomeSectionId,
 } from '../../lib/home-sections';
-import type { SectionMoveDirection } from '../../lib/section-layout';
+import { canMoveSection, type SectionMoveDirection } from '../../lib/section-layout';
 import { hapticSelection } from '../../lib/haptics';
 import { trackSettingChanged } from '../../lib/settings-analytics';
 import type { MoreSection } from '../MoreForm.types';
@@ -87,9 +87,13 @@ export function useHomeSectionControls() {
     trackSettingChanged(ANALYTICS_PAGE, sectionId, visible);
     homeSectionsStore.setVisible(sectionId, visible);
   }, []);
-  const onMove = useCallback((sectionId: HomeSectionId, direction: SectionMoveDirection) => {
+  // False when the section cannot go that way, so the list neither buzzes nor
+  // announces a move that did not happen.
+  const onMove = useCallback((sectionId: HomeSectionId, direction: SectionMoveDirection): boolean => {
+    if (!canMoveSection(HOME_SECTIONS, homeSectionsStore.getLayout(), sectionId, direction)) return false;
     trackSettingChanged(ANALYTICS_PAGE, direction === -1 ? 'moveUp' : 'moveDown', sectionId);
     homeSectionsStore.move(sectionId, direction);
+    return true;
   }, []);
 
   const canShowAll = rows.some((row) => !row.visible);

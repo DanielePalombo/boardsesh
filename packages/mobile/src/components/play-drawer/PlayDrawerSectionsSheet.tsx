@@ -1,28 +1,23 @@
-import { useMemo, useState, type ComponentType } from 'react';
-import { Platform, StyleSheet, View, type FlatListProps } from 'react-native';
-import { BottomSheetFlatList } from '@expo/ui/community/bottom-sheet';
+import { useMemo, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { ModalSheet } from '../ModalSheet';
-import { SheetTopBar } from '../SheetTopBar';
 import { SegmentedControl } from '../SegmentedControl';
 import { SwitchRow } from '../SwitchRow';
-import { Button } from '../Button';
 import { Text } from '../Text';
-import { MEDIUM_LARGE_SNAP_POINTS } from '../sheet-snap-points';
-import { useIosSheetBackgroundStyle } from '../use-ios-sheet-background-style';
 import { usePlayDrawerSectionControls } from '../settings/use-play-drawer-section-controls';
 import { usePlayerButtonControls } from '../settings/use-player-button-controls';
-import { SectionLayoutList, type PlacedSectionLayoutRow } from '../section-layout/SectionLayoutList';
+import {
+  SectionLayoutSheetFooter,
+  SectionLayoutSheetFrame,
+  SectionLayoutSheetGroupTitle,
+  SectionLayoutSheetIntro,
+  SectionLayoutSheetList,
+  sectionLayoutSheetStyles,
+  type SectionLayoutSheetAction,
+} from '../section-layout/SectionLayoutSheet';
 import { PlayerButtonsPreview, type PlayerButtonsPreviewBoard } from '../player-buttons/PlayerButtonsPreview';
-import type { PlayDrawerSectionId } from '../../lib/play-drawer-sections-preference';
-import type { PlayerButtonId } from '../../lib/player-buttons';
 import { useTheme } from '../../providers/theme-provider';
 import { borderRadius, spacing } from '../../theme/tokens';
-
-const SectionsFlatList = BottomSheetFlatList as ComponentType<
-  FlatListProps<PlacedSectionLayoutRow<PlayDrawerSectionId>>
->;
-const ButtonsFlatList = BottomSheetFlatList as ComponentType<FlatListProps<PlacedSectionLayoutRow<PlayerButtonId>>>;
 
 type ViewOptionsTab = 'sections' | 'buttons';
 
@@ -44,13 +39,6 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
   const sections = usePlayDrawerSectionControls();
   const playerButtons = usePlayerButtonControls();
   const { systemColors } = useTheme();
-  const iosBackgroundStyle = useIosSheetBackgroundStyle();
-  // Leave the surrounding sheet material visible on Apple's native sheet.
-  // Only the inset switch group needs its semantic opaque content surface.
-  const contentGround =
-    Platform.OS === 'ios' && iosBackgroundStyle === undefined
-      ? undefined
-      : { backgroundColor: systemColors.groupedBackground };
   const tabOptions = useMemo<{ key: ViewOptionsTab; label: string }[]>(
     () => [
       { key: 'sections', label: t('mobile.settings.climbDrawer.tabs.sections') },
@@ -59,32 +47,56 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
     [t],
   );
 
-  const sectionsFooter = useMemo(
-    () => (
-      <View style={styles.footer}>
-        <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.guidance}>
-          {sections.footer}
-        </Text>
-        <View style={styles.restoreDefaults}>
-          <Button
-            title={sections.restoreDefaultsLabel}
-            onPress={sections.restoreDefaults}
-            disabled={!sections.canRestoreDefaults}
-            haptic={false}
-            variant="text"
-            minHeight={44}
-            testID="play-drawer-sections-restore-defaults"
-          />
-        </View>
-      </View>
-    ),
-    [
-      sections.footer,
-      systemColors.secondaryLabel,
-      sections.restoreDefaultsLabel,
-      sections.restoreDefaults,
-      sections.canRestoreDefaults,
+  const sectionActions = useMemo<[SectionLayoutSheetAction, SectionLayoutSheetAction]>(
+    () => [
+      {
+        label: sections.showAllLabel,
+        onPress: sections.showAll,
+        disabled: !sections.canShowAll,
+        testID: 'play-drawer-sections-show-all',
+      },
+      {
+        label: sections.hideAllLabel,
+        onPress: sections.hideAll,
+        disabled: !sections.canHideAll,
+        testID: 'play-drawer-sections-hide-all',
+      },
     ],
+    [
+      sections.showAllLabel,
+      sections.showAll,
+      sections.canShowAll,
+      sections.hideAllLabel,
+      sections.hideAll,
+      sections.canHideAll,
+    ],
+  );
+  const sectionsRestore = useMemo<SectionLayoutSheetAction>(
+    () => ({
+      label: sections.restoreDefaultsLabel,
+      onPress: sections.restoreDefaults,
+      disabled: !sections.canRestoreDefaults,
+      testID: 'play-drawer-sections-restore-defaults',
+    }),
+    [sections.restoreDefaultsLabel, sections.restoreDefaults, sections.canRestoreDefaults],
+  );
+  const buttonsRestore = useMemo<SectionLayoutSheetAction>(
+    () => ({
+      label: playerButtons.restoreDefaultsLabel,
+      onPress: playerButtons.restoreDefaults,
+      disabled: !playerButtons.canRestoreDefaults,
+      testID: 'player-buttons-restore-defaults',
+    }),
+    [playerButtons.restoreDefaultsLabel, playerButtons.restoreDefaults, playerButtons.canRestoreDefaults],
+  );
+
+  const sectionsFooter = useMemo(
+    () => <SectionLayoutSheetFooter guidance={sections.footer} restoreDefaults={sectionsRestore} />,
+    [sections.footer, sectionsRestore],
+  );
+  const buttonsFooter = useMemo(
+    () => <SectionLayoutSheetFooter guidance={playerButtons.footer} restoreDefaults={buttonsRestore} />,
+    [playerButtons.footer, buttonsRestore],
   );
 
   // The position and Previous and next scroll with the list rather than staying
@@ -94,17 +106,10 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
   const buttonsHeader = useMemo(
     () => (
       <View style={styles.buttonsHeader}>
-        <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.guidance}>
+        <Text variant="subheadline" color={systemColors.secondaryLabel} style={sectionLayoutSheetStyles.guidance}>
           {playerButtons.description}
         </Text>
-        <Text
-          variant="footnote"
-          color={systemColors.secondaryLabel}
-          style={styles.groupTitle}
-          accessibilityRole="header"
-        >
-          {playerButtons.positionLabel}
-        </Text>
+        <SectionLayoutSheetGroupTitle title={playerButtons.positionLabel} />
         <SegmentedControl
           options={playerButtons.positionOptions}
           selectedKey={playerButtons.position}
@@ -120,14 +125,7 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
             onValueChange={playerButtons.onPreviousNextChange}
           />
         </View>
-        <Text
-          variant="footnote"
-          color={systemColors.secondaryLabel}
-          style={styles.groupTitle}
-          accessibilityRole="header"
-        >
-          {playerButtons.title}
-        </Text>
+        <SectionLayoutSheetGroupTitle title={playerButtons.title} />
       </View>
     ),
     [
@@ -145,109 +143,40 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
       playerButtons.title,
     ],
   );
-  const buttonsFooter = useMemo(
-    () => (
-      <View style={styles.footer}>
-        <Text variant="footnote" color={systemColors.secondaryLabel} style={styles.guidance}>
-          {playerButtons.footer}
-        </Text>
-        <View style={styles.restoreDefaults}>
-          <Button
-            title={playerButtons.restoreDefaultsLabel}
-            onPress={playerButtons.restoreDefaults}
-            disabled={!playerButtons.canRestoreDefaults}
-            haptic={false}
-            variant="text"
-            minHeight={44}
-            testID="player-buttons-restore-defaults"
-          />
-        </View>
-      </View>
-    ),
-    [
-      systemColors.secondaryLabel,
-      playerButtons.footer,
-      playerButtons.restoreDefaultsLabel,
-      playerButtons.restoreDefaults,
-      playerButtons.canRestoreDefaults,
-    ],
-  );
 
   return (
-    <ModalSheet
+    <SectionLayoutSheetFrame
       visible={visible}
       onClose={onClose}
-      snapPoints={MEDIUM_LARGE_SNAP_POINTS}
-      scrollable={false}
-      surface="solid"
+      title={sections.sheetTitle}
       header={
-        <View>
-          <SheetTopBar title={sections.sheetTitle} leading={{ kind: 'close', onPress: onClose }} />
-          <View style={[styles.headerControls, contentGround]}>
-            <SegmentedControl
-              options={tabOptions}
-              selectedKey={tab}
-              onSelect={setTab}
-              accessibilityLabel={sections.sheetTitle}
+        <>
+          <SegmentedControl
+            options={tabOptions}
+            selectedKey={tab}
+            onSelect={setTab}
+            accessibilityLabel={sections.sheetTitle}
+          />
+          {tab === 'sections' ? (
+            <SectionLayoutSheetIntro
+              description={sections.description}
+              actions={sectionActions}
+              groupTitle={sections.groupTitle}
             />
-            {tab === 'sections' ? (
-              <>
-                <Text variant="subheadline" color={systemColors.secondaryLabel}>
-                  {sections.description}
-                </Text>
-                <View style={styles.actions}>
-                  <View style={styles.actionSlot}>
-                    <Button
-                      title={sections.showAllLabel}
-                      onPress={sections.showAll}
-                      disabled={!sections.canShowAll}
-                      haptic={false}
-                      variant="text"
-                      style={styles.actionButton}
-                      minHeight={44}
-                      testID="play-drawer-sections-show-all"
-                    />
-                  </View>
-                  <View style={styles.actionSlot}>
-                    <Button
-                      title={sections.hideAllLabel}
-                      onPress={sections.hideAll}
-                      disabled={!sections.canHideAll}
-                      haptic={false}
-                      variant="text"
-                      style={styles.actionButton}
-                      minHeight={44}
-                      testID="play-drawer-sections-hide-all"
-                    />
-                  </View>
-                </View>
-                <Text
-                  variant="footnote"
-                  color={systemColors.secondaryLabel}
-                  style={styles.groupTitle}
-                  accessibilityRole="header"
-                >
-                  {sections.groupTitle}
-                </Text>
-              </>
-            ) : (
-              <PlayerButtonsPreview
-                buttons={playerButtons.buttons}
-                previousNext={playerButtons.previousNext}
-                position={playerButtons.position}
-                board={previewBoard}
-              />
-            )}
-          </View>
-        </View>
+          ) : (
+            <PlayerButtonsPreview
+              buttons={playerButtons.buttons}
+              previousNext={playerButtons.previousNext}
+              position={playerButtons.position}
+              board={previewBoard}
+            />
+          )}
+        </>
       }
     >
       {tab === 'sections' ? (
-        <SectionLayoutList
+        <SectionLayoutSheetList
           key="sections"
-          ListComponent={SectionsFlatList}
-          style={[styles.list, contentGround]}
-          contentContainerStyle={styles.listContent}
           rows={sections.controls}
           disabled={!sections.ready}
           onVisibleChange={sections.onSectionChange}
@@ -255,11 +184,8 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
           ListFooterComponent={sectionsFooter}
         />
       ) : (
-        <SectionLayoutList
+        <SectionLayoutSheetList
           key="buttons"
-          ListComponent={ButtonsFlatList}
-          style={[styles.list, contentGround]}
-          contentContainerStyle={styles.listContent}
           rows={playerButtons.controls}
           onVisibleChange={playerButtons.onVisibleChange}
           onMove={playerButtons.onMove}
@@ -267,23 +193,12 @@ export function PlayDrawerSectionsSheet({ visible, onClose, previewBoard }: Play
           ListFooterComponent={buttonsFooter}
         />
       )}
-    </ModalSheet>
+    </SectionLayoutSheetFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  list: { flex: 1 },
-  listContent: { paddingHorizontal: spacing[4] },
-  headerControls: { paddingHorizontal: spacing[4], paddingTop: spacing[3], paddingBottom: spacing[2], gap: spacing[2] },
-  actions: { flexDirection: 'row', gap: spacing[2] },
-  actionSlot: { flex: 1 },
-  actionButton: { width: '100%' },
-  groupTitle: { paddingHorizontal: spacing[4], fontWeight: '600' },
   buttonsHeader: { paddingVertical: spacing[2], gap: spacing[2] },
   // The Previous and next switch, grouped like the rows below it.
   card: { borderRadius: borderRadius.lg, overflow: 'hidden' },
-  footer: { paddingVertical: spacing[3], gap: spacing[2] },
-  guidance: { paddingHorizontal: spacing[4] },
-  // Lines the action up with the guidance above it.
-  restoreDefaults: { paddingHorizontal: spacing[4] },
 });
