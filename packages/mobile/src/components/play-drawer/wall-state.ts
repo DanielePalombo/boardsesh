@@ -84,13 +84,90 @@ export function resolveWallPillState({
 
 /**
  * The same face never appears twice: while the pill renders the driver's avatar
- * (`onWall`, and the back chip while `browsing`), the lightbulb's holder pip is
+ * (`onWall`, and the back chip when it goes to the wall), the lightbulb's holder pip is
  * suppressed. This is the contract PlayDrawer passes to `PlayDrawerActionBar` as
  * `showHolderBadge`; it lives here so the ⇔ is pinned by a test rather than by
  * two components agreeing by hand.
  */
-export function shouldShowHolderBadge(pillState: WallPillState): boolean {
-  return pillState !== 'onWall' && pillState !== 'browsing';
+export function shouldShowHolderBadge(pill: HeaderPill): boolean {
+  return pill?.state !== 'onWall' && pill?.backTarget !== 'wall';
+}
+
+export type HeaderPillInput = {
+  /** What the wall is doing, from `resolveWallPillState`. */
+  wallPillState: WallPillState;
+  /** A preview is pinned over the committed climb. */
+  previewPinned: boolean;
+  isAnonymous: boolean;
+  displayedClimbUuid: string | null;
+  /** The climber's own committed climb (the queue head), if any. */
+  committedHeadUuid: string | null;
+  /** The climb physically lit on the board, if any. */
+  wallClimbUuid: string | null;
+  /**
+   * The iPad's persistent right-hand pane. It has no ⌄ to close, so going back
+   * to an empty queue (its placeholder) is still somewhere to go.
+   */
+  isPane: boolean;
+};
+
+export type HeaderPill =
+  | { state: Exclude<WallPillState, null>; backTarget: null }
+  /**
+   * The back chip: `wall` when going back lands on the climb that's lit (it
+   * shows the face of whoever lit it), `current` when it lands on the climber's
+   * own climb and the wall shows something else, or nothing.
+   */
+  | { state: 'browsing'; backTarget: 'wall' | 'current' }
+  | null;
+
+/**
+ * Whether going back from a pinned preview lands somewhere: off the committed
+ * climb and onto one. With no committed climb only the iPad pane has somewhere
+ * to go (its empty placeholder); the sheet would just empty, and ⌄ closes it.
+ * The header's back chip and the explainer's Back to live share this rule.
+ */
+export function canLeavePreview({
+  previewPinned,
+  isAnonymous,
+  displayedClimbUuid,
+  committedHeadUuid,
+  isPane,
+}: Pick<
+  HeaderPillInput,
+  'previewPinned' | 'isAnonymous' | 'displayedClimbUuid' | 'committedHeadUuid' | 'isPane'
+>): boolean {
+  if (!previewPinned || isAnonymous) return false;
+  return committedHeadUuid !== null ? displayedClimbUuid !== committedHeadUuid : isPane;
+}
+
+/**
+ * The header chip as drawn. While a preview is pinned it is the way back, so it
+ * shows only when back goes somewhere: off the committed climb, and onto one (a
+ * crew that hasn't lit anything, or a preview on an empty queue, has none, and
+ * going back would empty the player; ⌄ closes instead). It also stands in for
+ * the Live chip and for no chip at all during a preview, where the one-tap way
+ * back used to be Back to live in the second row. On the wall stays: the
+ * climber is looking at the lit climb, and its chip opens the explainer.
+ */
+export function resolveHeaderPillState({
+  wallPillState,
+  previewPinned,
+  isAnonymous,
+  displayedClimbUuid,
+  committedHeadUuid,
+  wallClimbUuid,
+  isPane,
+}: HeaderPillInput): HeaderPill {
+  if (isAnonymous) return null;
+  if (wallPillState === 'onWall') return { state: 'onWall', backTarget: null };
+  if (canLeavePreview({ previewPinned, isAnonymous, displayedClimbUuid, committedHeadUuid, isPane })) {
+    const backToWall = wallClimbUuid !== null && wallClimbUuid === committedHeadUuid;
+    return { state: 'browsing', backTarget: backToWall ? 'wall' : 'current' };
+  }
+  // A browse with nowhere to go back to shows nothing: ⌄ closes.
+  if (wallPillState === 'browsing' || wallPillState === null) return null;
+  return { state: wallPillState, backTarget: null };
 }
 
 /** What the action bar's secondary row is doing. */
@@ -150,8 +227,8 @@ export type CommitBarModelInput = {
  *    to commit, so the bar collapses back on its own.
  *
  * `Put on the wall` hides (never renders disabled-dead) when the displayed climb
- * is already the lit one. `Back to live` stays: exiting the latch is still a
- * real action there.
+ * is already the lit one. Going back is not this row's job: the header's back
+ * chip does it (`resolveHeaderPillState`).
  */
 export function resolveCommitBarModel({
   previewPinned,

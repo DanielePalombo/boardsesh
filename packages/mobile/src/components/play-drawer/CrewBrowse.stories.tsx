@@ -83,10 +83,15 @@ const stories: StoryModule = {
               </View>
             </StorySurface>
           </StoryVariant>
-          <StoryVariant label="someone else lit the wall (named from presence)">
+          <StoryVariant label="someone else lit the wall">
             <StorySurface>
               <View style={styles.confirmRoom}>
-                <PlayDrawerCommitBar wallClimbName="Moonlight Sonata" onKeepTheirs={noop} onConfirm={noop} />
+                <PlayDrawerCommitBar
+                  wallClimbName="Moonlight Sonata"
+                  wallClimbUuid={null}
+                  onKeepTheirs={noop}
+                  onConfirm={noop}
+                />
               </View>
             </StorySurface>
           </StoryVariant>

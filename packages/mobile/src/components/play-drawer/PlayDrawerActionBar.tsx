@@ -87,6 +87,8 @@ type PlayDrawerActionBarProps = {
   commitButton?: ActionBarCommitButton;
   /** Confirm only: the lit climb's name, for the question. */
   wallClimbName?: string | null;
+  /** Confirm only: the lit climb's uuid, to name who put it up. */
+  wallClimbUuid?: string | null;
   /** "Put on the wall" vs "Set active" where no wall is reachable. */
   commitLabel?: CommitButtonLabel;
   /** Confirm only: leave their climb up. */
@@ -162,6 +164,7 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
   showHolderBadge = true,
   commitButton = null,
   wallClimbName = null,
+  wallClimbUuid = null,
   commitLabel = 'putOnWall',
   onKeepTheirs,
   onCommit,
@@ -353,7 +356,12 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
       {hasSecondaryRow ? (
         <View style={[drawerActionBarStyles.rowSecondary, styles.rowSecondaryHeight]}>
           {layout.secondaryRow === 'confirm' && onKeepTheirs && onCommit ? (
-            <PlayDrawerCommitBar wallClimbName={wallClimbName} onKeepTheirs={onKeepTheirs} onConfirm={onCommit} />
+            <PlayDrawerCommitBar
+              wallClimbName={wallClimbName}
+              wallClimbUuid={wallClimbUuid}
+              onKeepTheirs={onKeepTheirs}
+              onConfirm={onCommit}
+            />
           ) : layout.secondaryRow === 'confirm' ? null : (
             layout.secondaryRow.map((item: ActionBarSecondaryItem, index: number) => {
               switch (item) {

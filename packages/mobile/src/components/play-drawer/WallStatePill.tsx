@@ -66,15 +66,38 @@ const BROWSING_AVATAR_SIZE = 20;
  * An `onPress` on this shape would promise a tap nothing answers, so the union
  * forbids it.
  */
-type WallStatePillProps =
-  | { state: WallStatePillState; onPress: () => void; reserveOnly?: false }
-  | { state: WallStatePillState; onPress?: never; reserveOnly: true };
+type BackChipProps = {
+  /**
+   * Browsing only: where the back chip goes. `wall` lands on the lit climb, so
+   * the chip shows the face of whoever lit it; `current` lands on the
+   * climber's own climb while the wall shows something else (or nothing).
+   */
+  backTarget?: 'wall' | 'current' | null;
+  /**
+   * Browsing only: a browse latch is up, so swipes really don't move the wall
+   * and the hint may say so. A preview with lighting on has no such promise.
+   */
+  latched?: boolean;
+};
 
-function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePillProps) {
+type WallStatePillProps = BackChipProps &
+  (
+    | { state: WallStatePillState; onPress: () => void; reserveOnly?: false }
+    | { state: WallStatePillState; onPress?: never; reserveOnly: true }
+  );
+
+function WallStatePillImpl({
+  state,
+  onPress,
+  reserveOnly = false,
+  backTarget = null,
+  latched = true,
+}: WallStatePillProps) {
   const { t } = useTranslation('session');
   const { variant, systemColors, brandColors, m3, m3SurfaceContainers } = useTheme();
   const reduceMotion = useReducedMotion();
-  // Read unconditionally (hook rules); onWall and browsing render the face, and
+  // Read unconditionally (hook rules); onWall and a back chip to the wall render
+  // the face, and
   // `useBoardDriver` degrades to null outside a board-presence provider.
   const { driver, name: driverName, litAgo } = useWallDriver();
 
@@ -91,7 +114,7 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
       ? [t('playView.wallState.onWall'), driverLabel, litAgo].filter(Boolean).join('. ')
       : state === 'live'
         ? t('playView.wallState.live')
-        : driver
+        : backTarget === 'wall'
           ? t('playView.wallState.backToWall')
           : t('playView.wallState.backToCurrent');
 
@@ -101,9 +124,11 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
       : state === 'live'
         ? t('playView.wallState.liveHint')
         : t('playView.wallState.browsingHint');
-  // Browsing's tap is the way back, which its label already says; the other two
-  // open the explainer, which the pill hint promises.
-  const accessibilityHint = state === 'browsing' ? stateHint : `${stateHint} ${t('playView.wallState.pillHint')}`;
+  // Browsing's tap is the way back, which its label already says; it only adds
+  // "the wall stays where it is" while that's true. The other two open the
+  // explainer, which the pill hint promises.
+  const accessibilityHint =
+    state === 'browsing' ? (latched ? stateHint : undefined) : `${stateHint} ${t('playView.wallState.pillHint')}`;
 
   const isMaterial = selectByVariant(variant, { material: true, liquidGlass: false });
   // Liquid Glass earns its edge from a hairline border, Material from a tonal
@@ -155,7 +180,7 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
           state === 'onWall'
             ? styles.pillAvatar
             : state === 'browsing'
-              ? driver
+              ? driver && backTarget === 'wall'
                 ? styles.pillBack
                 : styles.pillBackGlyphOnly
               : styles.pillLabelled,
@@ -197,7 +222,7 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
         ) : (
           <>
             <Icon name="undo" size={BROWSING_GLYPH_SIZE} color={labelColor} />
-            {driver ? (
+            {driver && backTarget === 'wall' ? (
               <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                 <BoardDriverAvatar
                   size={BROWSING_AVATAR_SIZE}

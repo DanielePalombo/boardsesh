@@ -18,18 +18,22 @@ vi.mock('../../PressableSurface', async () => {
 // wall can actually be reached, and "Set active" everywhere else.
 //
 // `PlayDrawerCommitBar` is now only the busy-wall question. What the tests below
-// pin is that the commit stays TRAILING — "Put mine up" lands where Put on the
-// wall was — so a climber whose thumb is already moving toward the button that
-// armed the question cannot land on a new action that appeared under it. It
-// names who lit the wall when presence knows them, and speaks the question once
-// on mount, since the bubble that carries it can't be touched.
+// pin is that the commit stays CENTRED — "Put mine up" lands where Put on the
+// wall was, in the middle of the row — so a climber whose thumb is already
+// moving toward the button that armed the question cannot land on a new action
+// that appeared under it. It names who put the lit climb up when the crew's
+// current climb says so (and it isn't you), and speaks the question once on
+// mount, since the bubble that carries it can't be touched.
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 
 const announceForAccessibility = vi.hoisted(() => vi.fn());
 const platform = vi.hoisted(() => ({ OS: 'ios' as 'ios' | 'android' }));
-const wallDriver = vi.hoisted(() => ({ name: null as string | null }));
+// The crew's current climb records who picked it; the viewer is "me".
+type HeadItem = { climb: { uuid: string }; addedByUser?: { id: string; username: string } };
+const queueData = vi.hoisted(() => ({ currentClimbQueueItem: null as HeadItem | null }));
+const viewer = vi.hoisted(() => ({ userId: 'me' as string | null }));
 
 type ViewMockProps = {
   children?: ReactNode;
@@ -94,9 +98,10 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('../use-wall-driver', () => ({
-  useWallDriver: () => ({ driver: null, name: wallDriver.name, litAgo: null }),
+vi.mock('../../../providers/queue-provider', () => ({
+  useQueueData: () => ({ currentClimbQueueItem: queueData.currentClimbQueueItem }),
 }));
+vi.mock('../../../hooks/use-viewer-user-id', () => ({ useViewerUserId: () => viewer.userId }));
 vi.mock('../../Text', () => ({
   Text: ({ children, color }: { children?: ReactNode; color?: string }) =>
     createElement('span', { 'data-color': color }, children),
@@ -132,11 +137,21 @@ vi.mock('../../../theme/layout', () => ({ glassSize: { inline: 44 } }));
 
 import { PlayDrawerCommitBar, PutOnWallButton } from '../PlayDrawerCommitBar';
 
+const WALL_CLIMB = 'climb-on-the-wall';
+
 const questionProps = {
   wallClimbName: 'Their Project',
+  wallClimbUuid: WALL_CLIMB,
   onKeepTheirs: vi.fn(),
   onConfirm: vi.fn(),
 };
+
+/** The crew's current climb: the lit one, put up by `username` unless overridden. */
+const head = (username: string, overrides: Partial<HeadItem> = {}): HeadItem => ({
+  climb: { uuid: WALL_CLIMB },
+  addedByUser: { id: `user-${username}`, username },
+  ...overrides,
+});
 
 const buttonLabels = (container: HTMLElement) =>
   [...container.querySelectorAll('button')].map((node) => node.getAttribute('data-label') ?? '');
@@ -146,7 +161,8 @@ const styleOf = (node: Element | null) =>
 
 beforeEach(() => {
   announceForAccessibility.mockClear();
-  wallDriver.name = null;
+  queueData.currentClimbQueueItem = null;
+  viewer.userId = 'me';
 });
 
 describe('PutOnWallButton', () => {
@@ -185,7 +201,7 @@ describe('PutOnWallButton', () => {
 });
 
 describe('PlayDrawerCommitBar — the busy-wall question', () => {
-  it('offers Keep theirs then Put mine up, the commit trailing where Put on the wall was', () => {
+  it('offers Keep theirs then Put mine up, the commit where Put on the wall was', () => {
     // Position is the whole contract: a thumb already travelling toward "Put on
     // the wall" must land on the commit, never on "Keep theirs".
     const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
@@ -196,15 +212,15 @@ describe('PlayDrawerCommitBar — the busy-wall question', () => {
     ]);
   });
 
-  it('names the climb the wall is showing, and "someone" when presence cannot say who', () => {
+  it('names the climb the wall is showing, and "someone" when nobody can be named', () => {
     const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
 
     expect(container.textContent).toContain('playView.wallState.commitOverride.body:Their Project');
     expect(container.textContent).not.toContain('bodyNamed');
   });
 
-  it('names who lit the wall in the question and in Keep theirs when presence knows them', () => {
-    wallDriver.name = 'Sam';
+  it('names who put the lit climb up, in the question and in Keep theirs', () => {
+    queueData.currentClimbQueueItem = head('Sam');
     const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
 
     expect(container.textContent).toContain('playView.wallState.commitOverride.bodyNamed:Sam:Their Project');
@@ -212,6 +228,45 @@ describe('PlayDrawerCommitBar — the busy-wall question', () => {
       'playView.wallState.commitOverride.cancelNamed:Sam',
       'playView.wallState.commitOverride.confirm',
     ]);
+  });
+
+  // Each of these would name the wrong person, or the climber themself, so the
+  // question falls back to the unnamed wording.
+  it.each([
+    ['the viewer put it up', () => head('Me', { addedByUser: { id: 'me', username: 'Me' } })],
+    ['the crew’s current climb is not the lit one', () => head('Sam', { climb: { uuid: 'climb-elsewhere' } })],
+    ['nobody is recorded as having put it up', () => ({ climb: { uuid: WALL_CLIMB } })],
+    ['there is no current climb', () => null],
+  ] as Array<[string, () => HeadItem | null]>)('stays unnamed when %s', (_scenario, makeHead) => {
+    queueData.currentClimbQueueItem = makeHead();
+    const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
+
+    expect(container.textContent).toContain('playView.wallState.commitOverride.body:Their Project');
+    expect(container.textContent).not.toContain('bodyNamed');
+    expect(buttonLabels(container)).toEqual([
+      'playView.wallState.commitOverride.cancel',
+      'playView.wallState.commitOverride.confirm',
+    ]);
+  });
+
+  // Signed out, or the profile still loading on a cold start: an unknown viewer
+  // could be the picker, so it is never read as "somebody else".
+  it('stays unnamed while the viewer is not known yet', () => {
+    queueData.currentClimbQueueItem = head('Sam');
+    viewer.userId = null;
+    const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
+
+    expect(container.textContent).not.toContain('bodyNamed');
+    expect(buttonLabels(container)[0]).toBe('playView.wallState.commitOverride.cancel');
+    viewer.userId = 'me';
+  });
+
+  it('stays unnamed when the lit climb is unknown, even with a picker on the current climb', () => {
+    queueData.currentClimbQueueItem = head('Sam');
+    const { container } = render(createElement(PlayDrawerCommitBar, { ...questionProps, wallClimbUuid: null }));
+
+    expect(container.textContent).not.toContain('bodyNamed');
+    expect(buttonLabels(container)[0]).toBe('playView.wallState.commitOverride.cancel');
   });
 
   it('routes Put mine up to the confirm handler only', () => {
@@ -265,7 +320,7 @@ describe('PlayDrawerCommitBar — the busy-wall question', () => {
     // The row mounts the moment the question arms. A live region that mounts
     // already holding its text is not a content change, so the bar says it
     // itself; a re-render with the same question must not say it again.
-    wallDriver.name = 'Sam';
+    queueData.currentClimbQueueItem = head('Sam');
     const { rerender } = render(createElement(PlayDrawerCommitBar, questionProps));
 
     expect(announceForAccessibility).toHaveBeenCalledTimes(1);
@@ -285,9 +340,9 @@ describe('PlayDrawerCommitBar — the busy-wall question', () => {
     ['android', 1],
   ] as const)('on %s, a changed question is spoken %i time(s) in all', (os, times) => {
     platform.OS = os;
-    wallDriver.name = null;
+    queueData.currentClimbQueueItem = null;
     const { rerender } = render(createElement(PlayDrawerCommitBar, questionProps));
-    wallDriver.name = 'Sam';
+    queueData.currentClimbQueueItem = head('Sam');
     // A fresh handler forces the memo'd bar to render again and re-read the name.
     rerender(createElement(PlayDrawerCommitBar, { ...questionProps, onConfirm: vi.fn() }));
 
@@ -300,11 +355,29 @@ describe('PlayDrawerCommitBar — the busy-wall question', () => {
   it('holds the row at the control height instead of collapsing it', () => {
     const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
     const keep = container.querySelector('[data-label="playView.wallState.commitOverride.cancel"]');
-    const controls = keep?.parentElement ?? null;
+    const controls = keep?.parentElement?.parentElement ?? null;
     const row = controls?.parentElement ?? null;
 
     expect(styleOf(row)).toMatchObject({ minHeight: 44 });
     expect(styleOf(controls)).toMatchObject({ flexGrow: 1, flexDirection: 'row' });
     expect(styleOf(controls)).not.toHaveProperty('flex');
+  });
+
+  // Put mine up sits in the middle, where Put on the wall was: two equal
+  // halves either side of it, Keep in the left one and the right one empty.
+  it('centres Put mine up between two equal halves, Keep in the left', () => {
+    const { container } = render(createElement(PlayDrawerCommitBar, questionProps));
+    const keep = container.querySelector('[data-label="playView.wallState.commitOverride.cancel"]');
+    const confirm = container.querySelector('[data-label="playView.wallState.commitOverride.confirm"]');
+    const controls = keep?.parentElement?.parentElement ?? null;
+    const [leftHalf, middle, rightHalf, ...rest] = [...(controls?.children ?? [])];
+
+    expect(rest).toHaveLength(0);
+    expect(leftHalf.contains(keep)).toBe(true);
+    expect(middle).toBe(confirm);
+    expect(rightHalf.childElementCount).toBe(0);
+    expect(styleOf(leftHalf)).toMatchObject({ flex: 1 });
+    expect(styleOf(rightHalf)).toMatchObject({ flex: 1 });
+    expect(styleOf(rightHalf)).toEqual(styleOf(leftHalf));
   });
 });

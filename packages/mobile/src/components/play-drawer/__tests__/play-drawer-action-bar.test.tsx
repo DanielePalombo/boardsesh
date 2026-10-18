@@ -146,16 +146,22 @@ vi.mock('../../drawer-action-bar/DrawerActionBar', () => ({
 vi.mock('../PlayDrawerCommitBar', () => ({
   PlayDrawerCommitBar: ({
     wallClimbName,
+    wallClimbUuid,
     onKeepTheirs,
     onConfirm,
   }: {
     wallClimbName: string | null;
+    wallClimbUuid: string | null;
     onKeepTheirs: () => void;
     onConfirm: () => void;
   }) =>
     createElement(
       'div',
-      { 'data-commit-bar': 'true', 'data-wall-climb': wallClimbName ?? '' },
+      {
+        'data-commit-bar': 'true',
+        'data-wall-climb': wallClimbName ?? '',
+        'data-wall-climb-uuid': wallClimbUuid ?? '',
+      },
       createElement('button', { 'data-keep-theirs': 'true', onClick: onKeepTheirs }),
       createElement('button', { 'data-confirm': 'true', onClick: onConfirm }),
     ),
@@ -496,8 +502,9 @@ describe("PlayDrawerActionBar (the climber's buttons)", () => {
   });
 });
 
-// While browsing, Put on the wall sits in the gap of the usual row and every
-// button stays put; only the busy-wall question takes the whole row. Neither is
+// While browsing, Put on the wall sits in the middle of the usual row with one
+// button kept on each side (the rest step into ⋯); only the busy-wall question
+// takes the whole row. Neither is
 // ever a new band: the drawer's height budget is why both live in a row that
 // already exists.
 describe('PlayDrawerActionBar (browse latch controls)', () => {
@@ -518,19 +525,22 @@ describe('PlayDrawerActionBar (browse latch controls)', () => {
         (entry) => entry === 'putOnWall' || [FAVORITE_LABEL, ANGLE_LABEL, SHARE_LABEL, QUEUE_LABEL].includes(entry),
       );
 
-  it('puts Put on the wall in the middle of the usual row, keeping every button', () => {
+  it('puts Put on the wall in the middle, the heart and the queue either side, angle and share in ⋯', () => {
     const { container } = render(createElement(PlayDrawerActionBar, browseProps));
 
     expect(container.querySelector('[data-commit-bar]')).toBeNull();
-    expect(secondRowOrder(container)).toEqual([FAVORITE_LABEL, ANGLE_LABEL, 'putOnWall', SHARE_LABEL, QUEUE_LABEL]);
+    expect(secondRowOrder(container)).toEqual([FAVORITE_LABEL, 'putOnWall', QUEUE_LABEL]);
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
+    expect(container.querySelector('[data-icon="share"]')).toBeNull();
     expect(container.querySelector('[data-icon="tick.outline"]')).toBeTruthy();
   });
 
-  it('keeps the queue in the first slot on a board without mirror', () => {
+  it('keeps the queue in the first slot on a board without mirror, the heart and share either side', () => {
     const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, supportsMirroring: false }));
 
     expect(labels(container)[0]).toBe(QUEUE_LABEL);
-    expect(secondRowOrder(container)).toEqual([QUEUE_LABEL, FAVORITE_LABEL, ANGLE_LABEL, 'putOnWall', SHARE_LABEL]);
+    expect(secondRowOrder(container)).toEqual([QUEUE_LABEL, FAVORITE_LABEL, 'putOnWall', SHARE_LABEL]);
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
   });
 
   it('runs the commit, and nothing else, from Put on the wall', () => {
@@ -563,10 +573,14 @@ describe('PlayDrawerActionBar (browse latch controls)', () => {
   });
 
   it('swaps the whole row for the busy-wall question, handing it the lit climb', () => {
-    const { container } = render(createElement(PlayDrawerActionBar, confirmProps));
+    const { container } = render(
+      createElement(PlayDrawerActionBar, { ...confirmProps, wallClimbUuid: 'climb-on-the-wall' }),
+    );
     const question = container.querySelector('[data-commit-bar="true"]');
 
     expect(question?.getAttribute('data-wall-climb')).toBe('Their Project');
+    // Its uuid too, so the question only names whoever put THAT climb up.
+    expect(question?.getAttribute('data-wall-climb-uuid')).toBe('climb-on-the-wall');
     expect(container.querySelector('[data-put-on-wall]')).toBeNull();
     // The row's own buttons go for the duration; the host's ⋯ picks them up.
     expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
@@ -788,20 +802,27 @@ describe('PlayDrawerActionBar (connect-step pill)', () => {
   });
 
   it('gives way to Put on the wall while the latch is up, share back in its place', () => {
-    const { container } = render(
-      createElement(PlayDrawerActionBar, {
-        ...pillProps,
-        commitButton: 'putOnWall' as const,
-        onKeepTheirs: vi.fn(),
-        onCommit: vi.fn(),
-      }),
-    );
+    const latchProps = {
+      ...pillProps,
+      commitButton: 'putOnWall' as const,
+      onKeepTheirs: vi.fn(),
+      onCommit: vi.fn(),
+    };
+    // Without mirror, share is the last button on the right, so it comes back.
+    const { container } = render(createElement(PlayDrawerActionBar, { ...latchProps, supportsMirroring: false }));
 
     expect(container.querySelector('[data-connect-pill="true"]')).toBeNull();
     expect(container.querySelector('[data-put-on-wall]')).toBeTruthy();
     expect(container.querySelector('[data-icon="share"]')).toBeTruthy();
     // The bulb is back in its slot rather than lost.
     expect(container.querySelector('[data-ble="true"]')).toBeTruthy();
+
+    // On a mirror board the queue holds the right-hand place and share stays in ⋯.
+    const mirror = render(createElement(PlayDrawerActionBar, latchProps));
+    expect(mirror.container.querySelector('[data-connect-pill="true"]')).toBeNull();
+    expect(actions(mirror.container)).toContain(ACTION_ICONS.queue);
+    expect(mirror.container.querySelector('[data-icon="share"]')).toBeNull();
+    expect(mirror.container.querySelector('[data-ble="true"]')).toBeTruthy();
   });
 
   it('gives way to the busy-wall question too', () => {

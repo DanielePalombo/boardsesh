@@ -95,8 +95,9 @@ function isLeadingButton(buttonId: PlayerButtonId): buttonId is 'mirror' | 'queu
  * - Log, Board light and the ⏮ ⏭ slots never move. Previous and next off
  *   leaves both slots empty, so Log stays centred.
  * - The connect pill replaces the right-hand group. While browsing, Put on the
- *   wall takes the gap in the middle and every button stays where it was; only
- *   the busy-wall question replaces the whole row. Whatever goes is flagged in
+ *   wall takes the gap in the middle; the first button on the left and the last
+ *   on the right stay where they were and the others step into ⋯ for as long
+ *   as it shows. Only the busy-wall question replaces the whole row. Whatever goes is flagged in
  *   `hidden`, as is every button the climber switched off, and the player's ⋯
  *   menu picks it up.
  * - With nothing left to draw, no pill and no Put on the wall, there is no
@@ -155,7 +156,11 @@ export function resolveActionBarLayout({
   if (commit === 'confirm') {
     secondaryRow = 'confirm';
   } else if (commit === 'putOnWall') {
-    secondaryRow = [...startGroup, 'spacer', 'putOnWall', 'spacer', ...endGroup];
+    // Room for the button: "Put on the wall" needs ~140pt in English and more in
+    // German, and a mirror board's row (♡ 40° ⬆ ☰) leaves ~120pt on a 375pt
+    // phone. So one button keeps its place on each side and the rest step into
+    // ⋯ until the climb is up.
+    secondaryRow = [...startGroup.slice(0, 1), 'spacer', 'putOnWall', 'spacer', ...endGroup.slice(-1)];
   } else if (showConnectPill) {
     secondaryRow = [...startGroup, 'spacer', 'connectPill'];
   } else if (startGroup.length + endGroup.length === 0 && !utilities.includes('share')) {

@@ -8,9 +8,9 @@ import { PressableSurface } from '../PressableSurface';
 // Only the busy-wall question takes the whole row (`PlayDrawerCommitBar`):
 // someone else lit the wall while you looked around, so the next tap would
 // replace their climb. The pair reads "Keep Sam's" / "Put mine up" and the
-// question floats above it as a bubble. "Put mine up" lands exactly where Put on
-// the wall was, so the second tap is the commit and nothing new can be hit by
-// accident.
+// question floats above it as a bubble. "Put mine up" sits in the middle,
+// exactly where Put on the wall was, so the second tap is the commit and nothing
+// new can be hit by accident.
 
 import { memo, useEffect, useRef } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
@@ -27,7 +27,8 @@ import { LargeContentViewer } from '../LargeContentViewer';
 import { Text } from '../Text';
 import { Icon } from '../Icon';
 import type { CommitButtonLabel } from './wall-state';
-import { useWallDriver } from './use-wall-driver';
+import { useQueueData } from '../../providers/queue-provider';
+import { useViewerUserId } from '../../hooks/use-viewer-user-id';
 
 /** Matches the row's own control height, so the bubble clears the buttons. */
 const BUBBLE_LIFT = glassSize.inline + spacing[1];
@@ -85,6 +86,8 @@ export const PutOnWallButton = memo(function PutOnWallButton({ commitLabel, onPr
 type PlayDrawerCommitBarProps = {
   /** The climb the wall is showing, named in the question. */
   wallClimbName: string | null;
+  /** Its uuid, to check the crew's current climb is the one that's lit. */
+  wallClimbUuid: string | null;
   /** Leave their climb up and go back to it. Nothing is sent. */
   onKeepTheirs: () => void;
   /** The second tap: put the climb on screen up over theirs. */
@@ -92,12 +95,25 @@ type PlayDrawerCommitBarProps = {
 };
 
 /** The busy-wall question: someone else lit the wall while you were looking around. */
-function PlayDrawerCommitBarImpl({ wallClimbName, onKeepTheirs, onConfirm }: PlayDrawerCommitBarProps) {
+function PlayDrawerCommitBarImpl({ wallClimbName, wallClimbUuid, onKeepTheirs, onConfirm }: PlayDrawerCommitBarProps) {
   const { t } = useTranslation('session');
-  // Who lit it, read here rather than in the drawer: the presence context it
-  // comes from changes on every wall event, and this row only mounts while the
-  // question is up. Unknown falls back to "Someone".
-  const { name: wallDriverName } = useWallDriver();
+  // Who put it up: the crew's current climb records who picked it. Not the
+  // board-presence driver, which is whoever's phone holds Bluetooth (in a crew,
+  // often you). Read here, where it only costs anything while the question is
+  // up. Unknown, you, or a current climb that isn't the lit one: "Someone".
+  const { currentClimbQueueItem } = useQueueData();
+  const viewerUserId = useViewerUserId();
+  const picker = currentClimbQueueItem?.addedByUser ?? null;
+  const wallDriverName =
+    picker !== null &&
+    // Unknown viewer (signed out, or the profile still loading) is never read as
+    // "somebody else": it could be you.
+    viewerUserId !== null &&
+    picker.id !== viewerUserId &&
+    wallClimbUuid !== null &&
+    currentClimbQueueItem?.climb.uuid === wallClimbUuid
+      ? picker.username
+      : null;
   const { variant, brandColors, systemColors, m3SurfaceContainers, materialElevation } = useTheme();
   const reduceMotion = useReducedMotion();
 
@@ -154,29 +170,34 @@ function PlayDrawerCommitBarImpl({ wallClimbName, onKeepTheirs, onConfirm }: Pla
         </Animated.View>
       </View>
 
+      {/* Put mine up sits in the middle, exactly where Put on the wall was, so
+          the second tap on the same spot is the commit. Keep takes the left
+          half and gives ground (truncates) before it can reach the middle. */}
       <View style={styles.controls}>
-        <PressableSurface
-          onPress={onKeepTheirs}
-          accessibilityRole="button"
-          accessibilityLabel={keepText}
-          style={({ pressed }) => [styles.textButton, pressed && drawerActionBarStyles.actionButtonPressed]}
-        >
-          <LargeContentViewer title={keepText} onActivate={onKeepTheirs}>
-            <Text
-              variant="subheadline"
-              color={brandColors.tint}
-              numberOfLines={1}
-              maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-              style={styles.textButtonLabel}
-            >
-              {keepText}
-            </Text>
-          </LargeContentViewer>
-        </PressableSurface>
-
-        <View style={drawerActionBarStyles.spacer} />
+        <View style={styles.side}>
+          <PressableSurface
+            onPress={onKeepTheirs}
+            accessibilityRole="button"
+            accessibilityLabel={keepText}
+            style={({ pressed }) => [styles.textButton, pressed && drawerActionBarStyles.actionButtonPressed]}
+          >
+            <LargeContentViewer title={keepText} onActivate={onKeepTheirs}>
+              <Text
+                variant="subheadline"
+                color={brandColors.tint}
+                numberOfLines={1}
+                maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
+                style={styles.textButtonLabel}
+              >
+                {keepText}
+              </Text>
+            </LargeContentViewer>
+          </PressableSurface>
+        </View>
 
         <FilledButton label={confirmText} onPress={onConfirm} />
+
+        <View style={styles.side} />
       </View>
     </View>
   );
@@ -199,15 +220,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  // Two equal halves either side of the filled button keep it centred.
+  side: {
+    flex: 1,
+    alignItems: 'flex-start',
+  },
   // The live region's own box: no surface and no size of its own.
+  // Centred over Put mine up, which sits in the middle of the row.
   bubbleRegion: {
     position: 'absolute',
     bottom: BUBBLE_LIFT,
+    left: 0,
     right: 0,
-    maxWidth: '85%',
-    alignItems: 'flex-end',
+    alignItems: 'center',
   },
   bubble: {
+    maxWidth: '85%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing[2],

@@ -164,12 +164,19 @@ import { WallStatePill } from '../WallStatePill';
 
 type WallStatePillProps = ComponentProps<typeof WallStatePill>;
 
-const renderPill = (props: Partial<{ state: 'onWall' | 'live' | 'browsing'; reserveOnly: boolean }> = {}) => {
-  const state = props.state ?? 'browsing';
+const renderPill = (
+  props: Partial<{
+    state: 'onWall' | 'live' | 'browsing';
+    reserveOnly: boolean;
+    backTarget: 'wall' | 'current' | null;
+    latched: boolean;
+  }> = {},
+) => {
+  const { state = 'browsing', reserveOnly, backTarget, latched } = props;
   return render(
-    props.reserveOnly
-      ? createElement(WallStatePill, { state, reserveOnly: true })
-      : createElement(WallStatePill, { state, onPress: vi.fn() }),
+    reserveOnly
+      ? createElement(WallStatePill, { state, backTarget, latched, reserveOnly: true })
+      : createElement(WallStatePill, { state, backTarget, latched, onPress: vi.fn() }),
   );
 };
 
@@ -195,12 +202,13 @@ describe('WallStatePill', () => {
     expect(onPress).toHaveBeenCalledOnce();
   });
 
-  // Browsing, the pill is the way back: a back glyph plus the face of whoever
-  // lit the wall. Neutral like the other two states, because the loud thing on
-  // screen is Put on the wall, the one control that changes anything.
-  it('shows a back glyph and the wall driver’s face while browsing, on the neutral surface', () => {
+  // Browsing, the pill is the way back: a back glyph, plus the face of whoever
+  // lit the wall when back lands on the lit climb. Neutral like the other two
+  // states, because the loud thing on screen is Put on the wall, the one
+  // control that changes anything.
+  it('shows a back glyph and the wall driver’s face when back goes to the wall, on the neutral surface', () => {
     driverState.value = { driver: { userId: 'u1', avatarUrl: 'https://x/y.png' }, name: 'Sam', litAgo: null };
-    const { container } = renderPill({ state: 'browsing' });
+    const { container } = renderPill({ state: 'browsing', backTarget: 'wall' });
 
     expect(container.querySelector('[data-icon="undo"]')?.getAttribute('data-color')).toBe('#111');
     const avatar = container.querySelector('[data-driver-avatar="true"]') as HTMLElement;
@@ -218,12 +226,48 @@ describe('WallStatePill', () => {
   });
 
   it('keeps the back glyph alone, at the 44pt touch width, with nobody to show', () => {
-    const { container } = renderPill({ state: 'browsing' });
+    const { container } = renderPill({ state: 'browsing', backTarget: 'current' });
 
     expect(container.querySelector('[data-icon="undo"]')).toBeTruthy();
     expect(container.querySelector('[data-driver-avatar="true"]')).toBeNull();
     expect(styles(container).some((style) => style.includes('"minWidth":44'))).toBe(true);
     expect(pill(container).getAttribute('data-label')).toBe('playView.wallState.backToCurrent');
+  });
+
+  // The face promises "back to what they lit". When back lands on the
+  // climber's own climb and the wall shows something else, it would lie.
+  it.each([
+    ['current', 'current' as const],
+    ['unset', null],
+  ])('keeps the driver’s face off a back chip whose target is %s', (_label, backTarget) => {
+    driverState.value = { driver: { userId: 'u1', avatarUrl: 'https://x/y.png' }, name: 'Sam', litAgo: null };
+    const { container } = renderPill({ state: 'browsing', backTarget });
+
+    expect(container.querySelector('[data-icon="undo"]')).toBeTruthy();
+    expect(container.querySelector('[data-driver-avatar="true"]')).toBeNull();
+    expect(styles(container).some((style) => style.includes('"minWidth":44'))).toBe(true);
+    expect(pill(container).getAttribute('data-label')).toBe('playView.wallState.backToCurrent');
+  });
+
+  // Back to the wall with nobody to show: still the wall's words, glyph alone.
+  it('says back to the wall without a face when nobody can be named', () => {
+    const { container } = renderPill({ state: 'browsing', backTarget: 'wall' });
+
+    expect(container.querySelector('[data-driver-avatar="true"]')).toBeNull();
+    expect(styles(container).some((style) => style.includes('"minWidth":44'))).toBe(true);
+    expect(pill(container).getAttribute('data-label')).toBe('playView.wallState.backToWall');
+  });
+
+  // backTarget only means anything on the back chip.
+  it('ignores backTarget on the wall and Live', () => {
+    driverState.value = { driver: { userId: 'u1', avatarUrl: 'https://x/y.png' }, name: 'Marco', litAgo: null };
+    const onWall = renderPill({ state: 'onWall', backTarget: 'current' });
+    expect(onWall.container.querySelector('[data-driver-avatar="true"]')).toBeTruthy();
+    expect(pill(onWall.container).getAttribute('data-label')).toContain('playView.wallState.onWall');
+
+    const live = renderPill({ state: 'live', backTarget: 'wall' });
+    expect(live.container.querySelector('[data-driver-avatar="true"]')).toBeNull();
+    expect(pill(live.container).getAttribute('data-label')).toBe('playView.wallState.live');
   });
 
   it('says "Live" beside the shared board-presence dot', () => {
@@ -278,6 +322,25 @@ describe('WallStatePill', () => {
     const { container } = renderPill({ state: 'browsing' });
 
     expect(pill(container).getAttribute('data-hint')).toBe('playView.wallState.browsingHint');
+  });
+
+  // "The wall stays where it is" is only true under a latch. A preview with
+  // lighting on still lights each swipe, so its back chip promises nothing.
+  it('drops the browsing hint when no latch holds the wall still', () => {
+    const latched = renderPill({ state: 'browsing', backTarget: 'current', latched: true });
+    expect(pill(latched.container).getAttribute('data-hint')).toBe('playView.wallState.browsingHint');
+
+    const unlatched = renderPill({ state: 'browsing', backTarget: 'current', latched: false });
+    expect(pill(unlatched.container).getAttribute('data-hint')).toBeNull();
+    // The label still says where the tap goes.
+    expect(pill(unlatched.container).getAttribute('data-label')).toBe('playView.wallState.backToCurrent');
+  });
+
+  it('keeps the explainer hint on the wall and Live whatever the latch', () => {
+    for (const state of ['onWall', 'live'] as const) {
+      const { container } = renderPill({ state, latched: false });
+      expect(pill(container).getAttribute('data-hint')).toContain('playView.wallState.pillHint');
+    }
   });
 
   // The pill never decides what a tap does: PlayCore hands it the explainer on

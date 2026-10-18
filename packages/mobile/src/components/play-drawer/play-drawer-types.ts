@@ -28,9 +28,9 @@ export type PlayDrawerOpenOptions = {
   committedExternally?: boolean;
   /**
    * View-only preview: show this item in the drawer WITHOUT committing it to the
-   * queue. This is the browse latch — the header pill reads "Browsing", the board
-   * wears the viewfinder brackets, and the action bar's second row swaps to
-   * "Back to live" + "Put on the wall". Used by the explicit "Preview" climb
+   * queue. The header chip becomes the way back (a back glyph, with the face of
+   * whoever lit the wall when back lands on it) and Put on the wall sits in the
+   * action bar's second row. Used by the explicit "Preview" climb
    * action, the deep-link / standalone climb-page route, the workout builder, and
    * the peer-driven wall climb behind the accessory bar. The lightbulb keeps
    * acting on the active climb, not this preview.
