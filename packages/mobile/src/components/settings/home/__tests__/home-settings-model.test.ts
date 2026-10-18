@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildHomeSettingsModel, type HomeSettingsModelInput } from '../home-settings-model';
 import type { MoreRow } from '../../../MoreForm.types';
 
-const echo = (key: string) => key;
+const echo = (key: string, options?: Record<string, unknown>) => (options ? `${key} ${JSON.stringify(options)}` : key);
 
 function makeInput(overrides: Partial<HomeSettingsModelInput> = {}): HomeSettingsModelInput {
   return {
@@ -97,37 +97,69 @@ describe('buildHomeSettingsModel', () => {
     ]);
   });
 
-  it('draws the movable sections as native switches in order, then a Reorder row, on the native branch', () => {
+  it('draws the movable sections as native switches with move buttons, disabled at the ends, on the native branch', () => {
     const onSectionChange = vi.fn();
-    const onReorder = vi.fn();
+    const onMove = vi.fn();
+    const placed = {
+      first: false,
+      last: false,
+      gapAbove: false,
+      movableCount: 2,
+    };
+    const playlists = {
+      ...placed,
+      id: 'playlists' as const,
+      label: 'Playlists',
+      description: 'Liked and Projects',
+      visible: false,
+      movable: true,
+      first: true,
+      position: 1,
+      canMoveUp: false,
+      canMoveDown: true,
+    };
+    const board = {
+      ...placed,
+      id: 'board' as const,
+      label: 'Your board',
+      description: 'Browse or change it',
+      visible: true,
+      movable: true,
+      last: true,
+      position: 2,
+      canMoveUp: true,
+      canMoveDown: false,
+    };
     const model = buildHomeSettingsModel(
-      makeInput({
-        onSectionChange,
-        movableSections: {
-          kind: 'native',
-          rows: [
-            { id: 'playlists', label: 'Playlists', description: 'Liked and Projects', visible: false, movable: true },
-            { id: 'board', label: 'Your board', description: 'Browse or change it', visible: true, movable: true },
-          ],
-          onReorder,
-        },
-      }),
+      makeInput({ onSectionChange, movableSections: { kind: 'native', rows: [playlists, board], onMove } }),
     );
     const sections = model.sections[1];
     expect(sections.rows.map((row) => [row.kind, row.key])).toEqual([
       ['toggle', 'playlists'],
       ['toggle', 'board'],
-      ['nav', 'reorderSections'],
     ]);
-    const [playlists, , reorder] = sections.rows;
-    if (playlists.kind !== 'toggle') throw new Error('playlists is not a toggle');
-    expect(playlists.value).toBe(false);
-    expect(playlists.subtitle).toBe('Liked and Projects');
-    playlists.onValueChange(true);
+    const [playlistsRow, boardRow] = sections.rows;
+    if (playlistsRow.kind !== 'toggle' || boardRow.kind !== 'toggle') throw new Error('sections are not toggles');
+    expect(playlistsRow.value).toBe(false);
+    expect(playlistsRow.subtitle).toBe('Liked and Projects');
+    playlistsRow.onValueChange(true);
     expect(onSectionChange).toHaveBeenCalledWith('playlists', true);
-    if (reorder.kind !== 'nav') throw new Error('reorderSections is not a nav row');
-    expect(reorder.label).toBe('mobile.settings.homeSections.reorder');
-    reorder.onPress();
-    expect(onReorder).toHaveBeenCalledTimes(1);
+    // Up then down, each named for TalkBack, dead at the ends of the list.
+    expect(playlistsRow.actions?.map((action) => [action.icon, action.accessibilityLabel, action.disabled])).toEqual([
+      ['moveUp', 'mobile.settings.sectionLayout.moveUp {"section":"Playlists"}', true],
+      ['moveDown', 'mobile.settings.sectionLayout.moveDown {"section":"Playlists"}', false],
+    ]);
+    expect(boardRow.actions?.map((action) => action.disabled)).toEqual([false, true]);
+    playlistsRow.actions?.[1].onPress();
+    boardRow.actions?.[0].onPress();
+    expect(onMove.mock.calls).toEqual([
+      [playlists, 1],
+      [board, -1],
+    ]);
+  });
+
+  it('never gives the feed move buttons: it stays last', () => {
+    const fixed = buildHomeSettingsModel(makeInput()).sections[2].rows[0];
+    expect(fixed.kind === 'toggle' ? fixed.actions : 'not a toggle').toBeUndefined();
   });
 });

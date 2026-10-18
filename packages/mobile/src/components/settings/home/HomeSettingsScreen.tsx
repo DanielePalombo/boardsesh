@@ -2,8 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { MoreForm } from '../../MoreForm';
-import { HomeCustomizeSheet } from '../../home/HomeCustomizeSheet';
-import { useMountedOnFirstOpen } from '../../../hooks/use-mounted-on-first-open';
+import {
+  announceSectionMoved,
+  placeSectionLayoutRows,
+  type PlacedSectionLayoutRow,
+} from '../../section-layout/SectionLayoutList';
+import type { SectionMoveDirection } from '../../../lib/section-layout';
 import { normaliseStartupScreen } from '../../../lib/app-entry-route';
 import { hapticSelection } from '../../../lib/haptics';
 import type { HomeSectionId } from '../../../lib/home-sections';
@@ -19,8 +23,7 @@ const ROW_HEIGHT_GUESS = 68;
 
 /**
  * Settings › Home. "Open the app on" first, then the sections with their
- * switches and ↑/↓ arrows (on Android, switches and a Reorder row that opens
- * Customize Home), then the presets. The rows and actions are the
+ * switches and ↑/↓ arrows (native form buttons on Android), then the presets. The rows and actions are the
  * Customize Home sheet's own (`useHomeSectionControls`) over the same store, so
  * the page, the sheet and Home always agree. Every change reports one
  * `Setting Changed` under the `homeScreen` page.
@@ -65,17 +68,22 @@ export function HomeSettingsScreen() {
   const [measuredListHeight, setMeasuredListHeight] = useState<number | null>(null);
   const listHeight = measuredListHeight ?? Math.ceil(movableRows.length * ROW_HEIGHT_GUESS * Math.max(fontScale, 1));
   // Android's Compose form draws no hosted React Native row on a real phone (QA
-  // on a Pixel 8 Pro, #6546), so there the sections are native switches and the
-  // Customize Home sheet does the reordering.
+  // on a Pixel 8 Pro, #6546), so there each section is a native switch with
+  // native move buttons on the same page.
   const nativeSectionRows = Platform.OS === 'android';
-  const [reorderOpen, setReorderOpen] = useState(false);
-  const mountReorderSheet = useMountedOnFirstOpen(reorderOpen);
-  const openReorder = useCallback(() => setReorderOpen(true), []);
-  const closeReorder = useCallback(() => setReorderOpen(false), []);
+  // The same buzz and spoken landing place as the sheet's arrows.
+  const onNativeMove = useCallback(
+    (row: PlacedSectionLayoutRow<HomeSectionId>, direction: SectionMoveDirection) => {
+      if (!onMove(row.id, direction)) return;
+      hapticSelection();
+      announceSectionMoved(t, row, direction);
+    },
+    [onMove, t],
+  );
   const movableSections = useMemo(
     () =>
       nativeSectionRows
-        ? { kind: 'native' as const, rows: movableRows, onReorder: openReorder }
+        ? { kind: 'native' as const, rows: placeSectionLayoutRows(movableRows), onMove: onNativeMove }
         : {
             kind: 'hosted' as const,
             content: (
@@ -88,7 +96,7 @@ export function HomeSettingsScreen() {
             ),
             height: listHeight,
           },
-    [nativeSectionRows, movableRows, openReorder, onVisibleChange, onMove, listHeight],
+    [nativeSectionRows, movableRows, onNativeMove, onVisibleChange, onMove, listHeight],
   );
   const model = useMemo(
     () =>
@@ -121,10 +129,5 @@ export function HomeSettingsScreen() {
       restoreDefaults,
     ],
   );
-  return (
-    <>
-      <MoreForm model={model} />
-      {mountReorderSheet ? <HomeCustomizeSheet visible={reorderOpen} onClose={closeReorder} /> : null}
-    </>
-  );
+  return <MoreForm model={model} />;
 }

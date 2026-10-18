@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
 import type { HomeSectionId } from '../../../lib/home-sections';
 import type { StartupScreen } from '../../../settings';
-import type { MoreFormModel, MoreOption, MoreRow } from '../../MoreForm.types';
-import type { SectionLayoutRowModel } from '../../section-layout/SectionLayoutList';
+import type { MoreFormModel, MoreOption, MoreRow, MoreToggleRow } from '../../MoreForm.types';
+import type { SectionMoveDirection } from '../../../lib/section-layout';
+import type { PlacedSectionLayoutRow, SectionLayoutRowModel } from '../../section-layout/SectionLayoutList';
 import type { SettingsTranslate } from '../root/settings-pages';
 
 export type HomeSettingsModelInput = {
@@ -14,13 +15,17 @@ export type HomeSettingsModelInput = {
    * How the sections that move draw. The form has no reorderable row of its own.
    * - `hosted` (iOS, browser): one React Native row, `HomeSectionsFormList`, the
    *   sheet's switch-and-arrows rows.
-   * - `native` (Android): a native switch per section in the saved order, then a
-   *   row that opens Customize Home to reorder. The Compose form draws no hosted
+   * - `native` (Android): a native switch per section in the saved order, each
+   *   with native move up / move down buttons. The Compose form draws no hosted
    *   React Native row on a real phone (QA on a Pixel 8 Pro, #6546).
    */
   movableSections:
     | { kind: 'hosted'; content: ReactNode; height: number }
-    | { kind: 'native'; rows: readonly SectionLayoutRowModel<HomeSectionId>[]; onReorder: () => void };
+    | {
+        kind: 'native';
+        rows: readonly PlacedSectionLayoutRow<HomeSectionId>[];
+        onMove: (row: PlacedSectionLayoutRow<HomeSectionId>, direction: SectionMoveDirection) => void;
+      };
   /** The sections that keep their place (the feed, always last), as native switches. */
   fixedRows: readonly SectionLayoutRowModel<HomeSectionId>[];
   onSectionChange: (sectionId: HomeSectionId, visible: boolean) => void;
@@ -36,12 +41,12 @@ export type HomeSettingsModelInput = {
  * Settings › Home, on the native form like Board and Climbs & grades: whether
  * the app opens on Climbs or Home; the sections with their switches and ↑/↓
  * arrows (the one React Native row, #6480's exception, at Marco's ask; on
- * Android native switches and a Reorder row instead); the feed, which stays
+ * Android native switches with native arrow buttons instead); the feed, which stays
  * last; then Show all, Focused and Restore defaults.
  */
 export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormModel {
   const { t, movableSections } = input;
-  const sectionToggle = (row: SectionLayoutRowModel<HomeSectionId>): MoreRow => ({
+  const sectionToggle = (row: SectionLayoutRowModel<HomeSectionId>): MoreToggleRow => ({
     kind: 'toggle',
     key: row.id,
     label: row.label,
@@ -60,15 +65,26 @@ export function buildHomeSettingsModel(input: HomeSettingsModelInput): MoreFormM
             fullBleed: true,
           },
         ]
-      : [
-          ...movableSections.rows.map(sectionToggle),
-          {
-            kind: 'nav',
-            key: 'reorderSections',
-            label: t('mobile.settings.homeSections.reorder'),
-            onPress: movableSections.onReorder,
-          },
-        ];
+      : movableSections.rows.map((row) => ({
+          ...sectionToggle(row),
+          // Disabled at the ends: the first can't go up, the last can't pass the feed.
+          actions: [
+            {
+              key: 'moveUp',
+              icon: 'moveUp',
+              accessibilityLabel: t('mobile.settings.sectionLayout.moveUp', { section: row.label }),
+              disabled: !row.canMoveUp,
+              onPress: () => movableSections.onMove(row, -1),
+            },
+            {
+              key: 'moveDown',
+              icon: 'moveDown',
+              accessibilityLabel: t('mobile.settings.sectionLayout.moveDown', { section: row.label }),
+              disabled: !row.canMoveDown,
+              onPress: () => movableSections.onMove(row, 1),
+            },
+          ],
+        }));
   // The tab names, so the choice reads exactly like the tab bar. Climbs first:
   // it is the default.
   const startupOptions: (MoreOption & { key: StartupScreen })[] = [

@@ -35,6 +35,24 @@ export type PlacedSectionLayoutRow<Id extends string> = SectionLayoutRowModel<Id
   canMoveDown: boolean;
 };
 
+/**
+ * Says where a moved row landed: the row moves under the screen reader's focus.
+ * Shared with Android's Settings › Home, whose arrows are native form buttons.
+ */
+export function announceSectionMoved(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  row: Pick<PlacedSectionLayoutRow<string>, 'label' | 'position' | 'movableCount'>,
+  direction: SectionMoveDirection,
+): void {
+  announceQueued(
+    t('mobile.settings.sectionLayout.moved', {
+      section: row.label,
+      position: row.position + direction,
+      count: row.movableCount,
+    }),
+  );
+}
+
 /** Where each row sits, and which way its arrows can go. */
 export function placeSectionLayoutRows<Id extends string>(
   rows: readonly SectionLayoutRowModel<Id>[],
@@ -99,14 +117,7 @@ function SectionLayoutRowBase<Id extends string>({
       if (disabled || !(direction < 0 ? canMoveUp : canMoveDown)) return;
       if (onMove(id, direction) === false) return;
       hapticSelection();
-      // The row moves under the screen reader's focus; say where it landed.
-      announceQueued(
-        t('mobile.settings.sectionLayout.moved', {
-          section: label,
-          position: position + direction,
-          count: movableCount,
-        }),
-      );
+      announceSectionMoved(t, { label, position, movableCount }, direction);
     },
     [disabled, canMoveUp, canMoveDown, id, label, position, movableCount, onMove, t],
   );

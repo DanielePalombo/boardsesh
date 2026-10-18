@@ -6,7 +6,6 @@ import type {
   MoreButtonRow,
   MoreCustomRow,
   MoreFormModel,
-  MoreNavRow,
   MoreSegmentedRow,
   MoreToggleRow,
 } from '../../../MoreForm.types';
@@ -21,6 +20,7 @@ const captured = vi.hoisted(() => ({
 }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 const platform = vi.hoisted(() => ({ OS: 'ios' }));
+const announce = vi.hoisted(() => ({ announceQueued: vi.fn() }));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
   values: new Map<string, unknown>(),
@@ -134,7 +134,7 @@ vi.mock('../../../../providers/theme-provider', () => ({
 }));
 vi.mock('../../../../lib/analytics', () => ({ track: analytics.track }));
 vi.mock('../../../../lib/haptics', () => ({ hapticSelection: vi.fn() }));
-vi.mock('../../../../lib/announce-queued', () => ({ announceQueued: vi.fn() }));
+vi.mock('../../../../lib/announce-queued', () => ({ announceQueued: announce.announceQueued }));
 vi.mock('../../../../settings/hooks', () => ({
   subscribeSettings: settingsFile.subscribe,
   getSetting: settingsFile.get,
@@ -165,7 +165,6 @@ const toggle = (key: string) => rowOfKind(key, 'toggle') as MoreToggleRow;
 const button = (key: string) => rowOfKind(key, 'button') as MoreButtonRow;
 const segmented = (key: string) => rowOfKind(key, 'segmented') as MoreSegmentedRow;
 const hostedRow = () => rowOfKind('movableSections', 'custom') as MoreCustomRow;
-const navRow = (key: string) => rowOfKind(key, 'nav') as MoreNavRow;
 
 /** Draws the hosted React Native row the way the native form would, into its own container. */
 function renderHostedRows() {
@@ -191,6 +190,7 @@ beforeEach(() => {
   captured.model = null;
   captured.layoutHandlers.clear();
   platform.OS = 'ios';
+  announce.announceQueued.mockClear();
 });
 
 afterEach(() => {
@@ -274,40 +274,46 @@ describe('HomeSettingsScreen', () => {
     ]);
   });
 
-  it('on Android, draws native switches in the saved order and a Reorder row that opens Customize Home', () => {
+  it('on Android, draws native switches in the saved order with move buttons, and a move saves the order', () => {
     platform.OS = 'android';
     homeSectionsStore.move('climbingNow', -1);
     render(createElement(HomeSettingsScreen));
-    const sectionRows = captured.model?.sections.find((section) => section.key === 'sections')?.rows ?? [];
-    expect(sectionRows.map((row) => [row.kind, row.key])).toEqual([
+    const sectionRows = () =>
+      (captured.model?.sections.find((section) => section.key === 'sections')?.rows ?? []) as MoreToggleRow[];
+    expect(sectionRows().map((row) => [row.kind, row.key])).toEqual([
       ['toggle', 'board'],
       ['toggle', 'session'],
       ['toggle', 'climbingNow'],
       ['toggle', 'playlists'],
       ['toggle', 'beta'],
-      ['nav', 'reorderSections'],
     ]);
     expect(rows().some((row) => row.kind === 'custom')).toBe(false);
+    // Up then down on every row; the first can't go up, the last can't pass the feed.
+    expect(sectionRows().map((row) => row.actions?.map((action) => `${action.icon}:${!action.disabled}`))).toEqual([
+      ['moveUp:false', 'moveDown:true'],
+      ['moveUp:true', 'moveDown:true'],
+      ['moveUp:true', 'moveDown:true'],
+      ['moveUp:true', 'moveDown:true'],
+      ['moveUp:true', 'moveDown:false'],
+    ]);
+    expect(toggle('feed').actions).toBeUndefined();
+
+    act(() => toggle('climbingNow').actions?.[0].onPress());
+    expect(settingChangedCalls()).toEqual([{ page: 'homeScreen', key: 'moveUp', value: 'climbingNow' }]);
+    expect(settings.values.get('homeSectionsV1')).toMatchObject({
+      order: ['board', 'climbingNow', 'session', 'playlists', 'beta', 'feed'],
+    });
+    expect(announce.announceQueued).toHaveBeenCalledWith(
+      `mobile.settings.sectionLayout.moved ${JSON.stringify({ section: `${SECTION_KEY}.climbingNow`, position: 2, count: 5 })}`,
+    );
+    expect(sectionRows().map((row) => row.key)).toEqual(['board', 'climbingNow', 'session', 'playlists', 'beta']);
+
+    // A disabled button does nothing.
+    act(() => toggle('board').actions?.[0].onPress());
+    expect(settingChangedCalls()).toHaveLength(1);
 
     act(() => toggle('playlists').onValueChange(true));
     expect(homeSectionsStore.getLayout().visible.playlists).toBe(true);
-    expect(toggle('playlists').value).toBe(true);
-
-    expect(screen.queryByTestId('sheet')).toBeNull();
-    act(() => navRow('reorderSections').onPress());
-    // The sheet with the arrows, over the same store: a move there reorders the page.
-    expect(screen.getByTestId('sheet')).toBeTruthy();
-    act(() => {
-      fireEvent.click(screen.getByTestId('section-layout-move-up-climbingNow'));
-    });
-    expect(captured.model?.sections.find((section) => section.key === 'sections')?.rows.map((row) => row.key)).toEqual([
-      'board',
-      'climbingNow',
-      'session',
-      'playlists',
-      'beta',
-      'reorderSections',
-    ]);
   });
 
   it('reports a switch once, under the Home page', () => {

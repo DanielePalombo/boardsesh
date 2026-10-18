@@ -30,6 +30,7 @@ import {
   TextButton,
   Badge,
   Icon,
+  IconButton,
   Spacer,
   SingleChoiceSegmentedButtonRow,
   SegmentedButton,
@@ -75,6 +76,7 @@ import type {
   MoreIconName,
   MoreNavRow,
   MoreRow,
+  MoreRowAction,
   MoreSelectRow,
   MoreSliderRow,
   MoreValueRow,
@@ -118,6 +120,12 @@ const MORE_ICON_SOURCE: Record<MoreIconName, ImageSourcePropType> = {
   developer: require('../../assets/material-icons/developer.xml'),
   export: require('../../assets/material-icons/export.xml'),
   policy: require('../../assets/material-icons/policy.xml'),
+};
+
+// Material's arrow_upward / arrow_downward, for a row's move buttons.
+const ROW_ACTION_ICON_SOURCE: Record<MoreRowAction['icon'], ImageSourcePropType> = {
+  moveUp: require('../../assets/material-icons/arrow-upward.xml'),
+  moveDown: require('../../assets/material-icons/arrow-downward.xml'),
 };
 
 // Material's open_in_new, in place of the chevron on a row that leaves the app.
@@ -368,6 +376,26 @@ function renderRow(row: MoreRow, colors: RowColors): ReactNode {
     case 'toggle':
       return (
         <Row key={row.key} modifiers={[fillMaxWidth(), ROW_PADDING]} verticalAlignment="center">
+          {/* Leading move buttons, as in Customize Home's sheet. Each is its own
+              TalkBack stop with a full label ("Move Playlists up"); this Compose
+              bridge has no custom accessibility actions. The icon takes the
+              button's content colour, so a disabled one dims with it. */}
+          {row.actions?.map((action) => (
+            <IconButton
+              key={action.key}
+              onClick={() => {
+                if (!action.disabled) action.onPress();
+              }}
+              enabled={!action.disabled}
+              colors={{ contentColor: colors.brandColors.primary }}
+            >
+              <Icon
+                source={ROW_ACTION_ICON_SOURCE[action.icon]}
+                size={22}
+                contentDescription={action.accessibilityLabel}
+              />
+            </IconButton>
+          ))}
           <Column modifiers={[weight(1)]} verticalArrangement={{ spacedBy: spacing[1] }}>
             <Text style={{ typography: 'bodyLarge' }}>{row.label}</Text>
             {row.subtitle ? (
