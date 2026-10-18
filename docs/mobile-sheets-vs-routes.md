@@ -314,6 +314,12 @@ The sheet has two tabs, **Below the climb** (these sections) and **Buttons** (th
 next, and whether the controls sit below or above the board). The buttons, their layout rule, storage and the ⋯
 stand-ins are described in [climb-view-options.md](climb-view-options.md).
 
+Home's **Customize Home** sheet (`HomeCustomizeSheet`) follows the same pattern: a managed
+`ModalSheet` mounted on the Home tab on first open, `SectionLayoutList` in a
+`BottomSheetFlatList`, Show all and Focused above the list, Restore defaults under it, and
+Settings › General on the native form with switches only. Its layout lives in
+`homeSectionsStore` (`homeSectionsV1`, via `settingsLayoutStorage`); see `docs/ui/02-home.md`.
+
 The first eligible visible section supplies the header preview at the fold; its header
 mounts before deferred content so hiding Logbook never strands the remaining sections.
 With no eligible sections, the board and controls fill the viewport including safe-area

@@ -230,6 +230,16 @@ export type AppSettings = {
   playerPreviousNext: boolean;
   /** Where the player's controls block sits. Read through `sanitisePlayerButtonsPosition`. */
   playerButtonsPosition: PlayerButtonsPosition;
+  /**
+   * Which Home sections show, and in what order (#6289). `null` means the
+   * defaults, today's Home, so a climber who never customised follows a later
+   * release's defaults. In this store because Home must know it before its first
+   * frame: a hidden section is never mounted, so its queries never start.
+   *
+   * Read and written ONLY by `homeSectionsStore` (`lib/home-sections.ts`), which
+   * keeps its own snapshot. Per device; it survives sign-out.
+   */
+  homeSectionsV1: SectionLayoutRecord | null;
 };
 
 export type SettingsKey = keyof AppSettings;

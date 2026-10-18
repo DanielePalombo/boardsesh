@@ -44,8 +44,13 @@ import { openClimbInPlayDrawer } from '../../../src/lib/open-climb-in-play-drawe
 import { hapticLight } from '../../../src/lib/haptics';
 import { navigateToSessionFeedItem } from '../../../src/lib/session-feed-navigation';
 import { borderRadius, spacing } from '../../../src/theme/tokens';
-import { LiveSessionsRail } from '../../../src/components/live-sessions/LiveSessionsRail';
 import { InviteSheet } from '../../../src/components/session-screen/InviteSheet';
+import { HomeSections } from '../../../src/components/home/HomeSections';
+import { HomeCustomizeButton } from '../../../src/components/home/HomeCustomizeButton';
+import { HomeCustomizeSheet } from '../../../src/components/home/HomeCustomizeSheet';
+import { HomeEmptyState } from '../../../src/components/home/HomeEmptyState';
+import { useHomeSectionLayout, visibleTopHomeSections } from '../../../src/lib/home-sections';
+import { useMountedOnFirstOpen } from '../../../src/hooks/use-mounted-on-first-open';
 
 import { HomeStartupCommit } from '../../../src/lib/profiling/HomeStartupCommit';
 import { STARTUP_PROFILING_ENABLED } from '../../../src/lib/profiling/startup-profile';
@@ -65,6 +70,7 @@ type CommentTarget = {
 // renders (perf playbook rule 3) instead of a fresh inline arrow each pass.
 const keyExtractor = (item: CrewFeedItem) => item.id;
 const getItemType = (item: CrewFeedItem) => item.__typename;
+const NO_FEED_ITEMS: CrewFeedItem[] = [];
 
 export default function HomeTab() {
   const nativeRootHeader = useNativeRootHeader();
@@ -82,6 +88,22 @@ export default function HomeTab() {
   const [commentTarget, setCommentTarget] = useState<CommentTarget | null>(null);
   // UIKit owns its title inset. Other variants measure the floating chrome.
   const [chromeHeight, setChromeHeight] = useState(() => (nativeRootHeader ? 0 : insets.top + TOP_ISLAND_BAND));
+
+  // Which sections the climber shows, and in what order (Customize Home). Read
+  // synchronously, so a hidden section never mounts and its queries never start.
+  // The default is today's Home: Climbing now, then the feed.
+  const sectionLayout = useHomeSectionLayout();
+  const feedVisible = sectionLayout.visible.feed;
+  const climbingNowVisible = sectionLayout.visible.climbingNow;
+  // The scope menu picks whose sessions the feed and Climbing now show; without
+  // either there is nothing for it to scope.
+  const scopeVisible = feedVisible || climbingNowVisible;
+  const topSectionIds = useMemo(() => visibleTopHomeSections(sectionLayout), [sectionLayout]);
+  const homeEmpty = topSectionIds.length === 0 && !feedVisible;
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const mountCustomizeSheet = useMountedOnFirstOpen(customizeOpen);
+  const handleOpenCustomize = useCallback(() => setCustomizeOpen(true), []);
+  const handleCloseCustomize = useCallback(() => setCustomizeOpen(false), []);
 
   // Feed scope. `mode` chooses the view — `crew` (people you follow) is the
   // default; `gym` is everyone on the selected board. `selectedBoard` is the
@@ -118,13 +140,14 @@ export default function HomeTab() {
   // first focus (see useHasBeenFocused); a launch on Climbs no longer pays them.
   const hasBeenFocused = useHasBeenFocused();
   const scopeReady = !isResolvingHomeBoard && hasBeenFocused;
-  const sessionFeed = useSessionGroupedFeed(feedInput, isAuthenticated && scopeReady && mode === 'gym');
-  const crewFeed = useCrewFeed(isAuthenticated && scopeReady && mode === 'crew');
+  const feedEnabled = isAuthenticated && scopeReady && feedVisible;
+  const sessionFeed = useSessionGroupedFeed(feedInput, feedEnabled && mode === 'gym');
+  const crewFeed = useCrewFeed(feedEnabled && mode === 'crew');
   const feed = mode === 'crew' ? crewFeed : sessionFeed;
   // A visibility recheck can remove every candidate from one page. Advancing
   // that cursor needs an explicit tap, not an automatic drain of sparse pages.
   const lastCrewPage = crewFeed.data?.pages.at(-1)?.crewFeed;
-  const requiresManualPage = mode === 'crew' && requiresCrewPageTap(lastCrewPage);
+  const requiresManualPage = feedVisible && mode === 'crew' && requiresCrewPageTap(lastCrewPage);
   const pageGateRef = useRef(createFeedPageGate());
   const pageSource = mode === 'crew' ? 'crew' : `gym:${selectedBoard?.uuid ?? 'everyone'}`;
   // The feed is network-only and `networkMode: 'offlineFirst'` pauses an offline
@@ -133,6 +156,8 @@ export default function HomeTab() {
   const feedOffline = useOfflineQueryState(feed);
 
   const feedItems = useMemo<CrewFeedItem[]>(() => {
+    // A hidden feed shows nothing, even with pages still cached from before.
+    if (!feedVisible) return NO_FEED_ITEMS;
     if (mode === 'crew') {
       const items = crewFeed.data?.pages.flatMap((page) => page.crewFeed.items) ?? [];
       return [...new Map(items.map((item) => [item.id, item])).values()];
@@ -145,7 +170,7 @@ export default function HomeTab() {
         session,
       }),
     );
-  }, [mode, crewFeed.data, sessionFeed.data]);
+  }, [feedVisible, mode, crewFeed.data, sessionFeed.data]);
   const sessions = useMemo(
     () => feedItems.flatMap((item) => (item.__typename === 'CrewSessionItem' ? [item.session] : [])),
     [feedItems],
@@ -214,24 +239,43 @@ export default function HomeTab() {
   );
 
   const loadNextPage = useCallback(() => {
-    if (!feed.hasNextPage || feed.isFetchingNextPage || !pageGateRef.current.claim(pageSource)) return;
+    // A disabled query still pages on request, so a hidden feed must not ask.
+    if (!feedVisible || !feed.hasNextPage || feed.isFetchingNextPage || !pageGateRef.current.claim(pageSource)) {
+      return;
+    }
     // Promise cleanup still runs after unmount. A remount owns a fresh ref, so
     // this completion can only release the old instance's gate.
     void feed.fetchNextPage().finally(() => {
       pageGateRef.current.release(pageSource);
     });
-  }, [feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage, pageSource]);
+  }, [feedVisible, feed.hasNextPage, feed.isFetchingNextPage, feed.fetchNextPage, pageSource]);
   const handleEndReached = useCallback(() => {
     if (!requiresManualPage) loadNextPage();
   }, [requiresManualPage, loadNextPage]);
 
+  const sessionCardVisible = sectionLayout.visible.session;
+  const playlistsVisible = sectionLayout.visible.playlists;
   const handleRefresh = useCallback(() => {
-    // The rail subscribes to its own query, so the screen refreshes it by key.
-    void queryClient.invalidateQueries({ queryKey: FOLLOWED_LIVE_SESSIONS_QUERY_KEY });
+    // Only what is on screen. Each section subscribes to its own query, so the
+    // screen refreshes it by key; Your board reads the phone and has nothing to fetch.
+    if (climbingNowVisible) void queryClient.invalidateQueries({ queryKey: FOLLOWED_LIVE_SESSIONS_QUERY_KEY });
+    if (sessionCardVisible) void queryClient.invalidateQueries({ queryKey: ['sessionSummary'] });
+    if (playlistsVisible) void queryClient.invalidateQueries({ queryKey: ['mySmartPlaylistCounts'] });
+    if (!feedVisible) return;
     void sessionVoteSummaries.refetch();
     void tickVoteSummaries.refetch();
     if (isAuthenticated) void feed.refetch();
-  }, [queryClient, feed, isAuthenticated, sessionVoteSummaries, tickVoteSummaries]);
+  }, [
+    queryClient,
+    climbingNowVisible,
+    sessionCardVisible,
+    playlistsVisible,
+    feedVisible,
+    feed,
+    isAuthenticated,
+    sessionVoteSummaries,
+    tickVoteSummaries,
+  ]);
 
   // The invite sheet for the viewer's own solo session on the rail. Mounted on
   // the first request and kept mounted; opening waits one frame so the native
@@ -306,6 +350,10 @@ export default function HomeTab() {
   // boards, "Everyone", and "Find a gym". The active scope carries a checkmark
   // and doubles as the large title. `onSelectIndex` runs the tapped item.
   const scopeMenu = useMemo(() => {
+    // Nothing to scope: the chrome shows a plain "Home" title instead of the menu.
+    if (!scopeVisible) {
+      return { title: tCommon('mobile.nav.home'), actions: [], onSelectIndex: () => {} };
+    }
     const items: { action: AppMenuAction; run: () => void }[] = [
       {
         action: { label: t('mobile.home.scope.myCrew'), systemIcon: 'person.2.fill', selected: mode === 'crew' },
@@ -360,6 +408,8 @@ export default function HomeTab() {
     };
   }, [
     t,
+    tCommon,
+    scopeVisible,
     mode,
     homeBoard,
     ownedBoards,
@@ -372,12 +422,13 @@ export default function HomeTab() {
 
   const sessionsHeading = mode === 'gym' ? t('mobile.home.sessionsTitle') : t('mobile.home.feedTitle');
 
-  // No query data in these deps: the rail polls on its own, and a dep that
-  // changed on every poll would rebuild the FlashList header each minute.
+  // No query data in these deps: every section subscribes to its own data, and a
+  // dep that changed on every poll would rebuild the FlashList header each minute.
+  // The layout changes only when the climber edits it.
   const header = useMemo(
     () => (
       <View style={styles.header}>
-        {nativeRootHeader ? (
+        {nativeRootHeader && scopeVisible ? (
           <View style={styles.scopePicker}>
             <FeedScopeTitle
               title={scopeMenu.title}
@@ -389,13 +440,37 @@ export default function HomeTab() {
         ) : null}
         {/* Browser app on a phone only; renders nothing on native. */}
         <AppStorePrompt surface="home" />
-        <LiveSessionsRail boardUuid={liveBoardUuid} enabled={scopeReady} onInvite={handleOpenInvite} />
-        <Text variant="title3" style={styles.feedHeading}>
-          {sessionsHeading}
-        </Text>
+        <HomeSections
+          sectionIds={topSectionIds}
+          cardsReady={hasBeenFocused}
+          liveBoardUuid={liveBoardUuid}
+          liveEnabled={scopeReady}
+          onInvite={handleOpenInvite}
+        />
+        {/* An empty Home offers Customize in its empty state instead. */}
+        {homeEmpty ? null : <HomeCustomizeButton onPress={handleOpenCustomize} />}
+        {feedVisible ? (
+          <Text variant="title3" style={styles.feedHeading}>
+            {sessionsHeading}
+          </Text>
+        ) : null}
       </View>
     ),
-    [nativeRootHeader, scopeMenu, t, liveBoardUuid, scopeReady, handleOpenInvite, sessionsHeading],
+    [
+      nativeRootHeader,
+      scopeVisible,
+      scopeMenu,
+      t,
+      topSectionIds,
+      hasBeenFocused,
+      liveBoardUuid,
+      scopeReady,
+      handleOpenInvite,
+      homeEmpty,
+      handleOpenCustomize,
+      feedVisible,
+      sessionsHeading,
+    ],
   );
 
   if (!isAuthenticated) {
@@ -440,67 +515,78 @@ export default function HomeTab() {
           onEndReachedThreshold={0.5}
           ListHeaderComponent={header}
           refreshControl={
-            <RefreshControl refreshing={feed.isRefetching} onRefresh={handleRefresh} tintColor={brandColors.primary} />
+            <RefreshControl
+              refreshing={feedVisible && feed.isRefetching}
+              onRefresh={handleRefresh}
+              tintColor={brandColors.primary}
+            />
           }
           ListEmptyComponent={
-            <>
-              {STARTUP_PROFILING_ENABLED ? (
-                <HomeStartupCommit
-                  outcome={homeEmptyStartupOutcome({
-                    authenticated: isAuthenticated,
-                    blockedReason: feedOffline.isBlocked ? feedOffline.reason : null,
-                    loading: feed.isLoading,
-                    scopeReady,
-                    error: feed.isError,
-                  })}
-                />
-              ) : null}
-              {feedOffline.isBlocked && feedOffline.reason ? (
-                <OfflineState reason={feedOffline.reason} onRetry={handleRefresh} />
-              ) : feed.isLoading || !scopeReady ? (
-                <ActivitySkeletonList skeletonKeys={INITIAL_FEED_SKELETON_KEYS} />
-              ) : feed.isError ? (
-                <View style={styles.feedState}>
-                  <Icon name="error" size={32} color={systemColors.error} />
-                  <Text variant="headline" style={styles.emptyTitle}>
-                    {t('errors.loadActivity')}
-                  </Text>
-                  <View style={styles.emptyCta}>
-                    <Button title={tCommon('actions.retry')} onPress={() => void feed.refetch()} />
+            !feedVisible ? (
+              <>
+                {STARTUP_PROFILING_ENABLED ? <HomeStartupCommit outcome={homeEmpty ? 'empty' : 'content'} /> : null}
+                {homeEmpty ? <HomeEmptyState onCustomize={handleOpenCustomize} /> : null}
+              </>
+            ) : (
+              <>
+                {STARTUP_PROFILING_ENABLED ? (
+                  <HomeStartupCommit
+                    outcome={homeEmptyStartupOutcome({
+                      authenticated: isAuthenticated,
+                      blockedReason: feedOffline.isBlocked ? feedOffline.reason : null,
+                      loading: feed.isLoading,
+                      scopeReady,
+                      error: feed.isError,
+                    })}
+                  />
+                ) : null}
+                {feedOffline.isBlocked && feedOffline.reason ? (
+                  <OfflineState reason={feedOffline.reason} onRetry={handleRefresh} />
+                ) : feed.isLoading || !scopeReady ? (
+                  <ActivitySkeletonList skeletonKeys={INITIAL_FEED_SKELETON_KEYS} />
+                ) : feed.isError ? (
+                  <View style={styles.feedState}>
+                    <Icon name="error" size={32} color={systemColors.error} />
+                    <Text variant="headline" style={styles.emptyTitle}>
+                      {t('errors.loadActivity')}
+                    </Text>
+                    <View style={styles.emptyCta}>
+                      <Button title={tCommon('actions.retry')} onPress={() => void feed.refetch()} />
+                    </View>
                   </View>
-                </View>
-              ) : requiresManualPage ? null : mode === 'gym' && selectedBoard != null ? (
-                <View style={styles.feedState}>
-                  <Icon name="boards" size={48} color={systemColors.tertiaryLabel} />
-                  <Text variant="headline" style={styles.emptyTitle}>
-                    {t('mobile.home.boardEmptyTitle', { board: selectedBoard.gymName ?? selectedBoard.name })}
-                  </Text>
-                  <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.emptyBody}>
-                    {t('mobile.home.boardEmptyBody')}
-                  </Text>
-                  <View style={styles.emptyCta}>
-                    <Button title={t('mobile.home.boardEmptyCta')} onPress={handleBrowseEveryone} />
+                ) : requiresManualPage ? null : mode === 'gym' && selectedBoard != null ? (
+                  <View style={styles.feedState}>
+                    <Icon name="boards" size={48} color={systemColors.tertiaryLabel} />
+                    <Text variant="headline" style={styles.emptyTitle}>
+                      {t('mobile.home.boardEmptyTitle', { board: selectedBoard.gymName ?? selectedBoard.name })}
+                    </Text>
+                    <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.emptyBody}>
+                      {t('mobile.home.boardEmptyBody')}
+                    </Text>
+                    <View style={styles.emptyCta}>
+                      <Button title={t('mobile.home.boardEmptyCta')} onPress={handleBrowseEveryone} />
+                    </View>
                   </View>
-                </View>
-              ) : mode === 'crew' ? (
-                <View style={styles.feedState}>
-                  <Icon name="people" size={48} color={systemColors.tertiaryLabel} />
-                  <Text variant="headline" style={styles.emptyTitle}>
-                    {t('mobile.home.emptyTitle')}
-                  </Text>
-                  <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.emptyBody}>
-                    {t('mobile.home.emptyBody')}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.feedState}>
-                  <Icon name="people" size={48} color={systemColors.tertiaryLabel} />
-                  <Text variant="headline" style={styles.emptyTitle}>
-                    {t('emptyStates.noRecentActivity')}
-                  </Text>
-                </View>
-              )}
-            </>
+                ) : mode === 'crew' ? (
+                  <View style={styles.feedState}>
+                    <Icon name="people" size={48} color={systemColors.tertiaryLabel} />
+                    <Text variant="headline" style={styles.emptyTitle}>
+                      {t('mobile.home.emptyTitle')}
+                    </Text>
+                    <Text variant="subheadline" color={systemColors.secondaryLabel} style={styles.emptyBody}>
+                      {t('mobile.home.emptyBody')}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.feedState}>
+                    <Icon name="people" size={48} color={systemColors.tertiaryLabel} />
+                    <Text variant="headline" style={styles.emptyTitle}>
+                      {t('emptyStates.noRecentActivity')}
+                    </Text>
+                  </View>
+                )}
+              </>
+            )
           }
           ListFooterComponent={
             feed.isFetchingNextPage ? (
@@ -529,6 +615,7 @@ export default function HomeTab() {
       {inviteSessionId ? (
         <InviteSheet visible={inviteOpen} onDismiss={handleDismissInvite} sessionId={inviteSessionId} />
       ) : null}
+      {mountCustomizeSheet ? <HomeCustomizeSheet visible={customizeOpen} onClose={handleCloseCustomize} /> : null}
     </View>
   );
 }

@@ -470,6 +470,30 @@
         "moveDown": "{{section}} nach unten verschieben",
         "moved": "{{section}}, {{position}} von {{count}}"
       },
+      "homeSections": {
+        "title": "Start",
+        "customize": "Start anpassen",
+        "description": "Wähle, was Start zeigt und in welcher Reihenfolge. Fokus zeigt dein Board, deine Session und deine Playlists.",
+        "settingsFooter": "Wähle, was Start zeigt. Die Reihenfolge änderst du mit Start anpassen auf dem Start-Tab.",
+        "footer": "Änderungen gelten sofort und nur auf diesem Handy. Sie ändern nicht, wer dein Klettern sehen kann.",
+        "showAll": "Alles anzeigen",
+        "focused": "Fokus",
+        "restoreDefaults": "Standard wiederherstellen",
+        "sections": {
+          "board": "Dein Board",
+          "session": "Session",
+          "playlists": "Playlists",
+          "climbingNow": "Gerade am Klettern",
+          "feed": "Feed"
+        },
+        "descriptions": {
+          "board": "Boulder durchsuchen oder Board wechseln",
+          "session": "Session starten oder ihre Zeit sehen",
+          "playlists": "Gelikte Boulder und Projekte",
+          "climbingNow": "Live-Sessions zum Mitmachen",
+          "feed": "Sessions und neue Boulder deiner Crew. Immer ganz unten."
+        }
+      },
       "climbList": {
         "title": "Boulderliste",
         "picture": "Bild",

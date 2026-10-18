@@ -22,6 +22,21 @@
         "everyone": "Tout le monde",
         "findGym": "Trouver une salle près de toi",
         "hint": "Change les voies que vous voyez"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Démarre une session",
+          "startBody": "Choisis un entraînement ou grimpe librement",
+          "running": "Session en cours",
+          "open": "Ouvrir la session"
+        },
+        "playlists": {
+          "all": "Toutes les listes"
+        },
+        "empty": {
+          "title": "Ton accueil est vide",
+          "body": "Réactive des sections pour voir ta board, ta session ou ton crew."
+        }
       }
     },
     "liveSessions": {

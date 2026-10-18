@@ -742,6 +742,30 @@
         "moveDown": "Bajar {{section}}",
         "moved": "{{section}}, {{position}} de {{count}}"
       },
+      "homeSections": {
+        "title": "Inicio",
+        "customize": "Personalizar Inicio",
+        "description": "Elige qué muestra Inicio y en qué orden. Enfocado muestra tu plafón, tu sesión y tus listas.",
+        "settingsFooter": "Elige qué muestra Inicio. Para cambiar el orden, toca Personalizar Inicio en Inicio.",
+        "footer": "Los cambios se aplican al momento y solo en este teléfono. No cambian quién puede ver tu escalada.",
+        "showAll": "Mostrar todo",
+        "focused": "Enfocado",
+        "restoreDefaults": "Restablecer valores predeterminados",
+        "sections": {
+          "board": "Tu plafón",
+          "session": "Sesión",
+          "playlists": "Listas",
+          "climbingNow": "Escalando ahora",
+          "feed": "Feed"
+        },
+        "descriptions": {
+          "board": "Explora bloques o cambia de plafón",
+          "session": "Empieza una sesión o mira su cronómetro",
+          "playlists": "Bloques favoritos y Proyectos",
+          "climbingNow": "Sesiones en directo a las que unirte",
+          "feed": "Sesiones y bloques nuevos de tu crew. Siempre al final."
+        }
+      },
       "climbList": {
         "title": "Lista de bloques",
         "picture": "Imagen",

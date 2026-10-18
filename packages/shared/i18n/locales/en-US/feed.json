@@ -22,6 +22,21 @@
         "everyone": "Everyone",
         "findGym": "Find a gym near you",
         "hint": "Switches whose climbs you see"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Start a session",
+          "startBody": "Pick a workout or just climb",
+          "running": "Session running",
+          "open": "Open session"
+        },
+        "playlists": {
+          "all": "All playlists"
+        },
+        "empty": {
+          "title": "Your Home is empty",
+          "body": "Turn sections back on to see your board, your session or your crew."
+        }
       }
     },
     "liveSessions": {

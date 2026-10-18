@@ -22,6 +22,21 @@
         "everyone": "Todos",
         "findGym": "Busca un rocódromo cerca",
         "hint": "Cambia de quién ves las vías"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Empieza una sesión",
+          "startBody": "Elige un entrenamiento o simplemente escala",
+          "running": "Sesión en marcha",
+          "open": "Abrir sesión"
+        },
+        "playlists": {
+          "all": "Todas las listas"
+        },
+        "empty": {
+          "title": "Tu Inicio está vacío",
+          "body": "Vuelve a activar secciones para ver tu plafón, tu sesión o tu crew."
+        }
       }
     },
     "liveSessions": {

@@ -22,6 +22,21 @@
         "everyone": "Alle",
         "findGym": "Halle in deiner Nähe finden",
         "hint": "Legt fest, wessen Boulder du siehst"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Starte eine Session",
+          "startBody": "Wähl ein Workout oder kletter einfach",
+          "running": "Session läuft",
+          "open": "Session öffnen"
+        },
+        "playlists": {
+          "all": "Alle Playlists"
+        },
+        "empty": {
+          "title": "Dein Start ist leer",
+          "body": "Schalte Abschnitte wieder ein, um dein Board, deine Session oder deine Crew zu sehen."
+        }
       }
     },
     "liveSessions": {

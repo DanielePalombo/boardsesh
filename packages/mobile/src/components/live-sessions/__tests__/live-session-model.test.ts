@@ -330,6 +330,16 @@ describe('planLiveRail', () => {
     );
   });
 
+  it('never offers Start when Home already shows the Session card', () => {
+    const empty = planLiveRail({ ...base, showStartPrompt: false });
+    expect(empty.entries.map((entry) => entry.kind)).toEqual(['find']);
+    expect(empty.showsStartTile).toBe(false);
+    expect(empty.compactStart).toBe(false);
+    // Quiet days can't matter with no Start to shrink, so nothing waits on them.
+    expect(planLiveRail({ ...base, showStartPrompt: false, startCollapsed: null }).pending).toBe(false);
+    expect(kinds({ ...base, showStartPrompt: false, cards: [card()] })).toEqual(['session']);
+  });
+
   it('collapses Start to the compact row after quiet days, only while nobody is live', () => {
     const quiet = planLiveRail({ ...base, startCollapsed: true });
     expect(quiet.compactStart).toBe(true);

@@ -1,0 +1,272 @@
+// @vitest-environment jsdom
+import { createElement, type ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import type { SettingsChange } from '../../../../src/settings/hooks';
+
+// Home's sections, mounted by the real layout: each card is a recorder, so a
+// card that never mounts never ran its hooks, and never asked for anything.
+const recorded = vi.hoisted(() => ({
+  crewFeedEnabled: [] as boolean[],
+  sessionFeedEnabled: [] as boolean[],
+  railProps: [] as Array<{ enabled: boolean; showStartPrompt?: boolean }>,
+  chrome: [] as Array<{ scopeTitle: string; scopeActions: unknown[] }>,
+  customizeSheet: [] as boolean[],
+}));
+const focus = vi.hoisted(() => ({ hasBeenFocused: true }));
+const settings = vi.hoisted(() => ({
+  listeners: new Set<(change: SettingsChange) => void>(),
+  values: new Map<string, unknown>(),
+}));
+
+vi.mock('../../../../src/settings/hooks', () => ({
+  subscribeSettings: (listener: (change: SettingsChange) => void) => {
+    settings.listeners.add(listener);
+    return () => settings.listeners.delete(listener);
+  },
+  getSetting: (key: string) => settings.values.get(key) ?? null,
+  setSetting: (key: string, value: unknown) => {
+    settings.values.set(key, value);
+    for (const listener of settings.listeners) listener({ kind: 'setting', key: key as never });
+  },
+}));
+vi.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
+  DynamicColorIOS: (appearances: { light: string }) => appearances.light,
+  PlatformColor: (name: string) => name,
+  View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
+    createElement('div', { 'data-testid': testID }, children),
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  RefreshControl: () => null,
+}));
+vi.mock('@shopify/flash-list', () => ({
+  FlashList: ({
+    data,
+    ListHeaderComponent,
+    ListEmptyComponent,
+  }: {
+    data: unknown[];
+    ListHeaderComponent?: ReactNode;
+    ListEmptyComponent?: ReactNode;
+  }) => createElement('div', null, ListHeaderComponent, data.length === 0 ? ListEmptyComponent : null),
+}));
+vi.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
+vi.mock('../../../../src/lib/routing/scoped-navigation', () => ({
+  useScopedRouter: () => ({ push: vi.fn(), navigate: vi.fn() }),
+}));
+vi.mock('../../../../src/hooks/use-native-root-header', () => ({ useNativeRootHeader: () => false }));
+vi.mock('../../../../src/hooks/use-has-been-focused', () => ({ useHasBeenFocused: () => focus.hasBeenFocused }));
+vi.mock('../../../../src/hooks/use-bottom-chrome-metrics', () => ({
+  useBottomChromeMetrics: () => ({ scrollBottomPadding: 0 }),
+}));
+vi.mock('../../../../src/hooks/use-offline-query-state', () => ({
+  useOfflineQueryState: () => ({ isBlocked: false, reason: null }),
+}));
+vi.mock('../../../../src/components/ReadableColumn', () => ({
+  ReadableColumn: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
+}));
+vi.mock('../../../../src/components/Text', () => ({
+  Text: ({ children }: { children?: ReactNode }) => createElement('p', null, children),
+}));
+vi.mock('../../../../src/components/Icon', () => ({ Icon: () => null }));
+vi.mock('../../../../src/components/Card', () => ({
+  Card: ({ children }: { children?: ReactNode }) => createElement('div', null, children),
+}));
+vi.mock('../../../../src/components/Button', () => ({
+  Button: ({ title, onPress, testID }: { title: string; onPress: () => void; testID?: string }) =>
+    createElement('button', { onClick: onPress, 'data-testid': testID }, title),
+}));
+vi.mock('../../../../src/components/AppStorePrompt', () => ({ AppStorePrompt: () => null }));
+vi.mock('../../../../src/components/you/SessionFeedCard', () => ({ SessionFeedCard: () => null }));
+vi.mock('../../../../src/components/feed/NewClimbFeedCard', () => ({ NewClimbFeedCard: () => null }));
+vi.mock('../../../../src/components/you/CommentSheet', () => ({ CommentSheet: () => null }));
+vi.mock('../../../../src/components/feed/FeedScopeTitle', () => ({ FeedScopeTitle: () => null }));
+vi.mock('../../../../src/components/feed/HomeTopChrome', () => ({
+  TOP_ISLAND_BAND: 56,
+  HomeTopChrome: (props: { scopeTitle: string; scopeActions: unknown[] }) => {
+    recorded.chrome.push({ scopeTitle: props.scopeTitle, scopeActions: props.scopeActions });
+    return null;
+  },
+}));
+vi.mock('../../../../src/components/OfflineState', () => ({ OfflineState: () => null }));
+vi.mock('../../../../src/components/session-screen/InviteSheet', () => ({ InviteSheet: () => null }));
+vi.mock('../../../../src/components/ScreenshotSmokeMarker', () => ({ ScreenshotSmokeMarker: () => null }));
+vi.mock('../../../../src/components/home/HomeCustomizeSheet', () => ({
+  HomeCustomizeSheet: ({ visible }: { visible: boolean }) => {
+    recorded.customizeSheet.push(visible);
+    return null;
+  },
+}));
+vi.mock('../../../../src/components/home/HomeBoardSection', () => ({
+  HomeBoardSection: () => createElement('div', { 'data-testid': 'section-board' }),
+}));
+vi.mock('../../../../src/components/home/HomeSessionSection', () => ({
+  HomeSessionSection: () => createElement('div', { 'data-testid': 'section-session' }),
+}));
+vi.mock('../../../../src/components/home/HomePlaylistsSection', () => ({
+  HomePlaylistsSection: () => createElement('div', { 'data-testid': 'section-playlists' }),
+}));
+vi.mock('../../../../src/components/live-sessions/LiveSessionsRail', () => ({
+  LiveSessionsRail: (props: { enabled: boolean; showStartPrompt?: boolean }) => {
+    recorded.railProps.push(props);
+    return createElement('div', { 'data-testid': 'section-climbingNow' });
+  },
+}));
+
+function feedQuery() {
+  return {
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    isRefetching: false,
+    isFetchingNextPage: false,
+    hasNextPage: false,
+    refetch: vi.fn(),
+    fetchNextPage: vi.fn(),
+  };
+}
+vi.mock('../../../../src/lib/graphql/hooks/use-crew-feed', () => ({
+  useCrewFeed: (enabled: boolean) => {
+    recorded.crewFeedEnabled.push(enabled);
+    return feedQuery();
+  },
+}));
+vi.mock('../../../../src/lib/graphql/hooks', () => ({
+  useSessionGroupedFeed: (_input: unknown, enabled: boolean) => {
+    recorded.sessionFeedEnabled.push(enabled);
+    return feedQuery();
+  },
+  useBulkVoteSummaries: () => ({ data: undefined, refetch: vi.fn() }),
+}));
+vi.mock('../../../../src/lib/graphql/query-keys', () => ({ FOLLOWED_LIVE_SESSIONS_QUERY_KEY: ['followed'] }));
+vi.mock('../../../../src/lib/graphql/hooks/use-home-board', () => ({
+  useHomeBoard: () => ({ board: null, isResolving: false, boards: [] }),
+}));
+vi.mock('../../../../src/providers/auth-provider', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
+vi.mock('../../../../src/providers/theme-provider', () => ({
+  useTheme: () => ({ systemColors: {}, brandColors: { primary: 'brand' } }),
+}));
+vi.mock('../../../../src/providers/drawer-host-provider', () => ({
+  useDrawerHost: () => ({ openPlayDrawer: vi.fn() }),
+}));
+vi.mock('../../../../src/lib/feed-time-buckets', () => ({ dedupeSessionsById: (sessions: unknown[]) => sessions }));
+vi.mock('../../../../src/lib/feed/crew-page-state', () => ({
+  createFeedPageGate: () => ({ claim: () => true, release: () => {} }),
+  requiresCrewPageTap: () => false,
+}));
+vi.mock('../../../../src/lib/feed/vote-summary-map', () => ({
+  buildVoteSummaryMap: () => new Map(),
+  voteSummaryKey: () => '',
+}));
+vi.mock('../../../../src/lib/open-climb-in-play-drawer', () => ({ openClimbInPlayDrawer: vi.fn() }));
+vi.mock('../../../../src/lib/haptics', () => ({ hapticLight: vi.fn() }));
+vi.mock('../../../../src/lib/session-feed-navigation', () => ({ navigateToSessionFeedItem: vi.fn() }));
+vi.mock('../../../../src/lib/profiling/HomeStartupCommit', () => ({ HomeStartupCommit: () => null }));
+vi.mock('../../../../src/lib/profiling/startup-profile', () => ({ STARTUP_PROFILING_ENABLED: false }));
+vi.mock('../../../../src/lib/profiling/startup-collector', () => ({ homeEmptyStartupOutcome: () => null }));
+
+import HomeTab from '../index';
+import { HOME_SECTIONS, focusedHomeLayout, homeSectionsStore } from '../../../../src/lib/home-sections';
+
+function sectionOrder(): string[] {
+  return screen.queryAllByTestId(/^section-/).map((element) => element.getAttribute('data-testid') ?? '');
+}
+
+function lastChrome() {
+  return recorded.chrome.at(-1);
+}
+
+beforeEach(() => {
+  settings.values.clear();
+  homeSectionsStore.restoreDefaults();
+  focus.hasBeenFocused = true;
+  recorded.crewFeedEnabled = [];
+  recorded.sessionFeedEnabled = [];
+  recorded.railProps = [];
+  recorded.chrome = [];
+  recorded.customizeSheet = [];
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe('Home sections', () => {
+  it("draws today's Home by default: Climbing now, then the feed", () => {
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-climbingNow']);
+    expect(recorded.railProps.at(-1)?.showStartPrompt).toBe(true);
+    expect(screen.getByText('mobile.home.feedTitle')).toBeTruthy();
+    expect(screen.getByTestId('home-customize')).toBeTruthy();
+    expect(recorded.crewFeedEnabled.at(-1)).toBe(true);
+    expect(lastChrome()?.scopeActions.length).toBeGreaterThan(0);
+    expect(lastChrome()?.scopeTitle).toBe('mobile.home.scope.myCrew');
+  });
+
+  it('Focused mounts the three cards and asks for no feed and no Climbing now', () => {
+    homeSectionsStore.apply(focusedHomeLayout(homeSectionsStore.getLayout()));
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-board', 'section-session', 'section-playlists']);
+    expect(recorded.railProps).toEqual([]);
+    expect(recorded.crewFeedEnabled.every((enabled) => !enabled)).toBe(true);
+    expect(recorded.sessionFeedEnabled.every((enabled) => !enabled)).toBe(true);
+    expect(screen.queryByText('mobile.home.feedTitle')).toBeNull();
+    // Nothing to scope: a plain "Home" title, header buttons kept.
+    expect(lastChrome()).toEqual({ scopeTitle: 'mobile.nav.home', scopeActions: [] });
+  });
+
+  it('draws the sections in the order the climber chose', () => {
+    homeSectionsStore.apply({
+      order: ['playlists', 'climbingNow', 'board', 'session', 'feed'],
+      visible: { ...HOME_SECTIONS.defaults.visible, playlists: true, board: true },
+    });
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-playlists', 'section-climbingNow', 'section-board']);
+  });
+
+  it('keeps Start out of Climbing now while the Session card shows', () => {
+    homeSectionsStore.setVisible('session', true);
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-session', 'section-climbingNow']);
+    expect(recorded.railProps.at(-1)?.showStartPrompt).toBe(false);
+  });
+
+  it('holds the cards back until Home is first opened', () => {
+    homeSectionsStore.apply(focusedHomeLayout(homeSectionsStore.getLayout()));
+    focus.hasBeenFocused = false;
+    const { rerender } = render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual([]);
+    focus.hasBeenFocused = true;
+    rerender(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-board', 'section-session', 'section-playlists']);
+  });
+
+  it('shows the empty state with everything off, and Customize opens the sheet from there', () => {
+    homeSectionsStore.setAllVisible(false);
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual([]);
+    expect(screen.queryByTestId('home-customize')).toBeNull();
+    expect(screen.getByText('mobile.home.sections.empty.title')).toBeTruthy();
+    expect(recorded.customizeSheet).toEqual([]);
+    act(() => {
+      fireEvent.click(screen.getByTestId('home-empty-customize'));
+    });
+    expect(recorded.customizeSheet.at(-1)).toBe(true);
+  });
+
+  it('redraws as soon as the layout changes', () => {
+    render(createElement(HomeTab));
+    act(() => {
+      fireEvent.click(screen.getByTestId('home-customize'));
+    });
+    expect(recorded.customizeSheet.at(-1)).toBe(true);
+    act(() => {
+      homeSectionsStore.setVisible('board', true);
+    });
+    expect(sectionOrder()).toEqual(['section-board', 'section-climbingNow']);
+  });
+});

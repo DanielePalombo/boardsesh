@@ -470,6 +470,30 @@
         "moveDown": "Move {{section}} down",
         "moved": "{{section}}, {{position}} of {{count}}"
       },
+      "homeSections": {
+        "title": "Home",
+        "customize": "Customize Home",
+        "description": "Choose what Home shows, and in what order. Focused shows your board, session and playlists.",
+        "settingsFooter": "Choose what Home shows. To change the order, tap Customize Home on Home.",
+        "footer": "Changes apply right away, on this phone only. They don't change who can see your climbing.",
+        "showAll": "Show all",
+        "focused": "Focused",
+        "restoreDefaults": "Restore defaults",
+        "sections": {
+          "board": "Your board",
+          "session": "Session",
+          "playlists": "Playlists",
+          "climbingNow": "Climbing now",
+          "feed": "Feed"
+        },
+        "descriptions": {
+          "board": "Browse climbs or change board",
+          "session": "Start a session or see its timer",
+          "playlists": "Liked climbs and Projects",
+          "climbingNow": "Live sessions you can join",
+          "feed": "Sessions and new climbs from your crew. Always last."
+        }
+      },
       "climbList": {
         "title": "Climb list",
         "picture": "Picture",

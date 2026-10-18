@@ -1,94 +1,70 @@
-## Home / Landing
+## Home
 
-### Home Page
+The web landing page (`/`) is marketing only since W-16 (#4435). This page covers the app's Home tab.
 
-**Web route:** `/`
+### Home tab
 
-**Mobile status:** Tab screen `(tabs)/index.tsx`
+**Mobile route:** `packages/mobile/app/(tabs)/home/index.tsx`
 
-**Layout:** Full-height scrollable page. No global header (transparent, avatar-only). Bottom tab bar visible.
+**Layout:** A `FlashList` whose rows are the feed. Everything above the feed is the list header: the sections the climber switched on, in their order, then a **Customize Home** text button, then the feed heading. The top chrome (account avatar, notifications, find climbers) floats over the list as on the other tabs.
 
-**Data sources:**
+**Signed out:** a "Sign in to see your feed" placard comes before any section. Native redirects to login before Home renders, so this is mostly the browser app.
 
-- `getAllBoardConfigs()` -- server-fetched board configuration data (layouts, sizes, sets per board type)
-- `getPopularBoardConfigs()` -- server-fetched popular board configurations
-- `getRecentBetaLinks()` -- server-fetched recent beta video links
-- `useSession()` -- NextAuth session for auth state
+### Sections
 
-**Sections (top to bottom):**
+Five sections. The climber shows or hides each one and orders the first four. The feed stays last because it scrolls forever.
 
-#### 1. Hero Section
+| Id            | Name          | What it shows                                                                                   | Default |
+| ------------- | ------------- | ----------------------------------------------------------------------------------------------- | ------- |
+| `board`       | Your board    | `BoardSummaryCard` (moved from Session): Browse climbs, Change board                            | hidden  |
+| `session`     | Session       | Start a session, or the running session's timer and Open session. Both open the Session tab     | hidden  |
+| `playlists`   | Playlists     | Liked climbs and Projects (smart playlists, with counts), then All playlists on Discover        | hidden  |
+| `climbingNow` | Climbing now  | `LiveSessionsRail`, unchanged                                                                   | shown   |
+| `feed`        | Feed          | Crew feed (My crew) or the board's recent sessions (gym scope); locked last                     | shown   |
 
-- **Logo:** Boardsesh logo component
-- **Title:** "Get on the board!" (i18n key: `marketing:home.hero.title`)
-- **Subtitle:** About tracking sends and managing boards
-- **CTA Button:**
-  - If active session exists: "Continue climbing" -- navigates to active session's board
-  - If no active session: "Start climbing" -- opens Start Sesh Drawer (session creation flow)
-  - Button variant: `contained`, icon: `PlayArrowRounded`
+The defaults are today's Home (Climbing now, then the feed), so nobody's Home changes on an update. **Focused** shows Your board, Session and Playlists and hides Climbing now and the feed, which is the Boardz Home (#6289). Focused keeps the climber's order; **Restore defaults** resets order and switches.
 
-#### 2. Board Discovery Section
+Rules that hold in every layout:
 
-- **Component:** `BoardDiscoveryScroll` -- horizontal scrolling cards
-- **Cards (in order):**
-  1. "Find nearby" card -- opens Board Search Drawer (map-based search)
-  2. "My boards" card (if authenticated) -- opens My Boards Drawer
-  3. Popular configs (Kilter Original 12x12 40deg, Tension Original 8x10 40deg, MoonBoard defaults, etc.) -- each card navigates to that board's climb list
-  4. "Custom board" card -- opens Board Selector Drawer (cascading select form)
-- **Card appearance:** Horizontal scroll, snap-to-card, hidden scrollbar. Each card ~280px wide. Tap a board card to navigate to its climb list URL.
+- A hidden section is not mounted, so its queries never start. A hidden feed asks for nothing, shows nothing even with pages still cached, and never pages.
+- Nothing above the feed mounts before Home's first focus (`useHasBeenFocused`), so launching on Climbs costs Home nothing. Climbing now mounts as before and holds its own reads until the scope settles.
+- While the Session card shows, Climbing now never offers Start (`showStartPrompt={false}` → `planLiveRail`), so Start is offered once.
+- The scope menu (My crew / a gym / Everyone / Find a gym) shows while the feed or Climbing now does. Without either, the chrome shows a plain "Home" title. The header buttons stay in every layout, so notifications and find climbers survive an empty Home.
+- Every section switched off: "Your Home is empty" with a Customize Home button. The header Customize button hides then, so it is not offered twice.
+- Pull to refresh refetches only the visible sections: Climbing now and the feed as before, `['sessionSummary']` for Session, `['mySmartPlaylistCounts']` for Playlists. Your board reads the phone and has nothing to fetch.
+- `testID="home-screen"` and the screenshot smoke marker stay in every layout.
 
-#### 3. Recent Beta Videos Section
+### Customize Home
 
-- **Component:** `HomeRecentBetaSection`
-- **Layout:** Horizontal carousel of community beta videos
-- **Data:** `initialRecentBeta` from `getRecentBetaLinks()` -- Instagram/TikTok embed URLs with thumbnails
-- **Card:** Video thumbnail, climb name, board type badge
+The **Customize Home** button opens a `ModalSheet` (`HomeCustomizeSheet`), like the climb's View options: a switch per section, ↑/↓ arrows for the four above the feed (`SectionLayoutList` in a `BottomSheetFlatList`), Show all and Focused at the top, Restore defaults under the list. Choices apply at once and Home redraws behind the sheet. The feed row has a switch and no arrows, in its own group.
 
-#### 4. Onboarding Card Stack
+Settings › General lists the same five switches in the saved order, with Show all, Focused and Restore defaults, on the native form (#6477). The order only changes in the sheet. Both surfaces share `useHomeSectionControls`.
 
-- **Cards** with categorized accent colors (action/rose, social/purple, help/slate):
-  - **Install app** (platform-dependent): iOS App Store link, Android Play Store link, or hidden if already in native app. Detected via `isNativeApp()` / UA sniffing for Capacitor WebView.
-  - **Take the tour** (accent: action) -- starts onboarding tour
-  - **Aurora migration** (accent: action) -- navigates to `/aurora-migration` for importing data from official Aurora Climbing app
-  - **Build a playlist** (accent: action) -- navigates to playlist creation
-  - **Connect board** (accent: help) -- navigates to Bluetooth connection flow
-  - **Find your crew** (accent: social) -- opens unified search drawer filtered to users
-  - **Join Discord** (accent: social) -- opens external Discord invite link
-- **Card component (`OnboardingCard`):**
-  - Layout: flex row, 44x44px icon chip with accent-tinted background, title (semibold) + description (body2, neutral-500)
-  - Card variant: outlined, border `1px solid var(--neutral-200)`, border-radius `themeTokens.borderRadius.lg` (12px)
-  - Hover: border darkens to neutral-300, shadow `themeTokens.shadows.sm`
+Every edit reports `Setting Changed { page: 'homeScreen', key, value }`: a switch is `key: <section id>, value: <boolean>`; a move is `key: 'moveUp' | 'moveDown', value: <section id>`; a preset is `key: 'preset', value: 'showAll' | 'focused' | 'default'`. No new event.
 
-#### 5. Feed Callout (authenticated only)
+### Storage
 
-- "Your friends are climbing. See the feed" with CTA button navigating to `/feed`
+`homeSectionsStore` in `packages/mobile/src/lib/home-sections.ts` is a `createSectionLayoutStore` over the MMKV settings key `homeSectionsV1` (`SectionLayoutRecord | null`, through `settingsLayoutStorage`). It is synchronous, so Home knows the layout before its first frame. A layout equal to the defaults is stored as `null`, so a climber who never customised follows a later release's defaults; a section added later slots in where the defaults put it. The record is per device and survives sign-out; Reset all settings clears it. Older bundles ignore the key.
 
-**Dynamic drawers (mounted on demand):**
+Screenshot builds start every launch on the default Home and never save an edit, so captures stay identical across runs on the same simulator. An edit still applies for the rest of that launch, so a capture can show a customised Home.
 
-- `StartSeshDrawer` -- session creation (lazy loaded via `dynamic()`)
-- `UnifiedSearchDrawer` -- multi-category search (lazy loaded)
-- `BoardSelectorDrawer` -- custom board config (lazy loaded)
+The pure rules (order, visibility, `lockedLast`, unknown ids) live in `src/lib/section-layout.ts`; the play drawer's View options uses the same code (see `docs/mobile-sheets-vs-routes.md`).
 
-**States:**
+### Offline
 
-- Loading: Skeleton placeholders for install card and board discovery
-- Authenticated vs anonymous: affects "My boards" card visibility, feed callout, install card
-- Active session: changes hero CTA from "Start climbing" to "Continue climbing"
+| Section      | Data                                             | Offline                                                                                  |
+| ------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Your board   | `activeBoard` (AsyncStorage)                     | Works. Browse opens Climbs (a downloaded board, or its placard); Change board lists offline boards |
+| Session      | queue session id (local); `sessionSummary`       | The card shows; the timer stays hidden until the start time loads                        |
+| Playlists    | `mySmartPlaylistCounts` (network)                | Rows show without counts; each list shows its own offline state                          |
+| Climbing now | `followedLiveSessions`                           | The rail's existing offline row                                                          |
+| Feed         | `crewFeed` / `sessionGroupedFeed`                | The existing `OfflineState` placard                                                      |
 
-**Navigation:**
+No board: Your board shows Choose board, and a first pick lands on Climbs. A failed board restore shows Retry. A board change from the card comes back to Home (`returnTo: '/(tabs)/home'`).
 
-- Hero CTA -> Start Sesh Drawer or active session's board page
-- Board cards -> `/b/{slug}/{angle}/list`
-- Beta videos -> video playback or climb detail
-- Onboarding cards -> respective destinations
-- Feed callout -> `/feed`
+### Navigation
 
-**Mobile adaptation notes:**
-
-- Use `ScrollView` with `horizontal` for carousels
-- `expo-image` for board thumbnails and video thumbnails
-- Platform detection is native -- no Capacitor UA sniffing needed
-- App Store / Play Store deep links via `Linking.openURL()`
-- Discord link via `Linking.openURL()`
-
----
+- Your board → Browse climbs → Climbs tab; Change board → `/boards` (back to Home)
+- Session → Session tab (`/(tabs)/record`)
+- Playlists → `/(tabs)/discover/smart/[type]` with `source: 'home'` (`Smart Playlist Opened`); All playlists → Discover tab
+- Climbing now and feed cards → as before (join preview, session detail, play drawer)

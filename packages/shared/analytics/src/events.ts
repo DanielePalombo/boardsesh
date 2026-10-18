@@ -649,8 +649,9 @@ export const SHARED_EVENTS = {
   // SmartPlaylistOpened: a smart-playlist detail screen mounted for a known
   // type. `$screen` keeps `/discover/smart/[type]` verbatim, so this is the
   // only event that names the list. Props: { type: the SmartPlaylistType
-  // ('LIKED_CLIMBS', 'FIVE_STARS', ...), source: 'discover' | 'other' ('other'
-  // = a deep link or a caller that passed no source) }. Once per mount.
+  // ('LIKED_CLIMBS', 'FIVE_STARS', ...), source: 'discover' | 'home' | 'other'
+  // ('home' = Home's Playlists card, #6289; 'other' = a deep link or a caller
+  // that passed no source) }. Once per mount.
   SmartPlaylistOpened: 'Smart Playlist Opened',
 
   // Mobile-only, iOS 26 Liquid Glass iPhones (#5654): the one-time tip "To get
