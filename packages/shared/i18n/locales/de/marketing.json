@@ -556,7 +556,7 @@
       },
       "crowd": {
         "title": "Stöbern, ohne die Wand zu bewegen",
-        "p1": "Ist noch jemand in deiner Session, beleuchtet Wischen das Board nicht mehr und die Anzeige Stöbern erscheint. Tipp auf Am Board beleuchten, wenn du die Wand willst.",
+        "p1": "Ist noch jemand in deiner Session, beleuchtet Wischen das Board nicht mehr. Tipp auf Am Board beleuchten, wenn du deinen willst, oder tipp oben aufs Profilbild, um zum Boulder an der Wand zurückzukehren.",
         "p2": "Allein am Board? Halt die Glühbirne gedrückt und schalt Boulder beim Wischen beleuchten und Boulder beim Antippen in der Liste beleuchten aus.",
         "previewLink": "Einen Boulder aus jeder Liste in der Vorschau ansehen"
       },

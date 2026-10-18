@@ -5,8 +5,18 @@ import type { PlayDrawerHiddenButtons } from './play-drawer-menu-rows';
 /** What the first row's leftmost slot holds. Slot 5 (the bulb) is `trailingSlot`. */
 export type ActionBarLeadingSlot = 'mirror' | 'queue' | null;
 
-/** One entry in the second row, left to right. `spacer` is the flex gap. */
-export type ActionBarSecondaryItem = PlayerButtonId | 'spacer' | 'connectPill';
+/**
+ * One entry in the second row, left to right. `spacer` is the flex gap.
+ * `putOnWall` is the browse latch's one button, sitting in that gap.
+ */
+export type ActionBarSecondaryItem = PlayerButtonId | 'spacer' | 'connectPill' | 'putOnWall';
+
+/**
+ * What the browse latch needs from the second row. `putOnWall`: one button in
+ * the middle of the usual row. `confirm`: someone else moved the wall while you
+ * looked around, so the whole row becomes "Keep Sam's / Put mine up".
+ */
+export type ActionBarCommitButton = 'putOnWall' | 'confirm' | null;
 
 export type ActionBarLayoutInput = {
   supportsMirroring: boolean;
@@ -17,8 +27,8 @@ export type ActionBarLayoutInput = {
    * the bulb would have been offered, and never in commit mode or anonymously.
    */
   connectPill: boolean;
-  /** The browse latch's commit bar owns the second row. */
-  inCommitMode: boolean;
+  /** The browse latch's control in the second row, if it wants one. */
+  commitButton: ActionBarCommitButton;
   /** A Bluetooth transport exists on this platform at all. */
   showLightbulb: boolean;
   /** The climb can be shared. A draft can't: a link to it opens for nobody else (#5960). */
@@ -37,10 +47,10 @@ export type ActionBarLayout = {
   /** ⏮ and ⏭. Off leaves both slots empty, so Log stays in the middle. */
   showPreviousNext: boolean;
   /**
-   * The commit bar, or the utilities left to right. Empty means there is no
-   * second row at all, and the board gets its height.
+   * The busy-wall question, or the row's items left to right. Empty means there
+   * is no second row at all, and the board gets its height.
    */
-  secondaryRow: 'commit' | readonly ActionBarSecondaryItem[];
+  secondaryRow: 'confirm' | readonly ActionBarSecondaryItem[];
   showConnectPill: boolean;
   /** Buttons this viewer may use that the bar has put away. ⋯ carries a row for each. */
   hidden: PlayDrawerHiddenButtons;
@@ -84,11 +94,13 @@ function isLeadingButton(buttonId: PlayerButtonId): buttonId is 'mirror' | 'queu
  *   between climbs and today's bars come out exactly as they were.
  * - Log, Board light and the ⏮ ⏭ slots never move. Previous and next off
  *   leaves both slots empty, so Log stays centred.
- * - The connect pill replaces the right-hand group, and commit mode the whole
- *   second row. Whatever goes is flagged in `hidden`, as is every button the
- *   climber switched off, and the player's ⋯ menu picks it up.
- * - With nothing left to draw, no pill and no commit bar, there is no second
- *   row: the board gets its height back. Share switched on keeps the row even
+ * - The connect pill replaces the right-hand group. While browsing, Put on the
+ *   wall takes the gap in the middle and every button stays where it was; only
+ *   the busy-wall question replaces the whole row. Whatever goes is flagged in
+ *   `hidden`, as is every button the climber switched off, and the player's ⋯
+ *   menu picks it up.
+ * - With nothing left to draw, no pill and no Put on the wall, there is no
+ *   second row: the board gets its height back. Share switched on keeps the row even
  *   on a draft, where it can't draw: it is the one button that comes and goes
  *   climb to climb, and the board must not jump 52 pt mid-swipe.
  * - An anonymous reader gets today's bar whatever is stored on the device: no
@@ -99,15 +111,15 @@ export function resolveActionBarLayout({
   supportsMirroring,
   isAnonymous,
   connectPill,
-  inCommitMode,
+  commitButton,
   showLightbulb,
   hasShare,
   angleAvailable,
   buttons,
   previousNext,
 }: ActionBarLayoutInput): ActionBarLayout {
-  const commit = inCommitMode && !isAnonymous;
-  const showConnectPill = connectPill && showLightbulb && !isAnonymous && !commit;
+  const commit = isAnonymous ? null : commitButton;
+  const showConnectPill = connectPill && showLightbulb && !isAnonymous && commit === null;
   const trailingSlot = showLightbulb && !isAnonymous && !showConnectPill ? 'lightbulb' : null;
   const layout = isAnonymous ? DEFAULT_PLAYER_BUTTONS : buttons;
   const showPreviousNext = isAnonymous || previousNext;
@@ -140,8 +152,10 @@ export function resolveActionBarLayout({
   const endGroup = utilities.slice(startCount).filter(canDraw);
 
   let secondaryRow: ActionBarLayout['secondaryRow'];
-  if (commit) {
-    secondaryRow = 'commit';
+  if (commit === 'confirm') {
+    secondaryRow = 'confirm';
+  } else if (commit === 'putOnWall') {
+    secondaryRow = [...startGroup, 'spacer', 'putOnWall', 'spacer', ...endGroup];
   } else if (showConnectPill) {
     secondaryRow = [...startGroup, 'spacer', 'connectPill'];
   } else if (startGroup.length + endGroup.length === 0 && !utilities.includes('share')) {
@@ -155,7 +169,7 @@ export function resolveActionBarLayout({
   }
 
   const shown = (buttonId: PlayerButtonId) =>
-    leadingSlot === buttonId || (secondaryRow !== 'commit' && secondaryRow.includes(buttonId));
+    leadingSlot === buttonId || (secondaryRow !== 'confirm' && secondaryRow.includes(buttonId));
   return {
     leadingSlot,
     trailingSlot,

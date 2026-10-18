@@ -42,6 +42,7 @@ vi.mock('react-native', () => ({
         'data-border-top': flattenedStyle.borderTopWidth,
         'data-border-bottom': flattenedStyle.borderBottomWidth,
         'data-min-height': flattenedStyle.minHeight,
+        'data-background': flattenedStyle.backgroundColor,
       },
       children,
     );
@@ -139,11 +140,27 @@ vi.mock('../../drawer-action-bar/DrawerActionBar', () => ({
     actionButtonPressed: {},
   },
 }));
-// The commit-row content is covered by its own test; stubbed here (it pulls
-// reanimated) so this file stays a pure prop-contract test of the bar itself.
+// The latch controls' own content is covered by their own test; stubbed here
+// (they pull reanimated) so this file stays a pure prop-contract test of the bar
+// itself: which control renders where, and which handler each one is handed.
 vi.mock('../PlayDrawerCommitBar', () => ({
-  PlayDrawerCommitBar: ({ commitLabel }: { commitLabel?: string }) =>
-    createElement('div', { 'data-commit-bar': 'true', 'data-commit-label': commitLabel }),
+  PlayDrawerCommitBar: ({
+    wallClimbName,
+    onKeepTheirs,
+    onConfirm,
+  }: {
+    wallClimbName: string | null;
+    onKeepTheirs: () => void;
+    onConfirm: () => void;
+  }) =>
+    createElement(
+      'div',
+      { 'data-commit-bar': 'true', 'data-wall-climb': wallClimbName ?? '' },
+      createElement('button', { 'data-keep-theirs': 'true', onClick: onKeepTheirs }),
+      createElement('button', { 'data-confirm': 'true', onClick: onConfirm }),
+    ),
+  PutOnWallButton: ({ commitLabel, onPress }: { commitLabel: string; onPress: () => void }) =>
+    createElement('button', { 'data-put-on-wall': 'true', 'data-commit-label': commitLabel, onClick: onPress }),
 }));
 // The connect-step pill has its own test; here only where it goes, and that it
 // is handed the bulb's own tap and pending state.
@@ -384,10 +401,6 @@ describe('PlayDrawerActionBar', () => {
   });
 });
 
-// The second row is either the utilities OR the browse latch's controls — never
-// both, and never a new band. Every assertion below is about the SWAP, because
-// the drawer's height budget is the whole reason the commit controls live in a
-// row that already exists.
 describe("PlayDrawerActionBar (the climber's buttons)", () => {
   const order = ['mirror', 'favorite', 'angle', 'share', 'queue'] as const;
   const visibleAll = { mirror: true, favorite: true, angle: true, share: true, queue: true };
@@ -427,19 +440,18 @@ describe("PlayDrawerActionBar (the climber's buttons)", () => {
     expect(labels(container)).not.toContain(SHARE_LABEL);
   });
 
-  it('brings the second row back for the commit controls', () => {
+  it('brings the second row back for Put on the wall and for the busy-wall question', () => {
     const allOff = { order, visible: { mirror: false, favorite: false, angle: false, share: false, queue: false } };
-    const { container } = render(
-      createElement(PlayDrawerActionBar, {
-        ...baseProps,
-        buttons: allOff,
-        secondaryMode: 'commit',
-        onBackToLive: vi.fn(),
-        onCommit: vi.fn(),
-      }),
-    );
-    expect(secondRows(container)).toHaveLength(1);
-    expect(container.querySelector('[data-commit-bar]')).not.toBeNull();
+    const latchProps = { ...baseProps, buttons: allOff, onKeepTheirs: vi.fn(), onCommit: vi.fn() };
+
+    const browsing = render(createElement(PlayDrawerActionBar, { ...latchProps, commitButton: 'putOnWall' as const }));
+    expect(secondRows(browsing.container)).toHaveLength(1);
+    expect(browsing.container.querySelector('[data-put-on-wall]')).not.toBeNull();
+    browsing.unmount();
+
+    const confirming = render(createElement(PlayDrawerActionBar, { ...latchProps, commitButton: 'confirm' as const }));
+    expect(secondRows(confirming.container)).toHaveLength(1);
+    expect(confirming.container.querySelector('[data-commit-bar]')).not.toBeNull();
   });
 
   it('draws a small mirror toggle when the queue comes first on a mirror board', () => {
@@ -484,24 +496,80 @@ describe("PlayDrawerActionBar (the climber's buttons)", () => {
   });
 });
 
-describe('PlayDrawerActionBar (secondary row swap)', () => {
-  const commitProps = {
+// While browsing, Put on the wall sits in the gap of the usual row and every
+// button stays put; only the busy-wall question takes the whole row. Neither is
+// ever a new band: the drawer's height budget is why both live in a row that
+// already exists.
+describe('PlayDrawerActionBar (browse latch controls)', () => {
+  const browseProps = {
     ...baseProps,
-    secondaryMode: 'commit' as const,
-    showBackToLive: true,
-    showPutOnWall: true,
+    commitButton: 'putOnWall' as const,
     commitLabel: 'putOnWall' as const,
-    onBackToLive: vi.fn(),
+    onKeepTheirs: vi.fn(),
     onCommit: vi.fn(),
   };
+  const confirmProps = { ...browseProps, commitButton: 'confirm' as const, wallClimbName: 'Their Project' };
 
-  it('replaces the utilities with the commit controls while the latch is up', () => {
-    const { container } = render(createElement(PlayDrawerActionBar, commitProps));
+  /** The second row's controls in reading order, Put on the wall included. */
+  const secondRowOrder = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-label], [data-put-on-wall]')]
+      .map((node) => (node.hasAttribute('data-put-on-wall') ? 'putOnWall' : (node.getAttribute('data-label') ?? '')))
+      .filter(
+        (entry) => entry === 'putOnWall' || [FAVORITE_LABEL, ANGLE_LABEL, SHARE_LABEL, QUEUE_LABEL].includes(entry),
+      );
 
-    expect(container.querySelector('[data-commit-bar="true"]')).toBeTruthy();
-    // The row's own contents are gone for the duration — that's the trade the
-    // spec makes to keep the row at 64pt. The host's ⋯ picks them up.
-    expect(container.querySelector('[data-label="mobile.angleSelector.title"]')).toBeNull();
+  it('puts Put on the wall in the middle of the usual row, keeping every button', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, browseProps));
+
+    expect(container.querySelector('[data-commit-bar]')).toBeNull();
+    expect(secondRowOrder(container)).toEqual([FAVORITE_LABEL, ANGLE_LABEL, 'putOnWall', SHARE_LABEL, QUEUE_LABEL]);
+    expect(container.querySelector('[data-icon="tick.outline"]')).toBeTruthy();
+  });
+
+  it('keeps the queue in the first slot on a board without mirror', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, supportsMirroring: false }));
+
+    expect(labels(container)[0]).toBe(QUEUE_LABEL);
+    expect(secondRowOrder(container)).toEqual([QUEUE_LABEL, FAVORITE_LABEL, ANGLE_LABEL, 'putOnWall', SHARE_LABEL]);
+  });
+
+  it('runs the commit, and nothing else, from Put on the wall', () => {
+    const onCommit = vi.fn();
+    const onKeepTheirs = vi.fn();
+    const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, onCommit, onKeepTheirs }));
+
+    (container.querySelector('[data-put-on-wall]') as HTMLElement).click();
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onKeepTheirs).not.toHaveBeenCalled();
+  });
+
+  it('passes the context-sensitive commit label through', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, commitLabel: 'setActive' }));
+
+    expect(container.querySelector('[data-put-on-wall]')?.getAttribute('data-commit-label')).toBe('setActive');
+  });
+
+  // Put on the wall sits between two spacers; a key per item name would collide.
+  it('keys the two gaps around Put on the wall apart', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      render(createElement(PlayDrawerActionBar, browseProps));
+      const keyWarnings = consoleError.mock.calls.filter((call) => String(call[0]).includes('same key'));
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('swaps the whole row for the busy-wall question, handing it the lit climb', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, confirmProps));
+    const question = container.querySelector('[data-commit-bar="true"]');
+
+    expect(question?.getAttribute('data-wall-climb')).toBe('Their Project');
+    expect(container.querySelector('[data-put-on-wall]')).toBeNull();
+    // The row's own buttons go for the duration; the host's ⋯ picks them up.
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
     expect(actions(container)).not.toContain(ACTION_ICONS.queue);
     expect(actions(container)).not.toContain(ACTION_ICONS.favorite);
     expect(container.querySelector('[data-icon="share"]')).toBeNull();
@@ -509,46 +577,82 @@ describe('PlayDrawerActionBar (secondary row swap)', () => {
     expect(container.querySelector('[data-icon="tick.outline"]')).toBeTruthy();
   });
 
+  it('routes Put mine up to the commit and Keep theirs to its own handler', () => {
+    const onCommit = vi.fn();
+    const onKeepTheirs = vi.fn();
+    const { container } = render(createElement(PlayDrawerActionBar, { ...confirmProps, onCommit, onKeepTheirs }));
+
+    (container.querySelector('[data-keep-theirs]') as HTMLElement).click();
+    expect(onKeepTheirs).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    (container.querySelector('[data-confirm]') as HTMLElement).click();
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+
   // Up in the first slot the queue survives the swap: browsing never takes away
   // the list the climber is browsing.
-  it('keeps the queue in the first slot on a board without mirror', () => {
-    const { container } = render(createElement(PlayDrawerActionBar, { ...commitProps, supportsMirroring: false }));
+  it('keeps the queue in the first slot under the question on a board without mirror', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...confirmProps, supportsMirroring: false }));
 
     expect(container.querySelector('[data-commit-bar="true"]')).toBeTruthy();
     expect(labels(container)[0]).toBe(QUEUE_LABEL);
   });
 
-  it('keeps the utilities when the latch is down', () => {
-    const { container } = render(createElement(PlayDrawerActionBar, { ...commitProps, secondaryMode: 'actions' }));
-
-    expect(container.querySelector('[data-commit-bar="true"]')).toBeNull();
-    expect(container.querySelector('[data-label="mobile.angleSelector.title"]')).toBeTruthy();
+  it('paints no tint on the row in either latch state', () => {
+    for (const props of [browseProps, confirmProps]) {
+      const { container, unmount } = render(createElement(PlayDrawerActionBar, props));
+      const secondRow = container.querySelector('[data-row-gap="8"]');
+      expect(secondRow).not.toBeNull();
+      expect(secondRow?.getAttribute('data-background')).toBeNull();
+      unmount();
+    }
   });
 
-  it('never gives a signed-out reader the commit controls', () => {
-    // The anonymous drawer is ALWAYS a preview, so a resolver bug that let
-    // `'commit'` through would put a live `setCurrentClimb` button — the queue
-    // write and BLE re-arm every other anonymous rule removes — on every
+  it('draws neither latch control while the latch is down', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, commitButton: null }));
+
+    expect(container.querySelector('[data-commit-bar="true"]')).toBeNull();
+    expect(container.querySelector('[data-put-on-wall]')).toBeNull();
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeTruthy();
+  });
+
+  it('stands a control down when the host did not hand it the handler it needs', () => {
+    // No commit handler: neither control can do anything, so neither renders.
+    const noCommit = render(createElement(PlayDrawerActionBar, { ...browseProps, onCommit: undefined }));
+    expect(noCommit.container.querySelector('[data-put-on-wall]')).toBeNull();
+    noCommit.unmount();
+
+    // The question without Keep theirs would be a one-way door: the usual row stays.
+    const noKeep = render(createElement(PlayDrawerActionBar, { ...confirmProps, onKeepTheirs: undefined }));
+    expect(noKeep.container.querySelector('[data-commit-bar="true"]')).toBeNull();
+    expect(noKeep.container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeTruthy();
+  });
+
+  it.each(['putOnWall', 'confirm'] as const)('never gives a signed-out reader %s', (commitButton) => {
+    // The anonymous drawer is ALWAYS a preview, so a resolver bug that let a
+    // latch control through would put a live `setCurrentClimb` button — the
+    // queue write and BLE re-arm every other anonymous rule removes — on every
     // read-only open. The suppression is asserted HERE, not only in the
     // resolver, because the bar is the last gate before it renders.
     const { container } = render(
-      createElement(PlayDrawerActionBar, { ...commitProps, viewer: 'anonymous' as const, onSignInPress: vi.fn() }),
+      createElement(PlayDrawerActionBar, {
+        ...browseProps,
+        commitButton,
+        viewer: 'anonymous' as const,
+        onSignInPress: vi.fn(),
+      }),
     );
 
     expect(container.querySelector('[data-commit-bar="true"]')).toBeNull();
+    expect(container.querySelector('[data-put-on-wall]')).toBeNull();
   });
 
-  it.each(['commit', 'actions'] as const)('has no heatmap flame in %s mode', (secondaryMode) => {
+  it.each(['putOnWall', 'confirm', null] as const)('has no heatmap flame with %s', (commitButton) => {
     // The heatmap lives where holds get picked (hold filter, create climb), not
     // on a single climb.
-    const { container } = render(createElement(PlayDrawerActionBar, { ...commitProps, secondaryMode }));
+    const { container } = render(createElement(PlayDrawerActionBar, { ...browseProps, commitButton }));
     expect(container.querySelector('[data-action="flame"], [data-action="flame.fill"]')).toBeNull();
-  });
-
-  it('passes the context-sensitive commit label through', () => {
-    const { container } = render(createElement(PlayDrawerActionBar, { ...commitProps, commitLabel: 'setActive' }));
-
-    expect(container.querySelector('[data-commit-bar="true"]')?.getAttribute('data-commit-label')).toBe('setActive');
   });
 });
 
@@ -683,19 +787,35 @@ describe('PlayDrawerActionBar (connect-step pill)', () => {
     expect(container.querySelector('[data-connect-pill="true"]')?.getAttribute('data-pending')).toBe('true');
   });
 
-  it('gives way to the commit controls while the latch is up', () => {
+  it('gives way to Put on the wall while the latch is up, share back in its place', () => {
     const { container } = render(
       createElement(PlayDrawerActionBar, {
         ...pillProps,
-        secondaryMode: 'commit' as const,
-        onBackToLive: vi.fn(),
+        commitButton: 'putOnWall' as const,
+        onKeepTheirs: vi.fn(),
+        onCommit: vi.fn(),
+      }),
+    );
+
+    expect(container.querySelector('[data-connect-pill="true"]')).toBeNull();
+    expect(container.querySelector('[data-put-on-wall]')).toBeTruthy();
+    expect(container.querySelector('[data-icon="share"]')).toBeTruthy();
+    // The bulb is back in its slot rather than lost.
+    expect(container.querySelector('[data-ble="true"]')).toBeTruthy();
+  });
+
+  it('gives way to the busy-wall question too', () => {
+    const { container } = render(
+      createElement(PlayDrawerActionBar, {
+        ...pillProps,
+        commitButton: 'confirm' as const,
+        onKeepTheirs: vi.fn(),
         onCommit: vi.fn(),
       }),
     );
 
     expect(container.querySelector('[data-connect-pill="true"]')).toBeNull();
     expect(container.querySelector('[data-commit-bar="true"]')).toBeTruthy();
-    // The bulb is back in its slot rather than lost.
     expect(container.querySelector('[data-ble="true"]')).toBeTruthy();
   });
 

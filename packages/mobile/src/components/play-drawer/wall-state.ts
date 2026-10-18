@@ -84,12 +84,13 @@ export function resolveWallPillState({
 
 /**
  * The same face never appears twice: while the pill renders the driver's avatar
- * (`onWall`), the lightbulb's holder pip is suppressed. This is the contract
- * PlayDrawer passes to `PlayDrawerActionBar` as `showHolderBadge`; it lives here
- * so the ⇔ is pinned by a test rather than by two components agreeing by hand.
+ * (`onWall`, and the back chip while `browsing`), the lightbulb's holder pip is
+ * suppressed. This is the contract PlayDrawer passes to `PlayDrawerActionBar` as
+ * `showHolderBadge`; it lives here so the ⇔ is pinned by a test rather than by
+ * two components agreeing by hand.
  */
 export function shouldShowHolderBadge(pillState: WallPillState): boolean {
-  return pillState !== 'onWall';
+  return pillState !== 'onWall' && pillState !== 'browsing';
 }
 
 /** What the action bar's secondary row is doing. */
@@ -105,7 +106,6 @@ export type CommitButtonLabel = 'putOnWall' | 'setActive';
 
 export type CommitBarModel = {
   mode: CommitBarMode;
-  showBackToLive: boolean;
   showPutOnWall: boolean;
   showConfirm: boolean;
   commitLabel: CommitButtonLabel;
@@ -167,7 +167,7 @@ export function resolveCommitBarModel({
   const displayedIsCommittedHead = displayedClimbUuid != null && displayedClimbUuid === committedHeadUuid;
   const inCommitMode = previewPinned && !isAnonymous && !boardMismatch && !displayedIsCommittedHead;
   if (!inCommitMode) {
-    return { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false, commitLabel };
+    return { mode: 'actions', showPutOnWall: false, showConfirm: false, commitLabel };
   }
   const displayedIsWallClimb = wallClimbUuid != null && displayedClimbUuid === wallClimbUuid;
   // Browsing onto the busy wall's own climb resolves the conflict, so an armed
@@ -175,7 +175,6 @@ export function resolveCommitBarModel({
   const showConfirm = confirmArmed && !displayedIsWallClimb;
   return {
     mode: 'commit',
-    showBackToLive: !showConfirm,
     showPutOnWall: !showConfirm && !displayedIsWallClimb,
     showConfirm,
     commitLabel,

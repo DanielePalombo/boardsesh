@@ -110,12 +110,12 @@ describe('resolveWallPillState', () => {
 
 describe('shouldShowHolderBadge', () => {
   // The same-face-never-twice contract: the pill owns the driver's avatar in the
-  // on-wall state, so the lightbulb's holder pip stands down for exactly that
-  // state and comes back for every other one.
+  // on-wall state and on the browsing back chip, so the lightbulb's holder pip
+  // stands down for exactly those two and comes back for the rest.
   it.each([
     ['onWall', false],
     ['live', true],
-    ['browsing', true],
+    ['browsing', false],
     [null, true],
   ] as Array<[WallPillState, boolean]>)('pill %j → holder pip shown: %s', (pillState, expected) => {
     expect(shouldShowHolderBadge(pillState)).toBe(expected);
@@ -127,42 +127,42 @@ describe('resolveCommitBarModel', () => {
     [
       'no preview pinned: the row keeps the normal actions',
       {},
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'preview pinned on a climb that is not the head',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: true, showConfirm: false },
+      { mode: 'commit', showPutOnWall: true, showConfirm: false },
     ],
     [
-      'browsed onto the lit climb: nothing to commit, but Back to live still exits the latch',
+      'browsed onto the lit climb: nothing to put up, so no button; the header chip still exits the latch',
       { previewPinned: true, displayedClimbUuid: WALL_CLIMB, wallClimbUuid: WALL_CLIMB },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: false, showConfirm: false },
+      { mode: 'commit', showPutOnWall: false, showConfirm: false },
     ],
     [
       'wrong board: no commit controls under the switch-board overlay',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, boardMismatch: true },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'anonymous viewer never gets the commit row',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, isAnonymous: true },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'preview still nominally pinned but the displayed climb is the head again: collapses on its own',
       { previewPinned: true, displayedClimbUuid: MY_CLIMB, committedHeadUuid: MY_CLIMB },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
-      'confirm armed: the browse pair gives way to the confirm pair',
+      'confirm armed: Put on the wall gives way to the busy-wall question',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, wallClimbUuid: MY_CLIMB, confirmArmed: true },
-      { mode: 'commit', showBackToLive: false, showPutOnWall: false, showConfirm: true },
+      { mode: 'commit', showPutOnWall: false, showConfirm: true },
     ],
     [
       'confirm armed but the wall now shows the displayed climb: the conflict resolved itself',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, wallClimbUuid: THEIR_CLIMB, confirmArmed: true },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: false, showConfirm: false },
+      { mode: 'commit', showPutOnWall: false, showConfirm: false },
     ],
   ];
 

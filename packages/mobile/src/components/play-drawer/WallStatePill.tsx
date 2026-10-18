@@ -6,16 +6,19 @@ import { PressableSurface } from '../PressableSurface';
 //              in the amber "lit" vocabulary WallStatusCapsule established.
 //   live     — the next navigation drives the wall / the shared queue. A live dot
 //              plus the word.
-//   browsing — a browse latch is up: you're looking, the wall stays put. The one
-//              place the brand accent is used as a FILL, with dark ink on it.
+//   browsing — a browse latch is up: you're looking, the wall stays put. A back
+//              glyph plus the face of whoever lit the wall: tap it to go back
+//              to their climb. Neutral, like the other two: the loud thing on
+//              screen is Put on the wall, the one control that changes anything.
 //
 // Two platform-native skins behind ONE stateful body (`selectByVariant` inside)
 // rather than a variant component swap, so a live variant flip can't reset the
 // keyed content (see theme/variants/README.md).
 //
-// It is an INDICATOR, never a toggle — a tap only opens the explainer callout,
-// which is where the driver-profile tap and the Back to live / Browse from here
-// actions live. Nothing here writes. State-change narration lives in the host
+// On the wall and Live it is an INDICATOR: a tap opens the explainer callout,
+// which is where the driver-profile tap lives. Browsing it is the way back, the
+// same act as the callout's Back to live. Nothing here writes, so a stray tap
+// costs nothing. State-change narration lives in the host
 // (`use-wall-state-announcer`): the pill unmounts on the commonest latch exit,
 // so an effect in here would die with the transition it needs to speak.
 
@@ -43,6 +46,8 @@ const PILL_HEIGHT = glassSize.mini;
 /** 24pt reads as a face at the pill's 32pt height with 4pt of breathing room. */
 const AVATAR_SIZE = 24;
 const BROWSING_GLYPH_SIZE = 14;
+/** Beside the back glyph the face drops to 20pt, so the chip stays the pill's 32pt tall. */
+const BROWSING_AVATAR_SIZE = 20;
 
 /**
  * Two shapes that never mix, so the wrong pill can't be built.
@@ -69,8 +74,8 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
   const { t } = useTranslation('session');
   const { variant, systemColors, brandColors, m3, m3SurfaceContainers } = useTheme();
   const reduceMotion = useReducedMotion();
-  // Read unconditionally (hook rules); only the onWall branch renders the face,
-  // and `useBoardDriver` degrades to null outside a board-presence provider.
+  // Read unconditionally (hook rules); onWall and browsing render the face, and
+  // `useBoardDriver` degrades to null outside a board-presence provider.
   const { driver, name: driverName, litAgo } = useWallDriver();
 
   const driverLabel = driverName
@@ -86,7 +91,9 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
       ? [t('playView.wallState.onWall'), driverLabel, litAgo].filter(Boolean).join('. ')
       : state === 'live'
         ? t('playView.wallState.live')
-        : t('playView.wallState.browsing');
+        : driver
+          ? t('playView.wallState.backToWall')
+          : t('playView.wallState.backToCurrent');
 
   const stateHint =
     state === 'onWall'
@@ -94,34 +101,31 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
       : state === 'live'
         ? t('playView.wallState.liveHint')
         : t('playView.wallState.browsingHint');
-  const accessibilityHint = `${stateHint} ${t('playView.wallState.pillHint')}`;
+  // Browsing's tap is the way back, which its label already says; the other two
+  // open the explainer, which the pill hint promises.
+  const accessibilityHint = state === 'browsing' ? stateHint : `${stateHint} ${t('playView.wallState.pillHint')}`;
 
   const isMaterial = selectByVariant(variant, { material: true, liquidGlass: false });
-  // Browsing is a brand chip: identical in both variants (accent fill + its ink),
-  // because brand chips don't re-skin per design language. Only the two neutral
-  // states differ — Liquid Glass earns its edge from a hairline border, Material
-  // from a tonal surface container (depth by tone, flat at M3 level 0).
+  // Liquid Glass earns its edge from a hairline border, Material from a tonal
+  // surface container (depth by tone, flat at M3 level 0).
   const neutralSurface = isMaterial
     ? { backgroundColor: m3SurfaceContainers.high }
     : { backgroundColor: systemColors.secondaryBackground, borderWidth: StyleSheet.hairlineWidth };
   const labelColor = isMaterial ? m3.onSurface : systemColors.label;
 
   const containerStyle =
-    state === 'browsing'
-      ? { backgroundColor: brandColors.accent }
-      : state === 'onWall'
-        ? { ...neutralSurface, borderColor: withAlpha(brandColors.live, 0.35) }
-        : { ...neutralSurface, borderColor: systemColors.separator };
+    state === 'onWall'
+      ? { ...neutralSurface, borderColor: withAlpha(brandColors.live, 0.35) }
+      : { ...neutralSurface, borderColor: systemColors.separator };
 
   // The "lit" carrier composited over the neutral surface: warm amber on Liquid
   // Glass, the M3 tertiary role on Material — the exact WallStatusCapsule
   // vocabulary, now on the dedicated `live` brand role.
   const tintColor = isMaterial ? withAlpha(m3.tertiary, 0.12) : withAlpha(brandColors.live, 0.14);
   // Borderless so the ripple reads on the capsule rather than squaring off the
-  // taller touch box around it. The accent chip ripples in its own ink; the two
-  // neutral states take the M3 on-surface state layer. Android-only, so the
-  // Material role is the right source even in the Liquid Glass branch.
-  const rippleColor = state === 'browsing' ? brandColors.onAccent : m3.onSurface;
+  // taller touch box around it, in the M3 on-surface state layer. Android-only,
+  // so the Material role is the right source even in the Liquid Glass branch.
+  const rippleColor = m3.onSurface;
 
   return (
     <PressableSurface
@@ -146,7 +150,17 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
         // which Reanimated can't reliably intercept with an `exiting`.
         key={state}
         entering={reduceMotion || reserveOnly ? undefined : FadeIn.duration(180)}
-        style={[styles.pill, state === 'onWall' ? styles.pillAvatar : styles.pillLabelled, containerStyle]}
+        style={[
+          styles.pill,
+          state === 'onWall'
+            ? styles.pillAvatar
+            : state === 'browsing'
+              ? driver
+                ? styles.pillBack
+                : styles.pillBackGlyphOnly
+              : styles.pillLabelled,
+          containerStyle,
+        ]}
       >
         {state === 'onWall' ? (
           <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tintColor }]} />
@@ -182,18 +196,18 @@ function WallStatePillImpl({ state, onPress, reserveOnly = false }: WallStatePil
           </>
         ) : (
           <>
-            <Icon name="visibility" size={BROWSING_GLYPH_SIZE} color={brandColors.onAccent} />
-            <LargeContentViewer title={accessibilityLabel} onActivate={reserveOnly ? undefined : onPress}>
-              <Text
-                variant="caption1"
-                color={brandColors.onAccent}
-                numberOfLines={1}
-                maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-                style={styles.browsingLabel}
-              >
-                {t('playView.wallState.browsing')}
-              </Text>
-            </LargeContentViewer>
+            <Icon name="undo" size={BROWSING_GLYPH_SIZE} color={labelColor} />
+            {driver ? (
+              <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                <BoardDriverAvatar
+                  size={BROWSING_AVATAR_SIZE}
+                  userId={null}
+                  uri={driver.avatarUrl ?? null}
+                  name={driverName}
+                  status="none"
+                />
+              </View>
+            ) : null}
           </>
         )}
       </Animated.View>
@@ -253,7 +267,15 @@ const styles = StyleSheet.create({
   liveLabel: {
     fontWeight: '600',
   },
-  browsingLabel: {
-    fontWeight: '700',
+  // The back glyph needs a gutter; the face beside it brings its own.
+  pillBack: {
+    paddingLeft: spacing[2],
+    paddingRight: spacing[1],
+  },
+  // No face to show (nothing lit, or nobody we can name): the glyph alone,
+  // held at the 44pt touch width so it is still an easy target.
+  pillBackGlyphOnly: {
+    minWidth: WALL_STATE_PILL_TOUCH_HEIGHT,
+    justifyContent: 'center',
   },
 });

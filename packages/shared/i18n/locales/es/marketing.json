@@ -556,7 +556,7 @@
       },
       "crowd": {
         "title": "Cotillear sin mover el muro",
-        "p1": "Con alguien más en tu sesión, deslizar deja de encender el plafón y sale una etiqueta Explorando. Toca Ponerlo en el muro cuando lo quieras.",
+        "p1": "Con alguien más en tu sesión, deslizar deja de encender el plafón. Toca Ponerlo en el muro cuando quieras el tuyo, o toca la cara de arriba para volver al bloque del muro.",
         "p2": "¿Escalas solo? Mantén pulsada la bombilla y apaga Iluminar bloques al deslizar e Iluminar bloques al tocar la lista.",
         "previewLink": "Vista previa de un bloque desde cualquier lista"
       },

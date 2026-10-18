@@ -95,12 +95,23 @@ vi.mock('../../Icon', () => ({
 // Records what identity + status the pill hands the avatar. `userId` must stay
 // null: a pressable avatar inside a pressable pill is a nested touchable.
 vi.mock('../../board-presence/BoardDriverAvatar', () => ({
-  BoardDriverAvatar: ({ userId, name, status }: { userId?: string | null; name?: string | null; status?: string }) =>
+  BoardDriverAvatar: ({
+    userId,
+    name,
+    status,
+    size,
+  }: {
+    userId?: string | null;
+    name?: string | null;
+    status?: string;
+    size?: number;
+  }) =>
     createElement('div', {
       'data-driver-avatar': 'true',
       'data-user-id': userId ?? '',
       'data-name': name ?? '',
       'data-status': status,
+      'data-size': size == null ? undefined : String(size),
     }),
 }));
 
@@ -172,29 +183,47 @@ beforeEach(() => {
 });
 
 describe('WallStatePill', () => {
-  it.each(['live', 'browsing'] as const)(
-    'opens %s controls once through its viewer and leaves reserved chrome inert',
-    (state) => {
-      const onPress = vi.fn();
-      const { container, rerender } = render(createElement(WallStatePill, { state, onPress }));
-      const viewer = () => container.querySelector('[data-viewer-title]')!;
-      expect(viewer().getAttribute('data-viewer-title')).toBe(pill(container).getAttribute('data-label'));
-      fireEvent.contextMenu(viewer());
-      expect(onPress).toHaveBeenCalledOnce();
-      rerender(createElement(WallStatePill, { state, reserveOnly: true }));
-      fireEvent.contextMenu(viewer());
-      expect(onPress).toHaveBeenCalledOnce();
-    },
-  );
+  it('opens live controls once through its viewer and leaves reserved chrome inert', () => {
+    const onPress = vi.fn();
+    const { container, rerender } = render(createElement(WallStatePill, { state: 'live', onPress }));
+    const viewer = () => container.querySelector('[data-viewer-title]')!;
+    expect(viewer().getAttribute('data-viewer-title')).toBe(pill(container).getAttribute('data-label'));
+    fireEvent.contextMenu(viewer());
+    expect(onPress).toHaveBeenCalledOnce();
+    rerender(createElement(WallStatePill, { state: 'live', reserveOnly: true }));
+    fireEvent.contextMenu(viewer());
+    expect(onPress).toHaveBeenCalledOnce();
+  });
 
-  it('says "Browsing" in words and in the accent fill', () => {
+  // Browsing, the pill is the way back: a back glyph plus the face of whoever
+  // lit the wall. Neutral like the other two states, because the loud thing on
+  // screen is Put on the wall, the one control that changes anything.
+  it('shows a back glyph and the wall driver’s face while browsing, on the neutral surface', () => {
+    driverState.value = { driver: { userId: 'u1', avatarUrl: 'https://x/y.png' }, name: 'Sam', litAgo: null };
     const { container } = renderPill({ state: 'browsing' });
 
-    expect(container.textContent).toContain('playView.wallState.browsing');
-    expect(container.querySelector('[data-icon="visibility"]')?.getAttribute('data-color')).toBe('#16111F');
-    // Fill-only accent with dark ink on it — the one place the orange lives.
-    expect(styles(container).some((style) => style.includes('"backgroundColor":"#FF8A3D"'))).toBe(true);
-    expect(container.querySelector('span[data-color="#16111F"]')).toBeTruthy();
+    expect(container.querySelector('[data-icon="undo"]')?.getAttribute('data-color')).toBe('#111');
+    const avatar = container.querySelector('[data-driver-avatar="true"]') as HTMLElement;
+    expect(avatar).toBeTruthy();
+    expect(avatar.getAttribute('data-name')).toBe('Sam');
+    expect(avatar.getAttribute('data-size')).toBe('20');
+    // Same no-nested-touchable rule as the on-wall face.
+    expect(avatar.getAttribute('data-user-id')).toBe('');
+    expect(avatar.getAttribute('data-status')).toBe('none');
+    // No accent fill, and no word: the label carries the meaning.
+    expect(styles(container).some((style) => style.includes('#FF8A3D'))).toBe(false);
+    expect(styles(container).some((style) => style.includes('"backgroundColor":"#FFF"'))).toBe(true);
+    expect(container.textContent).toBe('');
+    expect(pill(container).getAttribute('data-label')).toBe('playView.wallState.backToWall');
+  });
+
+  it('keeps the back glyph alone, at the 44pt touch width, with nobody to show', () => {
+    const { container } = renderPill({ state: 'browsing' });
+
+    expect(container.querySelector('[data-icon="undo"]')).toBeTruthy();
+    expect(container.querySelector('[data-driver-avatar="true"]')).toBeNull();
+    expect(styles(container).some((style) => style.includes('"minWidth":44'))).toBe(true);
+    expect(pill(container).getAttribute('data-label')).toBe('playView.wallState.backToCurrent');
   });
 
   it('says "Live" beside the shared board-presence dot', () => {
@@ -238,16 +267,24 @@ describe('WallStatePill', () => {
     expect(pill(container).getAttribute('data-label')).toContain('mobile.boardPresence.drivenByAnonA11y');
   });
 
-  it('appends the "there is more here" hint to every state', () => {
-    for (const state of ['onWall', 'live', 'browsing'] as const) {
+  it('appends the "there is more here" hint where a tap opens the explainer', () => {
+    for (const state of ['onWall', 'live'] as const) {
       const { container } = renderPill({ state });
       expect(pill(container).getAttribute('data-hint')).toContain('playView.wallState.pillHint');
     }
   });
 
-  it('is an indicator, not a toggle — a tap only opens the explainer', () => {
+  it('hints only the browsing rule while browsing, since the label already says where a tap goes', () => {
+    const { container } = renderPill({ state: 'browsing' });
+
+    expect(pill(container).getAttribute('data-hint')).toBe('playView.wallState.browsingHint');
+  });
+
+  // The pill never decides what a tap does: PlayCore hands it the explainer on
+  // the wall and Live, and Back to live while browsing.
+  it.each(['onWall', 'live', 'browsing'] as const)('hands a %s tap to the host, once', (state) => {
     const onPress = vi.fn();
-    const { container } = render(createElement(WallStatePill, { state: 'browsing' as const, onPress }));
+    const { container } = render(createElement(WallStatePill, { state, onPress }));
 
     pill(container).click();
     expect(onPress).toHaveBeenCalledTimes(1);
@@ -270,9 +307,9 @@ describe('WallStatePill', () => {
     const { container } = renderPill({ state: 'browsing' });
     const button = pill(container);
 
-    // Borderless, in the accent chip's own ink.
+    // Borderless, in the M3 on-surface state layer: browsing is neutral now.
     expect(button.getAttribute('data-ripple')).toContain('"borderless":true');
-    expect(button.getAttribute('data-ripple')).toContain('#16111F');
+    expect(button.getAttribute('data-ripple')).toContain('"color":"#111"');
     expect(button.getAttribute('data-style-pressed')).toContain('"opacity":0.6');
     expect(button.getAttribute('data-style')).not.toContain('"opacity":0.6');
   });

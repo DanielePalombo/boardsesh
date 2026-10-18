@@ -72,6 +72,8 @@ function ComponentStoryCanvas({ entry, story, shot }: { entry: RegisteredStory; 
   // have replaced them.
   useFocusEffect(
     useCallback(() => {
+      // A scenario still waiting to turn its overrides on must not land on top.
+      cancelDelayedOverrides();
       setScenarioOverrides(overrides);
       return () => {
         if (overrides !== null && getScenarioOverrides() === overrides) setScenarioOverrides(null);
@@ -114,16 +116,35 @@ function ComponentStoryCanvas({ entry, story, shot }: { entry: RegisteredStory; 
   );
 }
 
+// A delayed scenario outlives the screen that started it (the route replaces
+// it), so its timer lives here, and the next scenario or a reset cancels it.
+let delayedOverridesTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelDelayedOverrides(): void {
+  if (delayedOverridesTimer !== null) clearTimeout(delayedOverridesTimer);
+  delayedOverridesTimer = null;
+}
+
 function OpenScenario({ entry, story, shot }: { entry: RegisteredStory; story: ScenarioStory; shot: string }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await story.prepare?.();
       if (cancelled) return;
-      setScenarioOverrides(story.overrides);
+      cancelDelayedOverrides();
+      const { overrides, overridesDelayMs, route } = story;
+      if (overridesDelayMs) {
+        setScenarioOverrides(null);
+        delayedOverridesTimer = setTimeout(() => {
+          delayedOverridesTimer = null;
+          setScenarioOverrides(overrides);
+        }, overridesDelayMs);
+      } else {
+        setScenarioOverrides(overrides);
+      }
       // eslint-disable-next-line no-console
-      console.log(`[stories] scenario ${entry.id} -> ${story.route}`);
-      router.replace(story.route as Href);
+      console.log(`[stories] scenario ${entry.id} -> ${route}`);
+      router.replace(route as Href);
     })();
     return () => {
       cancelled = true;
@@ -134,6 +155,7 @@ function OpenScenario({ entry, story, shot }: { entry: RegisteredStory; story: S
 
 function ResetScenario({ shot }: { shot: string }) {
   useEffect(() => {
+    cancelDelayedOverrides();
     setScenarioOverrides(null);
     router.replace('/dev/stories' as Href);
     logReady('reset');
@@ -210,7 +232,10 @@ export function StoryIndexScreen() {
         {overrides ? (
           <Pressable
             accessibilityRole="button"
-            onPress={() => setScenarioOverrides(null)}
+            onPress={() => {
+              cancelDelayedOverrides();
+              setScenarioOverrides(null);
+            }}
             style={[styles.row, { backgroundColor: systemColors.secondaryBackground }]}
           >
             <Text variant="body">Scenario overrides are on. Tap to clear.</Text>

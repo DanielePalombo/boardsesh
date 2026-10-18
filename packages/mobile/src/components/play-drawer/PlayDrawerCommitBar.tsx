@@ -1,22 +1,19 @@
 import { PressableSurface } from '../PressableSurface';
-// What the play drawer's SECOND action row shows while a browse latch is up:
-// leave the latch, or put the climb you're looking at on the wall.
+// The browse latch's controls in the play drawer's second action row.
 //
-// It swaps the row's CONTENT (angle pill, heart, more, share, queue) rather than
-// adding a band, so the drawer's height is untouched — the whole point of the
-// preview-first work is giving board art back, not spending it on chrome. The
-// utilities are gone for the duration on purpose: browsing is a transient
-// choosing state, and the primary row above still acts on the displayed climb.
+// While a climber looks around, the row keeps its usual buttons and
+// `PutOnWallButton` sits in the gap in the middle: the one thing that sends what
+// they're looking at to the wall. Going back is the face chip in the header.
 //
-// The busy-wall confirm re-uses the same two controls IN PLACE rather than
-// growing a dialog: the pair crossfades to "Keep theirs" / "Put mine up" and the
-// question floats above them as a bubble. Both actions are the ones the row
-// already had — the second tap on the filled button is the commit, and the text
-// button is still the exit — so nothing new can be tapped by accident, and the
-// row's geometry never moves under a thumb that is already on its way down.
+// Only the busy-wall question takes the whole row (`PlayDrawerCommitBar`):
+// someone else lit the wall while you looked around, so the next tap would
+// replace their climb. The pair reads "Keep Sam's" / "Put mine up" and the
+// question floats above it as a bubble. "Put mine up" lands exactly where Put on
+// the wall was, so the second tap is the commit and nothing new can be hit by
+// accident.
 
-import { memo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { memo, useEffect, useRef } from 'react';
+import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../../providers/theme-provider';
@@ -30,58 +27,100 @@ import { LargeContentViewer } from '../LargeContentViewer';
 import { Text } from '../Text';
 import { Icon } from '../Icon';
 import type { CommitButtonLabel } from './wall-state';
+import { useWallDriver } from './use-wall-driver';
 
 /** Matches the row's own control height, so the bubble clears the buttons. */
 const BUBBLE_LIFT = glassSize.inline + spacing[1];
 const BUBBLE_ICON_SIZE = 14;
-const SWAP_FADE_MS = 150;
 const BUBBLE_FADE_MS = 180;
 
-type PlayDrawerCommitBarProps = {
-  showBackToLive: boolean;
-  /** Hidden (never disabled-dead) when the displayed climb is already the lit one. */
-  showPutOnWall: boolean;
-  /**
-   * Someone else moved the wall while this climber was browsing. The pair swaps
-   * to Keep theirs / Put mine up and the question floats above it. Never true at
-   * the same time as the two flags above — `resolveCommitBarModel` owns that.
-   */
-  showConfirm: boolean;
-  /** The climb the wall is showing — named in the confirm's question. */
-  wallClimbName: string | null;
-  /**
-   * "Put on the wall" where a wall is actually reachable, "Set active" where none
-   * is — the button never promises a lighting it can't do.
-   */
-  commitLabel: CommitButtonLabel;
-  /** Leaves the latch. Doubles as "Keep theirs": both land the climber back on
-   *  the committed climb with the wall untouched, which is the same act. */
-  onBackToLive: () => void;
-  /** Commits the displayed climb. The FIRST tap is what armed the confirm, so
-   *  the second one goes straight through — the host owns that ladder. */
-  onCommit: () => void;
+type FilledButtonProps = {
+  label: string;
+  onPress: () => void;
 };
 
-function PlayDrawerCommitBarImpl({
-  showBackToLive,
-  showPutOnWall,
-  showConfirm,
-  wallClimbName,
-  commitLabel,
-  onBackToLive,
-  onCommit,
-}: PlayDrawerCommitBarProps) {
+/** The brand-filled capsule both controls share, so Put mine up lands where Put on the wall was. */
+function FilledButton({ label, onPress }: FilledButtonProps) {
+  const { brandColors, radii } = useTheme();
+  return (
+    <PressableSurface
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      android_ripple={androidRipple(brandColors.onPrimary)}
+      style={({ pressed }) => [
+        styles.filledButton,
+        { backgroundColor: brandColors.primaryFill, borderRadius: radii.button },
+        pressed && styles.filledButtonPressed,
+      ]}
+    >
+      <LargeContentViewer title={label} onActivate={onPress}>
+        <Text
+          variant="subheadline"
+          color={brandColors.onPrimary}
+          numberOfLines={1}
+          maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
+          style={styles.filledButtonLabel}
+        >
+          {label}
+        </Text>
+      </LargeContentViewer>
+    </PressableSurface>
+  );
+}
+
+type PutOnWallButtonProps = {
+  /** "Put on the wall" where a wall is reachable, "Set active" where none is. */
+  commitLabel: CommitButtonLabel;
+  onPress: () => void;
+};
+
+/** Sends the climb on screen to the wall. Shown only while it isn't the lit one. */
+export const PutOnWallButton = memo(function PutOnWallButton({ commitLabel, onPress }: PutOnWallButtonProps) {
   const { t } = useTranslation('session');
-  const { variant, brandColors, systemColors, m3SurfaceContainers, materialElevation, radii } = useTheme();
+  const label = commitLabel === 'putOnWall' ? t('playView.wallState.putOnWall') : t('playView.setActive');
+  return <FilledButton label={label} onPress={onPress} />;
+});
+
+type PlayDrawerCommitBarProps = {
+  /** The climb the wall is showing, named in the question. */
+  wallClimbName: string | null;
+  /** Leave their climb up and go back to it. Nothing is sent. */
+  onKeepTheirs: () => void;
+  /** The second tap: put the climb on screen up over theirs. */
+  onConfirm: () => void;
+};
+
+/** The busy-wall question: someone else lit the wall while you were looking around. */
+function PlayDrawerCommitBarImpl({ wallClimbName, onKeepTheirs, onConfirm }: PlayDrawerCommitBarProps) {
+  const { t } = useTranslation('session');
+  // Who lit it, read here rather than in the drawer: the presence context it
+  // comes from changes on every wall event, and this row only mounts while the
+  // question is up. Unknown falls back to "Someone".
+  const { name: wallDriverName } = useWallDriver();
+  const { variant, brandColors, systemColors, m3SurfaceContainers, materialElevation } = useTheme();
   const reduceMotion = useReducedMotion();
 
-  const commitText = commitLabel === 'putOnWall' ? t('playView.wallState.putOnWall') : t('playView.setActive');
-  const exitText = showConfirm ? t('playView.wallState.commitOverride.cancel') : t('playView.wallState.backToLive');
-  const confirmText = showConfirm ? t('playView.wallState.commitOverride.confirm') : commitText;
-  // In confirm mode BOTH controls are the answer to the question, so neither
-  // flag applies — the pair is the decision.
-  const showExit = showConfirm || showBackToLive;
-  const showFilled = showConfirm || showPutOnWall;
+  const climbName = wallClimbName ?? '';
+  const question = wallDriverName
+    ? t('playView.wallState.commitOverride.bodyNamed', { person: wallDriverName, name: climbName })
+    : t('playView.wallState.commitOverride.body', { name: climbName });
+  const keepText = wallDriverName
+    ? t('playView.wallState.commitOverride.cancelNamed', { person: wallDriverName })
+    : t('playView.wallState.commitOverride.cancel');
+  const confirmText = t('playView.wallState.commitOverride.confirm');
+
+  // The row mounts the moment the question arms, so mounting is the moment to
+  // say it, on both platforms: a live region that mounts already holding its
+  // text is not a content change, so TalkBack can pass over it. After that the
+  // question can still change (the name resolves, someone lights another
+  // climb); Android's live region below reads those, so only iOS repeats it.
+  const announcedRef = useRef(false);
+  useEffect(() => {
+    if (announcedRef.current && Platform.OS === 'android') return;
+    announcedRef.current = true;
+    AccessibilityInfo.announceForAccessibility(question);
+  }, [question]);
 
   const isMaterial = selectByVariant(variant, { material: true, liquidGlass: false });
   const bubbleSurface = isMaterial
@@ -99,86 +138,46 @@ function PlayDrawerCommitBarImpl({
   return (
     <View style={styles.row}>
       {/* Zero layout shift: the question floats ABOVE the row rather than
-          pushing it. Untouchable on purpose — the two buttons below are the only
-          answers — but left readable, because TalkBack hears it from this polite
-          live region while VoiceOver hears the host's announcement.
-
-          The region itself is mounted for the whole life of the row and sits
-          empty while browsing, so arming the confirm is a CONTENT CHANGE inside
-          it — which is the thing Android announces. A region that first appears
-          already holding its sentence is not a change, and TalkBack can pass over
-          it in silence. It has no surface of its own and is absolutely
-          positioned, so an empty one costs nothing. */}
+          pushing it. Untouchable on purpose (the two buttons below are the only
+          answers) but readable: the effect above speaks it once on mount, and
+          the polite live region catches a change while it stays up (another
+          climber lighting yet another climb renames it). */}
       <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.bubbleRegion}>
-        {showConfirm ? (
-          <Animated.View
-            entering={reduceMotion ? undefined : FadeIn.duration(BUBBLE_FADE_MS)}
-            style={[styles.bubble, ...bubbleSurface]}
-          >
-            <Icon name="warning" size={BUBBLE_ICON_SIZE} color={brandColors.live} />
-            <Text variant="caption1" color={systemColors.label} numberOfLines={2} style={styles.bubbleText}>
-              {t('playView.wallState.commitOverride.body', { name: wallClimbName ?? '' })}
-            </Text>
-          </Animated.View>
-        ) : null}
+        <Animated.View
+          entering={reduceMotion ? undefined : FadeIn.duration(BUBBLE_FADE_MS)}
+          style={[styles.bubble, ...bubbleSurface]}
+        >
+          <Icon name="warning" size={BUBBLE_ICON_SIZE} color={brandColors.live} />
+          <Text variant="caption1" color={systemColors.label} numberOfLines={2} style={styles.bubbleText}>
+            {question}
+          </Text>
+        </Animated.View>
       </View>
 
-      {/* Keyed on the mode so the swap is a crossfade in place, not a relayout:
-          "Put mine up" lands exactly where "Put on the wall" was. */}
-      <Animated.View
-        key={showConfirm ? 'confirm' : 'browse'}
-        entering={reduceMotion ? undefined : FadeIn.duration(SWAP_FADE_MS)}
-        style={styles.controls}
-      >
-        {showExit ? (
-          <PressableSurface
-            onPress={onBackToLive}
-            accessibilityRole="button"
-            accessibilityLabel={exitText}
-            style={({ pressed }) => [styles.textButton, pressed && drawerActionBarStyles.actionButtonPressed]}
-          >
-            <LargeContentViewer title={exitText} onActivate={onBackToLive}>
-              <Text
-                variant="subheadline"
-                color={brandColors.tint}
-                numberOfLines={1}
-                maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-                style={styles.textButtonLabel}
-              >
-                {exitText}
-              </Text>
-            </LargeContentViewer>
-          </PressableSurface>
-        ) : null}
+      <View style={styles.controls}>
+        <PressableSurface
+          onPress={onKeepTheirs}
+          accessibilityRole="button"
+          accessibilityLabel={keepText}
+          style={({ pressed }) => [styles.textButton, pressed && drawerActionBarStyles.actionButtonPressed]}
+        >
+          <LargeContentViewer title={keepText} onActivate={onKeepTheirs}>
+            <Text
+              variant="subheadline"
+              color={brandColors.tint}
+              numberOfLines={1}
+              maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
+              style={styles.textButtonLabel}
+            >
+              {keepText}
+            </Text>
+          </LargeContentViewer>
+        </PressableSurface>
 
         <View style={drawerActionBarStyles.spacer} />
 
-        {showFilled ? (
-          <PressableSurface
-            onPress={onCommit}
-            accessibilityRole="button"
-            accessibilityLabel={confirmText}
-            android_ripple={androidRipple(brandColors.onPrimary)}
-            style={({ pressed }) => [
-              styles.filledButton,
-              { backgroundColor: brandColors.primaryFill, borderRadius: radii.button },
-              pressed && styles.filledButtonPressed,
-            ]}
-          >
-            <LargeContentViewer title={confirmText} onActivate={onCommit}>
-              <Text
-                variant="subheadline"
-                color={brandColors.onPrimary}
-                numberOfLines={1}
-                maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-                style={styles.filledButtonLabel}
-              >
-                {confirmText}
-              </Text>
-            </LargeContentViewer>
-          </PressableSurface>
-        ) : null}
-      </Animated.View>
+        <FilledButton label={confirmText} onPress={onConfirm} />
+      </View>
     </View>
   );
 }
@@ -186,24 +185,21 @@ function PlayDrawerCommitBarImpl({
 export const PlayDrawerCommitBar = memo(PlayDrawerCommitBarImpl);
 
 const styles = StyleSheet.create({
-  // Fills the secondary row it replaces, so the row's own 64pt geometry (44pt
-  // controls + 8/12 padding) is untouched.
+  // Fills the second row it replaces. The host row is horizontal, so `flex`
+  // only widens this column; its height has to come from `minHeight`.
   row: {
     flex: 1,
-    // The host row is horizontal, so `flex` above only widens this column; its
-    // height has to come from here.
     minHeight: glassSize.inline,
   },
   // `flexGrow`, never `flex: 1`: in RN that sets flexBasis 0, which collapsed
-  // this content-sized row to 0pt and let the 44pt buttons spill over the
-  // action bar above it.
+  // this content-sized row to 0pt and let the 44pt buttons spill over the bar
+  // above it.
   controls: {
     flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  // The live region's own box: no surface, no size of its own, so it costs
-  // nothing while it sits empty waiting for the question.
+  // The live region's own box: no surface and no size of its own.
   bubbleRegion: {
     position: 'absolute',
     bottom: BUBBLE_LIFT,
@@ -236,7 +232,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing[5],
-    // German's "Am Board beleuchten" is 19 characters — let the button give
+    // German's "Am Board beleuchten" is 19 characters: let the button give
     // ground before the label truncates on a 375pt screen.
     flexShrink: 1,
     overflow: 'hidden',

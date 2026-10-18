@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { AccessibilityInfo, Platform } from 'react-native';
-import type { TFunction } from 'i18next';
 import type { Climb } from '@boardsesh/shared-schema';
 import { reanchorPlaylistSuggestionSource, type ClimbQueueItem, type PlaylistSuggestionSource } from '@boardsesh/queue';
 import type { ActiveSubDrawer, NavigationState } from '@boardsesh/play-view';
@@ -34,12 +32,10 @@ type CommitConfirmation = {
   busyWallConfirmArmed: boolean;
   browseLatchActive: boolean;
   wallClimbUuid: string | null;
-  wallClimbName: string | null | undefined;
   displayedClimbUuid: string | undefined;
   wallUuidAtLatchStartRef: RefObject<string | null>;
   setBusyWallConfirmArmed: Dispatch<SetStateAction<boolean>>;
   markLatchExit: (exit: WallLatchExit) => void;
-  t: TFunction<'session'>;
 };
 type PlaySelectionInputs = {
   openTarget: PlayDrawerOpenTarget | null;
@@ -131,12 +127,10 @@ export function usePlaySelectionController({
     busyWallConfirmArmed,
     browseLatchActive,
     wallClimbUuid,
-    wallClimbName,
     displayedClimbUuid,
     wallUuidAtLatchStartRef,
     setBusyWallConfirmArmed,
     markLatchExit,
-    t,
   },
 }: PlaySelectionInputs) {
   const openDrawer = useCallback(
@@ -247,15 +241,7 @@ export function usePlaySelectionController({
       })
     ) {
       setBusyWallConfirmArmed(true);
-      // The bubble is untouchable, so the words have to reach a screen reader
-      // some other way. Android hears the confirm row's polite live region;
-      // saying it here as well would read it twice, so this is the other half
-      // (amendment B).
-      if (Platform.OS !== 'android') {
-        AccessibilityInfo.announceForAccessibility(
-          t('playView.wallState.commitOverride.body', { name: wallClimbName ?? '' }),
-        );
-      }
+      // The question row speaks for itself when it mounts (PlayDrawerCommitBar).
       return;
     }
     markLatchExit('commit');
@@ -276,6 +262,9 @@ export function usePlaySelectionController({
     // in `resolveNavigationSuggestionSource` — don't re-add a call-site check.
     setCurrentClimb(item, {
       playlistSuggestionSource: reanchorPlaylistSuggestionSource(drawerPreviewSuggestionSource, item.climb?.uuid),
+      // Put on the wall: the deliberate commit at the end of a browse, told apart
+      // from a plain list or queue pick so the crew ramp can be measured.
+      trigger: 'put_on_wall',
     });
     setSharedBrowseLatched(false);
     setDrawerPreviewItem(null);
@@ -298,9 +287,7 @@ export function usePlaySelectionController({
     browseLatchActive,
     browseByDefault,
     wallClimbUuid,
-    wallClimbName,
     displayedClimbUuid,
-    t,
   ]);
 
   const commitDisplayedToWall = useCallback(() => {
