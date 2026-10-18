@@ -39,7 +39,7 @@ Rules that hold in every layout:
 
 The **Customize Home** button opens a `ModalSheet` (`HomeCustomizeSheet`), like the climb's View options: a switch per section, ↑/↓ arrows for the four above the feed (`SectionLayoutList` in a `BottomSheetFlatList`), Show all and Focused at the top, Restore defaults under the list. Choices apply at once and Home redraws behind the sheet. The feed row has a switch and no arrows, in its own group.
 
-Settings › Home (its own page beside Board and Climbs & grades, QA on #6546) lists the same switches in the saved order, with Show all, Focused and Restore defaults, on the native form (#6477). The root row's value names the matching preset: Default, Focused or Custom. The order only changes in the sheet. Both surfaces share `useHomeSectionControls`, and both sheets of this kind (Customize Home and the climb's View options) are built from `SectionLayoutSheet.tsx`.
+Settings › Home (its own page beside Board and Climbs & grades, QA on #6546) starts with "Open the app on" (Climbs | Home, #6536), then lists the same switches in the saved order, with Show all, Focused and Restore defaults, on the native form (#6477). The root row's value names the matching preset: Default, Focused or Custom. The order only changes in the sheet. Both surfaces share `useHomeSectionControls`, and both sheets of this kind (Customize Home and the climb's View options) are built from `SectionLayoutSheet.tsx`.
 
 ### Fresh beta
 

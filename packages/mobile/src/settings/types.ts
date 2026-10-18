@@ -16,7 +16,7 @@ export type OwnedSprayWallPinLedger = {
   wallUuids: string[];
 };
 
-/** The tab an ordinary launch opens on (Settings › General, #6289). */
+/** The tab an ordinary launch opens on (Settings › Home, #6289). */
 export type StartupScreen = 'climbs' | 'home';
 
 export type AppSettings = {

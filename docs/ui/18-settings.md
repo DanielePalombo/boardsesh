@@ -59,10 +59,6 @@ The mobile Settings screen contains appearance and UI-style controls that have n
 
 - `SegmentedControl` with three options persisted as `ThemeOverride` in key-value storage.
 
-**Open the app on** (Climbs / Home, Settings › General):
-
-- Segmented row persisted as `startupScreen` in the MMKV settings store; Climbs is the default. Applies from the next start and never navigates. Links, notification taps, onboarding and a post-login return still open where they point. See `01-navigation.md` → "Mobile: library entry and tab variants".
-
 **UI Style**:
 
 - `SegmentedControl` with three options: Auto, Liquid Glass, Material.
@@ -74,7 +70,8 @@ The mobile Settings screen contains appearance and UI-style controls that have n
 
 **Home** (its own page in the root's second group, after Board and Climbs & grades; the row's value is the matching preset: Default, Focused or Custom):
 
-- One switch per Home section (Your board, Session, Playlists, Climbing now, Fresh beta, Feed) in the saved order, then Show all, Focused and Restore defaults. Native form like Board and Climbs & grades (`HomeSettingsScreen`, `home-settings-model.ts`), no arrows: the order changes in Home's Customize Home sheet. Stored as `homeSectionsV1` in the MMKV settings store. See `02-home.md`.
+- **Open the app on** (Climbs / Home) first: a segmented row persisted as `startupScreen` in the MMKV settings store, Climbs by default, read through `normaliseStartupScreen()`. Applies from the next start and never navigates. Links, notification taps, onboarding and a post-login return still open where they point. See `01-navigation.md` → "Mobile: library entry and tab variants". A change reports one `Setting Changed { page: 'homeScreen', key: 'startupScreen' }`.
+- Then one switch per Home section (Your board, Session, Playlists, Climbing now, Fresh beta, Feed) in the saved order, then Show all, Focused and Restore defaults. Native form like Board and Climbs & grades (`HomeSettingsScreen`, `home-settings-model.ts`), no arrows: the order changes in Home's Customize Home sheet. Stored as `homeSectionsV1` in the MMKV settings store. See `02-home.md`.
 
 **Grade Format** (V-Grade / Font / Both):
 

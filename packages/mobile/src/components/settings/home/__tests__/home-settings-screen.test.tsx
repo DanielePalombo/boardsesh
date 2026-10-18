@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { createElement } from 'react';
+import { createElement, useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
-import type { MoreButtonRow, MoreFormModel, MoreToggleRow } from '../../../MoreForm.types';
+import type { MoreButtonRow, MoreFormModel, MoreSegmentedRow, MoreToggleRow } from '../../../MoreForm.types';
 import type { SettingsChange } from '../../../../settings/hooks';
 
 // The real controls and store behind the native form; only the form, the
@@ -23,15 +23,28 @@ vi.mock('../../../MoreForm', () => ({
 }));
 vi.mock('../../../../lib/analytics', () => ({ track: analytics.track }));
 vi.mock('../../../../lib/haptics', () => ({ hapticSelection: vi.fn() }));
-vi.mock('../../../../settings/hooks', () => ({
-  subscribeSettings: (listener: (change: SettingsChange) => void) => {
+const settingsFile = vi.hoisted(() => ({
+  subscribe: (listener: (change: SettingsChange) => void) => {
     settings.listeners.add(listener);
-    return () => settings.listeners.delete(listener);
+    return () => {
+      settings.listeners.delete(listener);
+    };
   },
-  getSetting: (key: string) => settings.values.get(key) ?? null,
-  setSetting: (key: string, value: unknown) => {
+  get: (key: string) => settings.values.get(key) ?? null,
+  set: (key: string, value: unknown) => {
     settings.values.set(key, value);
     for (const listener of settings.listeners) listener({ kind: 'setting', key: key as never });
+  },
+}));
+vi.mock('../../../../settings/hooks', () => ({
+  subscribeSettings: settingsFile.subscribe,
+  getSetting: settingsFile.get,
+  setSetting: settingsFile.set,
+}));
+vi.mock('../../../../settings', () => ({
+  useSetting: (key: string) => {
+    const value = useSyncExternalStore(settingsFile.subscribe, () => settingsFile.get(key));
+    return [value, (next: unknown) => settingsFile.set(key, next)];
   },
 }));
 
@@ -44,6 +57,11 @@ function rows() {
 function toggle(key: string): MoreToggleRow {
   const row = rows().find((candidate) => candidate.key === key);
   if (row?.kind !== 'toggle') throw new Error(`no toggle ${key}`);
+  return row;
+}
+function segmented(key: string): MoreSegmentedRow {
+  const row = rows().find((candidate) => candidate.key === key);
+  if (row?.kind !== 'segmented') throw new Error(`no segmented row ${key}`);
   return row;
 }
 function button(key: string): MoreButtonRow {
@@ -72,8 +90,8 @@ describe('HomeSettingsScreen', () => {
   it('lists a switch per section in the saved order, then the presets', () => {
     homeSectionsStore.move('climbingNow', -1);
     render(createElement(HomeSettingsScreen));
-    expect(captured.model?.sections.map((section) => section.key)).toEqual(['sections', 'presets']);
-    expect(captured.model?.sections[0].rows.map((row) => row.key)).toEqual([
+    expect(captured.model?.sections.map((section) => section.key)).toEqual(['startup', 'sections', 'presets']);
+    expect(captured.model?.sections[1].rows.map((row) => row.key)).toEqual([
       'board',
       'session',
       'climbingNow',
@@ -81,7 +99,7 @@ describe('HomeSettingsScreen', () => {
       'beta',
       'feed',
     ]);
-    expect(captured.model?.sections[1].rows.map((row) => row.key)).toEqual(['showAll', 'focused', 'restoreDefaults']);
+    expect(captured.model?.sections[2].rows.map((row) => row.key)).toEqual(['showAll', 'focused', 'restoreDefaults']);
   });
 
   it('reports a switch once, under the Home page', () => {
@@ -102,5 +120,16 @@ describe('HomeSettingsScreen', () => {
     act(() => button('restoreDefaults').onPress());
     expect(toggle('feed').value).toBe(true);
     expect(settings.values.get('homeSectionsV1')).toBeNull();
+  });
+
+  it('shows Climbs for an unknown stored start-up tab, and saves a new one once, reporting it once', () => {
+    settings.values.set('startupScreen', 'profile');
+    render(createElement(HomeSettingsScreen));
+    expect(segmented('startupScreen').selectedKey).toBe('climbs');
+    act(() => segmented('startupScreen').onSelect('home'));
+    expect(settings.values.get('startupScreen')).toBe('home');
+    expect(segmented('startupScreen').selectedKey).toBe('home');
+    act(() => segmented('startupScreen').onSelect('home'));
+    expect(settingChangedCalls()).toEqual([{ page: 'homeScreen', key: 'startupScreen', value: 'home' }]);
   });
 });

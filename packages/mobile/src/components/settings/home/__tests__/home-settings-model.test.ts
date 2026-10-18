@@ -1,0 +1,94 @@
+import { describe, expect, it, vi } from 'vitest';
+import { buildHomeSettingsModel, type HomeSettingsModelInput } from '../home-settings-model';
+import type { MoreRow } from '../../../MoreForm.types';
+
+const echo = (key: string) => key;
+
+function makeInput(overrides: Partial<HomeSettingsModelInput> = {}): HomeSettingsModelInput {
+  return {
+    t: echo,
+    startupScreen: 'climbs',
+    onStartupScreenChange: vi.fn(),
+    rows: [
+      { id: 'board', label: 'Your board', visible: false, movable: true },
+      { id: 'feed', label: 'Feed', visible: true, movable: false },
+    ],
+    onSectionChange: vi.fn(),
+    canShowAll: true,
+    onShowAll: vi.fn(),
+    canApplyFocused: true,
+    onApplyFocused: vi.fn(),
+    canRestoreDefaults: false,
+    onRestoreDefaults: vi.fn(),
+    ...overrides,
+  };
+}
+
+function findRow(input: HomeSettingsModelInput, key: string): MoreRow {
+  const row = buildHomeSettingsModel(input)
+    .sections.flatMap((section) => section.rows)
+    .find((candidate) => candidate.key === key);
+  if (!row) throw new Error(`no row ${key}`);
+  return row;
+}
+
+describe('buildHomeSettingsModel', () => {
+  it('runs the start-up tab first, then the sections, then the presets', () => {
+    expect(buildHomeSettingsModel(makeInput()).sections.map((section) => section.key)).toEqual([
+      'startup',
+      'sections',
+      'presets',
+    ]);
+  });
+
+  describe('the start-up tab', () => {
+    it('offers Climbs then Home under the tab names, with Climbs chosen by default', () => {
+      const row = findRow(makeInput(), 'startupScreen');
+      if (row.kind !== 'segmented') throw new Error('startupScreen is not a segmented row');
+      expect(row.options).toEqual([
+        { key: 'climbs', label: 'mobile.nav.climbs' },
+        { key: 'home', label: 'mobile.nav.home' },
+      ]);
+      expect(row.selectedKey).toBe('climbs');
+      expect(row.label).toBe('mobile.settings.startup.title');
+    });
+
+    it('shows a stored Home choice', () => {
+      const row = findRow(makeInput({ startupScreen: 'home' }), 'startupScreen');
+      if (row.kind !== 'segmented') throw new Error('startupScreen is not a segmented row');
+      expect(row.selectedKey).toBe('home');
+    });
+
+    it('says when it applies and what still opens elsewhere', () => {
+      const section = buildHomeSettingsModel(makeInput()).sections.find((candidate) => candidate.key === 'startup');
+      expect(section?.title).toBe('mobile.settings.startup.title');
+      expect(section?.footer).toBe('mobile.settings.startup.footer');
+    });
+
+    it('saves known tabs only', () => {
+      const onStartupScreenChange = vi.fn();
+      const row = findRow(makeInput({ onStartupScreenChange }), 'startupScreen');
+      if (row.kind !== 'segmented') throw new Error('startupScreen is not a segmented row');
+      row.onSelect('home');
+      row.onSelect('profile');
+      expect(onStartupScreenChange).toHaveBeenCalledTimes(1);
+      expect(onStartupScreenChange).toHaveBeenCalledWith('home');
+    });
+  });
+
+  it('lists the sections as switches in the order given, and the presets with their states', () => {
+    const onSectionChange = vi.fn();
+    const model = buildHomeSettingsModel(makeInput({ onSectionChange }));
+    const [, sections, presets] = model.sections;
+    expect(sections.rows.map((row) => row.key)).toEqual(['board', 'feed']);
+    const board = sections.rows[0];
+    if (board.kind !== 'toggle') throw new Error('board is not a toggle');
+    board.onValueChange(true);
+    expect(onSectionChange).toHaveBeenCalledWith('board', true);
+    expect(presets.rows.map((row) => [row.key, row.kind === 'button' ? row.disabled : null])).toEqual([
+      ['showAll', false],
+      ['focused', false],
+      ['restoreDefaults', true],
+    ]);
+  });
+});

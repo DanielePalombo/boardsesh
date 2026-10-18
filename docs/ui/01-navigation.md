@@ -50,8 +50,8 @@ There are **5 tabs** (the web has a 6th "Create" tab but it is between Discover 
 The mobile tabs remain **Home, Climbs, Session, Discover, You**, in that order.
 Session keeps the `/record` route; only its visible navigation label changes.
 An ordinary launch and untargeted post-login entry select **Climbs**, using the
-stored active board, unless the climber chose **Home** under Settings › General ›
-"Open the app on" (#6289). Selecting the initial tab does not reorder the bar.
+stored active board, unless the climber chose **Home** under Settings › Home ›
+"Open the app on" (#6289; it moved from General to the Home page with #6546). Selecting the initial tab does not reorder the bar.
 
 - **Where it lives:** `startupScreen: 'climbs' | 'home'` in the MMKV settings store,
   default `climbs`, per device. Sign-out does not clear it. An unknown stored value

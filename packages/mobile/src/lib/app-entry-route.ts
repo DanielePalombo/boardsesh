@@ -3,7 +3,7 @@ import type { StartupScreen } from '../settings/types';
 
 /**
  * The tab an ordinary launch opens on: Climbs, reusing the saved board, unless
- * the climber chose Home in Settings › General (#6289).
+ * the climber chose Home in Settings › Home (#6289).
  *
  * Synchronous on purpose. `app/(tabs)/_layout.tsx` reads it at module load for
  * `initialRouteName`, and the launcher and auth redirects read it on render, so

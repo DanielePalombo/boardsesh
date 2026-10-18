@@ -1,18 +1,34 @@
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MoreForm } from '../../MoreForm';
+import { normaliseStartupScreen } from '../../../lib/app-entry-route';
 import { hapticSelection } from '../../../lib/haptics';
 import type { HomeSectionId } from '../../../lib/home-sections';
+import { trackSettingChanged } from '../../../lib/settings-analytics';
+import { useSetting, type StartupScreen } from '../../../settings';
 import { useHomeSectionControls } from '../../home/use-home-section-controls';
 import { buildHomeSettingsModel } from './home-settings-model';
 
 /**
- * Settings › Home. The switches, presets and the reporting behind them are the
- * Customize Home sheet's own (`useHomeSectionControls`), so the two never
- * disagree; every change reports `Setting Changed` under the `homeScreen` page.
+ * Settings › Home. "Open the app on" first, then the switches and presets, which
+ * are the Customize Home sheet's own (`useHomeSectionControls`), so the two never
+ * disagree. Every change reports one `Setting Changed` under the `homeScreen` page.
  */
 export function HomeSettingsScreen() {
   const { t } = useTranslation('common');
+  // Read by `getAppEntryTab()` on the next start; writing it moves nothing now.
+  // Normalised the same way, so an unknown stored value shows Climbs chosen.
+  const [storedStartupScreen, setStartupScreen] = useSetting('startupScreen');
+  const startupScreen = normaliseStartupScreen(storedStartupScreen);
+  const onStartupScreenChange = useCallback(
+    (screen: StartupScreen) => {
+      if (screen === startupScreen) return;
+      hapticSelection();
+      trackSettingChanged('homeScreen', 'startupScreen', screen);
+      setStartupScreen(screen);
+    },
+    [startupScreen, setStartupScreen],
+  );
   const {
     rows,
     onVisibleChange,
@@ -35,6 +51,8 @@ export function HomeSettingsScreen() {
     () =>
       buildHomeSettingsModel({
         t,
+        startupScreen,
+        onStartupScreenChange,
         rows,
         onSectionChange,
         canShowAll,
@@ -44,7 +62,19 @@ export function HomeSettingsScreen() {
         canRestoreDefaults,
         onRestoreDefaults: restoreDefaults,
       }),
-    [t, rows, onSectionChange, canShowAll, showAll, canApplyFocused, applyFocused, canRestoreDefaults, restoreDefaults],
+    [
+      t,
+      startupScreen,
+      onStartupScreenChange,
+      rows,
+      onSectionChange,
+      canShowAll,
+      showAll,
+      canApplyFocused,
+      applyFocused,
+      canRestoreDefaults,
+      restoreDefaults,
+    ],
   );
   return <MoreForm model={model} />;
 }
