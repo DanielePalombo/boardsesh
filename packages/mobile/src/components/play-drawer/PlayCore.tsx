@@ -1205,12 +1205,28 @@ export function PlayCore({
       sharesMirrorState
     )
       return;
+    track(SHARED_EVENTS.MirrorClimb, {
+      climbUuid: displayedClimbUuid,
+      boardName,
+      layoutId,
+      isMirrored: !isMirrored, // send the new orientation
+      surface: 'play_drawer',
+      shared: sharesMirrorState,
+    });
     if (sharesMirrorState && currentClimbQueueItem) {
       void mirrorCurrentClimb(!isMirrored, currentClimbQueueItem.uuid);
     } else {
       setMirrorFlip({ climbUuid: displayedClimbUuid, mirrored: !isMirrored });
     }
-  }, [displayedClimbUuid, isMirrored, sharesMirrorState, currentClimbQueueItem, mirrorCurrentClimb]);
+  }, [
+    displayedClimbUuid,
+    isMirrored,
+    sharesMirrorState,
+    currentClimbQueueItem,
+    mirrorCurrentClimb,
+    boardName,
+    layoutId,
+  ]);
 
   const handleLightbulbLongPress = useCallback(() => {
     if (!bluetooth?.isConnected) return;
