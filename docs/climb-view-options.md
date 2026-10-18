@@ -45,10 +45,11 @@ Small row   [first half of the rest] ········ [last half]
   empty instead, so nothing jumps sides between climbs and today's bars come out exactly as they were.
 - **Previous and next off** leaves both slots empty, so Log stays centred. Swiping the board still moves.
 - **The connect pill** replaces the right-hand group. **Put on the wall** (`commitButton: 'putOnWall'`) sits in the
-  gap in the middle of the small row, between the start and end groups, and pushes nothing out. Only the busy-wall
-  question (`commitButton: 'confirm'`, "Keep Sam's" / "Put mine up") replaces the whole row. Whatever the pill and
-  the question push out, and every button the climber switched off, is flagged in `hidden`, and ⋯ carries a row
-  for each.
+  gap in the middle of the small row. The first button of the start group and the last of the end group keep their
+  places; the rest step into ⋯ while it shows, because the label needs ~140 pt and a mirror board's full row leaves
+  ~120 pt on a 375 pt phone. Only the busy-wall question (`commitButton: 'confirm'`, "Keep Sam's" / "Put mine up")
+  replaces the whole row. Whatever the pill, the button and the question push out, and every button the climber
+  switched off, is flagged in `hidden`, and ⋯ carries a row for each.
 - **Nothing left to draw**, no pill and no commit button: there is no small row (`secondaryRow: []`). The board gets
   52 pt back (the 8 pt gap and the 44 pt row; the 12 pt bottom padding moves to the big row). Put on the wall, the
   busy-wall question and the connect pill bring the row back while they need it, so a row with every button
