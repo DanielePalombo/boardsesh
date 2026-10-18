@@ -378,6 +378,44 @@ export function judgeCanary(
   return { verdict: 'healthy', reason: `Healthy: ${observed}, within ${allowance}.` };
 }
 
+/**
+ * Why a changed platform has no fleet to judge, or null when it has one.
+ *
+ * Android 2.6.0 sat as a Play draft while iOS 2.6.0 was live, and its canary
+ * stayed at zero devices for days (#6524). Holding for evidence that cannot
+ * arrive protects nobody on that platform and freezes the other one.
+ *
+ * All of these must hold, or the platform is judged normally:
+ *   1. The verdict is `insufficient-evidence` (never healthy, never unhealthy).
+ *   2. Canary and control counts are valid.
+ *   3. No canary device is faulty, and the canary's launch and JS issue
+ *      counters come from the snapshot history (not the degraded `state`
+ *      answer) and read zero.
+ *   4. Canary and control together, counting each cohort as the larger of its
+ *      devices-on-update and its reporting devices, are under
+ *      `noFleetBelowDevicesPerPlatform`. That cap sits far below the evidence
+ *      floor, so a runtime that has started to reach people waits for a verdict.
+ */
+export function fleetlessReason(
+  entry: Pick<RolloutHealth, 'rollout' | 'canary' | 'control' | 'canaryIssues' | 'judgement'>,
+  policy: OtaHealthPolicy,
+): string | null {
+  if (entry.judgement.verdict !== 'insufficient-evidence') return null;
+  const cap = policy.noFleetBelowDevicesPerPlatform;
+  const canary = judgedCohort(entry.canary);
+  const control = judgedCohort(entry.control);
+  if (!isCount(cap) || !canary || !control || canary.faulty !== 0) return null;
+  const issues = entry.canaryIssues;
+  // Only the snapshot history counts: the degraded `state` answer is not evidence of zero issues.
+  if (!issues || issues.source !== 'snapshots' || issues.updateIssues !== 0 || issues.runtimeIssues !== 0) return null;
+  const devices = Math.max(canary.devicesOnUpdate, canary.judged) + Math.max(control.devicesOnUpdate, control.judged);
+  if (devices >= cap) return null;
+  return (
+    `${entry.rollout.platform} has no fleet to judge: ${devices} device(s) on its canary and control together, ` +
+    `under the ${cap}-device no-fleet cap, with no faulty canary device and no canary issues`
+  );
+}
+
 export interface RolloutHealth {
   rollout: ActiveRollout;
   canaryUpdateUUID: string | null;
@@ -385,7 +423,8 @@ export interface RolloutHealth {
   canary: XpremUpdateHealth | null;
   control: XpremUpdateHealth | null;
   /** Launch and JS issue counts from the newest history point. Reported, not judged. */
-  canaryIssues: { updateIssues: number; runtimeIssues: number } | null;
+  /** `source` is the history's: `snapshots` is real; `state` is the degraded answer the dashboard discards. */
+  canaryIssues: { updateIssues: number; runtimeIssues: number; source: string | null } | null;
   judgement: CanaryJudgement;
 }
 
@@ -409,7 +448,9 @@ export async function readUpdateHealth(
     controlUpdateUUID,
     canary,
     control,
-    canaryIssues: issues ? { updateIssues: issues.updateIssues, runtimeIssues: issues.runtimeIssues } : null,
+    canaryIssues: issues
+      ? { updateIssues: issues.updateIssues, runtimeIssues: issues.runtimeIssues, source: history.source }
+      : null,
     judgement: judgeCanary(canary, control, policy),
   };
 }

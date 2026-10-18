@@ -163,6 +163,14 @@ export interface OtaHealthPolicy {
    * over the cap is noise, and a third of them failing is not.
    */
   smallSampleFaultyRatePercent: number;
+  /**
+   * Below this many devices on a changed platform's canary and control together,
+   * with no faulty canary device and zero launch and JS issues, the platform has
+   * no fleet to judge: its store binary has not reached people yet. It then does
+   * not block a healthy sibling platform's finish. Kept far under the evidence
+   * floor, so a platform that has started to reach people waits for a verdict.
+   */
+  noFleetBelowDevicesPerPlatform: number;
 }
 
 export interface OtaReleasePolicy {
@@ -213,5 +221,10 @@ export const otaReleasePolicy: OtaReleasePolicy = {
     maxFaultyRatePercent: 5,
     // Three of ten devices failing is enough to stop without waiting for fifteen.
     smallSampleFaultyRatePercent: 30,
+    // Android 2.6.0 sat as a Play draft while iOS 2.6.0 was live: its canary had 0
+    // devices and its control 1 (a CI emulator), so the 15-device floor froze every
+    // production OTA for days (#6524). 5 covers emulators and a few testers; a
+    // runtime with 5-14 devices is reaching people and waits for a real verdict.
+    noFleetBelowDevicesPerPlatform: 5,
   },
 };
