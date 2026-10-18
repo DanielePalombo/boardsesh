@@ -1,5 +1,11 @@
 name: Mobile Store Draft Submission
 
+# The source branch in the title, because the runs list cannot tell: a
+# workflow_run run reports the default branch as its head_branch.
+# release-train-sync.yml waits for an in-progress run titled "(release/next)"
+# before it moves the train, so this must name the branch the draft pins.
+run-name: Mobile Store Draft (${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }})
+
 # Best-effort preparation of a DRAFT store submission for the current marketing
 # version, so a human only has to review and hit Submit — we never auto-submit for
 # review. Each platform is pinned to the exact highest uploaded build tag for the
@@ -14,9 +20,10 @@ name: Mobile Store Draft Submission
 # ever prepares DRAFTS (submit_for_review: false, release_status: draft), and
 # that release-candidate refuses to draft anything but the exact highest build
 # tag for the source branch's version whose fingerprint matches its head. Runs
-# whenever a TestFlight or Play deploy on main or release/next completes (workflow_run)
-# and on demand — no
-# schedule, so a draft follows each native build by minutes rather than hours.
+# whenever a TestFlight or Play deploy on release/next completes (workflow_run;
+# main builds only by hand now, and a hand-dispatched draft covers those) and on
+# demand — no schedule, so a draft follows each native build by minutes rather
+# than hours.
 # The candidate check tolerates the other platform not being there yet (it exits
 # quietly and that platform's own completion re-triggers this), and the iOS lane
 # waits for App Store Connect to finish processing the build before attaching
@@ -32,8 +39,8 @@ on:
       - iOS TestFlight Deploy (React Native)
       - Android Play Internal Deploy (React Native)
     types: [completed]
-    # Follow both trusted native release branches.
-    branches: [main, release/next]
+    # The deploy workflows' push branches; only the release train builds on push.
+    branches: [release/next]
   workflow_dispatch:
     inputs:
       platform:

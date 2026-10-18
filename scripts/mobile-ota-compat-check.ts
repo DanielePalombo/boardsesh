@@ -30,8 +30,9 @@
  * SECONDARY, informational signal ("already on a released build"), surfaced only
  * when confidently true.
  *
- * This check is informational. Native changes merged into either main or
- * release/next automatically start TestFlight and Play builds, without a waiver.
+ * This check is informational. Native store builds run from release/next, which
+ * release-train-sync.yml keeps level with main, so a native change merged into
+ * either branch reaches TestFlight and Play without a waiver.
  *
  * Usage:
  *   vp run check:mobile-ota-compat -- --write-env --base-dir <main-worktree> [--check-shipped-tags]
@@ -66,7 +67,7 @@ const MAX_DIFF_CONFIRMATIONS = 5;
 export type Platform = 'ios' | 'android';
 export type Verdict = 'ota-compatible' | 'native-change-required' | 'unknown';
 
-/** Legacy waiver name retained for callers; both release branches now build automatically. */
+/** Legacy waiver name retained for callers; no branch needs a waiver to reach the store builds. */
 export const ALLOW_NATIVE_ON_MAIN_LABEL = 'allow-native-on-main';
 
 export type CheckConclusion = 'neutral' | 'failure';
@@ -79,7 +80,7 @@ export interface EnforcementInput {
   allowNativeOnMain: boolean;
 }
 
-/** Native changes are informational: both release branches build replacements. */
+/** Native changes are informational: the release train builds their replacements. */
 export function deriveCheckConclusion(_input: EnforcementInput): CheckConclusion {
   return 'neutral';
 }
@@ -240,10 +241,19 @@ const HEADLINE: Record<Verdict, string> = {
   unknown: "ℹ️ **OTA compatibility unknown.** Couldn't establish a baseline this run, so no verdict.",
 };
 
-/** Explain the replacement build for native changes on either release branch. */
+/** Explain where the replacement build comes from for native changes on either release branch. */
 export function enforcementNote(input: EnforcementInput): string | null {
-  if (input.overall !== 'native-change-required' || !['main', 'release/next'].includes(input.baseBranch)) return null;
-  return `Merging into \`${input.baseBranch}\` starts fingerprint-gated TestFlight and Play builds; no waiver label is needed.`;
+  if (input.overall !== 'native-change-required') return null;
+  if (input.baseBranch === 'release/next') {
+    return 'Merging into `release/next` starts fingerprint-gated TestFlight and Play builds; no waiver label is needed.';
+  }
+  if (input.baseBranch === 'main') {
+    return (
+      'Store builds come from `release/next`, which is synced from `main` automatically, so merging into `main` ' +
+      'starts fingerprint-gated TestFlight and Play builds once the sync lands; no waiver label is needed.'
+    );
+  }
+  return null;
 }
 
 /** A short title for the GitHub check-run. */
@@ -307,7 +317,7 @@ export function renderComment(result: OtaCompatResult, ctx: CommentContext): str
     `Branch \`${ctx.branch}\` → \`${ctx.baseBranch}\` · commit \`${ctx.sha.slice(0, 7)}\`.`,
     '',
     '<sub>Fingerprint is resolved per platform against this PR’s base branch. Native store builds run ' +
-      `from \`main\` and \`release/next\`. See \`docs/mobile-ota-updates.md\`.</sub>`,
+      `from \`release/next\`, which is synced from \`main\` automatically. See \`docs/mobile-ota-updates.md\`.</sub>`,
   ].join('\n');
 }
 

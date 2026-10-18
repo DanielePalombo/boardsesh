@@ -1,17 +1,18 @@
 # Mobile store release runbook
 
-Both `main` and `release/next` automatically build TestFlight and Play tester-track
-candidates when the native fingerprint changes. Use either branch for a release;
-the screenshot and store-draft follow-ups use the branch that produced the binary.
-JS-only pushes skip native builds. Manual dispatch can force a rebuild on either
-branch. The marketing version and build numbers do not affect the fingerprint,
-so a version-only release needs a manual build.
+Only `release/next`, the release train, builds TestFlight and Play tester-track
+candidates on push. A push builds when the native fingerprint is new, or when the
+marketing version has no `build-<platform>-v<version>-*` tag yet, so a version
+bump ships a tester build by itself. `main` keeps manual dispatch for hotfix
+rebuilds. The screenshot and store-draft follow-ups follow `release/next` builds
+only. A **Release Train Sync** workflow keeps the train level with `main`, so
+nobody cuts or resets it by hand.
 
 Native changes temporarily stop older binaries receiving new compatible OTAs.
-Prepare the release identity before the final native change, keep the backend
-compatible with installed builds, and move the replacement binaries through QA
-and review promptly. `main` still owns the store fleet's OTA delivery; the train's
-OTA guard prevents a train bundle taking over a runtime that main also uses.
+Keep the backend compatible with installed builds, and move the replacement
+binaries through QA and review promptly. `main` still owns the store fleet's OTA
+delivery; the train's OTA guard prevents a train bundle taking over a runtime
+that main also uses.
 
 Source of truth for uploaded material:
 
@@ -34,40 +35,56 @@ build, fingerprint, and release-anchor tags. Retain the active tag ruleset for
 `build-*`, `fingerprint-*`, and `release/*`; allow only that App to create,
 update, or delete those tags.
 
-## 1. Prepare the release on either branch
+## 1. The train runs itself
 
-Land the release on `main` directly, or use the optional `release/next` train
-below. Native PRs into either branch are accepted without `allow-native-on-main`.
-When using a train, cut it from `main` and merge it back after store acceptance.
+`release/next` is maintained by the **Release Train Sync** workflow
+(`release-train-sync.yml`, logic in `scripts/release-train-sync.ts`). It runs on
+every push to `main`, after Mobile Release Anchor and Production Deploy runs
+finish (bot pushes carry `[skip ci]` and do not trigger the push run), hourly, and
+on dispatch. A dispatch with `dry_run` prints the plan and writes nothing.
 
-1. **Cut it** (start of a release, or to reset it after a merge-back):
+How the sync moves the train:
 
-   ```sh
-   git push --force-with-lease origin main:release/next
-   ```
+- The train has nothing of its own, or sits at the head of the last merged-back PR:
+  it fast-forwards to `main`.
+- The train carries only the bot's version-bump commit (trailer
+  `Release-Train: version-bump`, and nothing changed but the `version:` line): the
+  commit is dropped and recreated on top of `main`.
+- The train carries native PRs: `main` is merged in with a merge commit (trailer
+  `Release-Train: sync`). It is never a rebase, because
+  `scripts/generate-changelog.ts` keeps a PR only when its merge commit is an
+  ancestor of `HEAD`, and a rebase would drop the release notes of every native PR
+  on the train.
 
-2. **Land the release identity on the train, before the final native change.**
-   Bump `version` in `packages/mobile/app.config.ts` and update the localized iOS
-   and Android release notes for `en-US`, `es-ES`, `es-MX`, `fr-FR`, and `de-DE`.
-   Those PRs target `release/next`. Keep this order so the automatic builds carry
-   the intended version and copy. The version no longer moves the fingerprint, so
-   landing it first does not cost the store fleet its OTAs; it just means the
-   version rides on the native change that does start the build.
-3. **Land the native changes on the chosen branch.** Both `main` and
-   `release/next` start fingerprint-gated store builds. The OTA compatibility
-   check reports the native change without blocking or requiring a waiver.
-4. **Sync `main` into the train whenever the release needs main's JS.** A merge
-   commit, never a squash — a squash would rewrite the shared history and make
-   the merge-back conflict with itself:
+Every commit the sync writes is deterministic (fixed identity and message, dates
+copied from the parents), so a run with nothing new computes the SHA already on the
+branch and pushes nothing. That is what makes an hourly run safe. If the merge
+conflicts anywhere other than the `version:` line, the run fails and opens one
+issue labelled `release-train`. The issue prints the commands to resolve it by
+hand. The next successful run closes it.
 
-   ```sh
-   git switch release/next && git pull
-   git merge origin/main          # merge commit
-   git push origin release/next
-   ```
+**The version rule.** The train never carries a released version. A version counts
+as released once it was merged back to `main` (the last merged PR from
+`release/next` into `main`) or Apple approved it (a `release/ios-v<version>-*`
+anchor exists). When the train's version is released, the bot bumps it to the next
+free patch. The bot never lowers the version the train already carries. To start a
+new minor or major, set the repository variable `RELEASE_TRAIN_MIN_VERSION`
+(currently `2.7.0`); the sync uses it when it is higher than the next free patch.
+A person can also set a higher version with a commit on the train.
 
-5. Keep mixed backend/native changes backward-compatible with the currently
-   shipped app until the replacement store release has been adopted.
+**What people still do.**
+
+1. **Land native PRs.** Target `release/next` for native changes, or `main`; the
+   sync carries `main` into the train within the hour or at the next push. JS-only
+   PRs target `main`. The OTA compatibility check reports a native change on `main`
+   without blocking it.
+2. **Update the localized release notes** for `en-US`, `es-ES`, `es-MX`, `fr-FR`,
+   and `de-DE` on the train, before the final native change, so the automatic
+   builds carry the intended copy.
+3. **Close the train** (below).
+
+Keep mixed backend/native changes backward-compatible with the currently shipped
+app until the replacement store release has been adopted.
 
 A fingerprint change on the train makes older binaries OTA-ineligible for the
 train's bundles. This is expected. Keep the native change set focused and start
@@ -79,14 +96,36 @@ immutable release anchor.
 anchors exist (§4), open a merge-back PR from `release/next` into `main` and
 merge it **as a merge commit, never a squash**. After it lands, `main`'s
 fingerprint equals the train's, so `main`'s OTA publisher serves the new fleet
-again. Then reset the train with the force-push in step 1.
+again. Do not delete or reset the branch. The next sync run sees the merged PR,
+treats the version as released, and moves the train to `main` with the next patch
+version.
 
-There is no branch protection on `release/next` and no automated sync: syncs and
-merge-backs are ordinary merge commits that maintainers push.
+**Branch protection.** The ruleset "Protect release train branch" blocks deleting
+and force-pushing `release/next`. Only the repository App (`OTA_PUSH_APP_ID`)
+bypasses it, because the sync needs to recreate the bump commit. So nobody runs
+`git push --force-with-lease origin main:release/next` any more, and the merge-back
+does not delete the branch (the repository deletes merged branches
+automatically, and the ruleset stops that for this one).
 
-## 2. Automatic native builds from `main` and `release/next`
+**When the sync is broken.** Dispatch **Release Train Sync** with `dry_run` to
+see its plan and the error. A person can still move the train with an ordinary
+push, because the ruleset blocks only deletion and force-pushes:
 
-A push to either release branch that resolves to a new native fingerprint triggers:
+```sh
+git switch release/next && git pull
+git merge origin/main          # merge commit
+git push origin release/next
+```
+
+Only a reset or a rewrite of the train needs a force-push. For that, a repository
+admin pauses the ruleset (Settings → Rules) for the push and switches it back on
+afterwards.
+
+## 2. Automatic native builds from `release/next`
+
+A push to `release/next` triggers a build when its fingerprint is new, or when the
+marketing version in `packages/mobile/app.config.ts` has no
+`build-<platform>-v<version>-*` tag yet:
 
 - **iOS TestFlight Deploy** (`ios-testflight-rn.yml`) — resolves the next build
   number from App Store Connect, builds, validates the archive, and uploads the
@@ -135,54 +174,74 @@ Changing a workflow or lane does not change the native fingerprint. Such a
 merge may skip the native build; use promotion to catch up an existing internal
 build rather than assuming the configuration change delivered it.
 
-`workflow_dispatch` works from either branch and forces a build (Android has
-`force_native`, enabled by default). Automatic screenshot and store-draft runs
-follow successful builds from both branches. Store drafting resolves and rechecks
-the triggering build's source branch; manual drafting uses its selected ref and
-refuses branches other than `main` and `release/next` before checking out code.
+`workflow_dispatch` works from `release/next` and from `main`. `main` builds only by
+dispatch (the hotfix rebuild), and those builds start no automatic screenshot or
+store-draft run; dispatch them by hand if you need them. Dispatch forces a build
+(Android and iOS both have `force_native`, enabled by default; unchecked, a dispatch
+honours the same gate as a push, which is how the sync retries a missing version).
+Automatic screenshot and store-draft runs follow successful `release/next` builds
+only. Store drafting resolves and rechecks the triggering build's source branch;
+manual drafting uses its selected ref and refuses branches other than `main` and
+`release/next` before checking out code.
 
-Build numbers and upload concurrency are global per platform, so builds from the
-two branches cannot race store numbering. Existing fingerprint tags deduplicate
-identical native states across branches. Draft selection remains conservative:
-it selects the highest uploaded tags for the marketing version and verifies them
-against the chosen branch. If the branches carry different native states under
-the same marketing version, drafting can wait for matching candidates rather
-than attach an incompatible binary.
+**The iOS gate.** Before anything else, the iOS gate fails fast when the train's
+version already has a `release/ios-v<version>-*` anchor. Apple rejects every new
+build of a version it approved, and that would otherwise show up only after the
+60-minute build. The sync moves the train to the next version, so this should only
+happen to a hand-dispatched build.
 
-Both workflows use the `Production` environment and serialize non-cancelling
-builds. A successful upload records the exact commit, store build number, and
-fingerprint in an immutable
+**The Android gate.** A `play-review` job checks whether a Play production or open
+testing review is pending. If one is, the Android build is deferred: the upload
+would be refused after the 30-minute build anyway. The deferred version still has
+no `build-android-v<version>-*` tag, so the sync's hourly run dispatches the build
+again once the review clears. The check fails open: if it errors, the build runs.
+
+**Queueing.** Both native workflows keep their concurrency group with
+`queue: max`, so a sync push no longer replaces a pending hotfix dispatch or a
+retry. Queued push runs are cheap: a run whose commit a later push has superseded
+skips itself at the gate, and the run for the newer commit decides.
+
+Build numbers and upload concurrency are global per platform. Existing fingerprint
+tags deduplicate identical native states. Draft selection remains conservative: it
+selects the highest uploaded tags for the marketing version and verifies them
+against the chosen branch, and waits for matching candidates rather than attach an
+incompatible binary.
+
+Both workflows use the `Production` environment. A successful upload records the
+exact commit, store build number, and fingerprint in an immutable
 `build-<platform>-v<version>-<number>-<shortfp>` tag. The matching
 `fingerprint-<platform>-<hash>` tag prevents duplicate native builds when a later
-push to the train is JS-only.
+push to the train is JS-only and its version already has a build.
 
 **OTAs during the train.** `release/next` publishes production OTAs too, so the
-testers on the train's binary get JS as fast as main's fleet does — including
-after a `main` → `release/next` sync. The guard is fingerprint identity: while the
-train's fingerprint still equals main's, the train's publish is skipped for that
-platform, because xprem serves the newest update per runtimeVersion and the train's
-JS would otherwise be handed to the whole store fleet. The train starts publishing
-once a native change has moved its fingerprint off main's.
+testers on the train's binary get JS as fast as main's fleet does, including after
+a sync. The guard is fingerprint identity: xprem serves the newest update per
+runtimeVersion, so the train publishes a platform only when it carries a native
+change of its own, meaning its fingerprint differs from both `main`'s and the
+merge-base's. A superseded push run (a later push to the train already exists)
+publishes nothing. Until the train has such a change, its testers run on a
+runtimeVersion `main`'s publisher already serves.
 
 ### Version-only releases
 
 When the release is a new version number with no native change, the fingerprint
-does not move, the `fingerprint-<platform>-<hash>` tag already exists, and both
-native workflows skip the build on push. Ship the binary by hand:
+does not move and the `fingerprint-<platform>-<hash>` tag already exists. The
+build gates still start a build, because the new version has no
+`build-<platform>-v<version>-*` tag. So no manual dispatch is needed: the sync
+bumps the version on the train after a version is released, and that push ships a
+TestFlight and Play tester build by itself. If the Android build was deferred by a
+pending Play review, the hourly sync dispatches it again.
 
-1. On `release/next`, bump `version` in `packages/mobile/app.config.ts` and land
-   the localized release notes.
-2. Dispatch `ios-testflight-rn.yml` on `release/next`.
-3. Dispatch `android-apk-rn.yml` on `release/next` with `force_native` on.
-
-`mobile-store-draft.yml` then runs from the two completions. Two caveats:
+`mobile-store-draft.yml` then runs from the two completions. Caveats that still
+hold:
 
 - The train does not republish an OTA after the build. Its guard skips the publish
-  while the train's fingerprint equals main's, so the new binary runs its embedded
-  bundle until main's next production publish.
+  while the train carries no native change of its own, so the new binary runs its
+  embedded bundle until main's next production publish.
 - Screenshots do not run on their own, because that needs a fingerprint tag at the
-  triggering commit. Dispatch the screenshot workflows by hand. The in-app
-  changelog also gets no "App update" marker for the release.
+  triggering commit, and the tag points at an older commit. Dispatch the screenshot
+  workflows by hand. The in-app changelog also gets no "App update" marker for the
+  release.
 
 Details and the other consequences (backports reach every version sharing the
 fingerprint): `docs/mobile-ota-updates.md`, "Version-only releases".
@@ -259,8 +318,8 @@ unchanged copy.
 
 Screenshots are automatic too. **Mobile Screenshots** (`mobile-screenshots-ios.yml`
 and `mobile-screenshots-android.yml`) runs after each native deploy on
-`main` or `release/next` **that actually shipped a binary**, one workflow per
-platform. The pixels come from the exact commit that produced the binary. There is no cron; a manual `workflow_dispatch`, runnable from any
+`release/next` **that actually shipped a binary**, one workflow per
+platform. A hand-dispatched build on `main` starts none; dispatch the capture too. The pixels come from the exact commit that produced the binary. There is no cron; a manual `workflow_dispatch`, runnable from any
 branch, is the only other way to start a capture.
 
 "Shipped" is not the same as "the deploy run went green". A JS-only push finishes
@@ -271,7 +330,8 @@ tag the deploy forces onto its own commit right after a successful store upload
 spending a runner, and writes "no binary shipped … nothing to capture" to its
 step summary when it finds none. Every checkout in both workflows pins that same
 commit (`workflow_run.head_sha`), so the pixels belong to the binary rather than
-to whatever the train moved on to meanwhile. Both workflows name the train once
+to whatever the train moved on to meanwhile. A version-only build has no fresh
+fingerprint tag at its commit, so it skips here too. Both workflows name the train once
 as a `RELEASE_BRANCH` env, the way `mobile-store-draft.yml` does; the contract
 test reads the deploy workflows' own `push.branches` and fails if either
 workflow's `workflow_run` filter or `RELEASE_BRANCH` drifts off it. Automatic
@@ -415,13 +475,19 @@ at 500 characters.
 
 `mobile-store-draft.yml` is best-effort and always on; there is no enable flag.
 It runs whenever **iOS TestFlight Deploy** or **Android Play Internal Deploy**
-completes on `main` or `release/next`, and on demand; there is no schedule. It pins
+completes on `release/next`, and on demand; there is no schedule. A hand-dispatched
+`main` build does not start it. It pins
 the current source branch SHA, selects the exact highest iOS and Android build tags
 for that version, and checks that both tagged binaries match the source branch's
 platform fingerprints. Immediately before changing either store draft it rechecks that
 the source branch and both selected tags have not moved. A mismatch, or only one platform's build existing yet, waits for a later
 run (the other platform's completion re-triggers it) instead of drafting the
 wrong build.
+
+The iOS lane refuses to touch App Store Connect when a different version is
+already open there (being prepared, rejected, or waiting for or in review). It used
+to rename that version to the one being drafted. Submit, release or remove the open
+version, then re-run the draft.
 
 The iOS lane waits up to 45 minutes for App Store Connect to finish processing
 the tagged build, then attaches it to the editable version (creating the version
@@ -590,11 +656,11 @@ after the shipped fingerprint moves on.
 
 ## End-to-end checklist
 
-1. Choose `main`, or cut an optional `release/next` train.
-2. Set the release version and translate both stores' release notes — on
-   the chosen branch. A version-only release also needs both native workflows
-   dispatched by hand (§2, "Version-only releases").
-3. Land the native changes on the chosen branch; wait for TestFlight and
+1. Nothing to cut: the sync keeps `release/next` level with `main` and on an
+   unreleased version (§1).
+2. Translate both stores' release notes on the train. A version bump needs no
+   manual dispatch; the bump push builds by itself (§2, "Version-only releases").
+3. Land the native changes on `release/next` (or `main`); wait for TestFlight and
    Play tester-track builds.
 4. Complete native QA against the exact uploaded candidates.
 5. Screenshots re-capture themselves after the native build (the probe decides
@@ -603,7 +669,8 @@ after the shipped fingerprint moves on.
    for review by hand; release Android with **Android Production Release** (plan,
    then `apply`).
 7. After approval, confirm both immutable release anchors were created, then
-   if using a train, merge it into `main` as a **merge commit** and reset it.
+   merge `release/next` into `main` as a **merge commit**. Leave the branch alone;
+   the next sync run moves it to `main` with the next version.
 8. Re-record the homepage showcase video's app footage so the site shows the
    shipped app: `vp run video` ([showcase-video.md](showcase-video.md)).
 
@@ -613,6 +680,9 @@ after the shipped fingerprint moves on.
   policy must list `release/next` alongside `main` (Settings → Environments →
   Production), or every train build fails with a branch-policy rejection. There is
   no separate native-release environment.
+- The sync pushes with the repository App token, not `GITHUB_TOKEN`, because a
+  `GITHUB_TOKEN` push would not start the native build workflows. The App must be
+  in the bypass list of the "Protect release train branch" ruleset.
 - Do not delete or move build, fingerprint, or release-anchor tags.
 - Review submission, phased/staged rollout, and the iOS App Store icon upload are
   intentionally manual. The iOS icon comes from the uploaded binary.
