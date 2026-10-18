@@ -433,11 +433,12 @@
         "leaveDeferred": "Retour impossible pour l'instant. Nouvel essai à la prochaine ouverture de l'app."
       },
       "climbDrawer": {
-        "description": "Choisis ce que tu vois sous le bloc.",
-        "settingsFooter": "Choisis ce que tu vois sous le bloc. Tu peux aussi le changer depuis le menu ⋯ d’un bloc, dans Options d’affichage.",
+        "description": "Choisis ce que tu vois sous le bloc, et dans quel ordre.",
+        "settingsFooter": "Choisis ce que tu vois sous le bloc. Pour changer l’ordre, ouvre le menu ⋯ d’un bloc et choisis Options d’affichage.",
         "loading": "Chargement des options d’affichage…",
         "hideAll": "Tout masquer",
         "showAll": "Tout afficher",
+        "restoreDefaults": "Rétablir les réglages par défaut",
         "sections": {
           "logbook": "Carnet",
           "climberLogs": "Entrées des grimpeurs",
@@ -449,7 +450,16 @@
         },
         "sheetTitle": "Options d’affichage",
         "groupTitle": "Sous le bloc",
-        "footer": "Les changements s’appliquent immédiatement. Masque tout pour voir uniquement le bloc, sans défilement vertical."
+        "footer": "Les changements s’appliquent immédiatement. Masque tout pour voir uniquement le bloc, sans défilement vertical.",
+        "tabs": {
+          "sections": "Sous le bloc",
+          "buttons": "Boutons"
+        }
+      },
+      "sectionLayout": {
+        "moveUp": "Monter {{section}}",
+        "moveDown": "Descendre {{section}}",
+        "moved": "{{section}}, {{position}} sur {{count}}"
       },
       "climbList": {
         "title": "Liste des blocs",
@@ -486,6 +496,41 @@
         "samplePlaylistTwo": "Échauffement",
         "playlistTagsDescription": "Voyez dans quelles playlists se trouve chaque bloc, directement dans la liste.",
         "quickActionsDescription": "Ajoute un bouton ⋮ à chaque bloc qui ouvre file, croix, listes et plus. Tu peux toujours appuyer longuement à la place."
+      },
+      "playerButtons": {
+        "title": "Boutons",
+        "description": "Choisis les boutons autour de Enregistrer, leur ordre et leur place.",
+        "position": {
+          "label": "Position",
+          "below": "Sous la board",
+          "above": "Au-dessus de la board",
+          "footer": "Enregistrer et Éclairage de la board gardent toujours leur place."
+        },
+        "previousNext": "Précédent et suivant",
+        "previousNextDescription": "Glisser sur la board change toujours de bloc.",
+        "buttons": {
+          "mirror": "Miroir",
+          "favorite": "Favori",
+          "angle": "Inclinaison",
+          "share": "Partager",
+          "queue": "File"
+        },
+        "mirrorDescription": "Seulement sur les boards avec miroir",
+        "angleDescription": "Seulement sur les boards à inclinaison réglable",
+        "fixed": {
+          "previous": "Précédent",
+          "next": "Suivant",
+          "log": "Enregistrer",
+          "boardLight": "Éclairage de la board"
+        },
+        "footer": "Le premier entre File et Miroir prend le grand bouton. Un bouton masqué reste dans le menu ⋯. Sans petits boutons, la board prend leur rangée.",
+        "settingsFooter": "Pour changer l’ordre, ouvre le menu ⋯ d’un bloc et choisis Options d’affichage.",
+        "previewLabel": "Aperçu, {{position}} : {{buttons}}"
+      },
+      "climbView": {
+        "title": "Vue du bloc",
+        "valueDefault": "Par défaut",
+        "valueCustom": "Personnalisée"
       }
     },
     "sendRecovery": {

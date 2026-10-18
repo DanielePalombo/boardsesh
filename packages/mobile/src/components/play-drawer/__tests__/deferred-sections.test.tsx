@@ -24,6 +24,20 @@ const deferred = vi.hoisted(() => ({
 
 const flags = vi.hoisted(() => ({ boardseshGrade: false }));
 
+// The reads behind the collapsed lines: what each was asked with, and what it answers.
+const lineQueries = vi.hoisted(() => ({
+  history: {
+    calls: [] as Array<{ climbUuid: string | null; enabled: boolean | undefined }>,
+    data: undefined as unknown,
+  },
+  beta: { calls: [] as Array<{ climbUuid: string; enabled: boolean | undefined }>, data: undefined as unknown },
+  similar: {
+    calls: [] as Array<{ climbUuid: string | null; angle: number }>,
+    data: undefined as unknown,
+    source: 'local' as 'local' | 'network' | 'download',
+  },
+}));
+
 const boardseshGradeQuery = vi.hoisted(() => ({
   calls: [] as Array<{ boardName: string; climbUuid: string | null; angle: number; enabled: boolean | undefined }>,
   data: undefined as unknown,
@@ -120,20 +134,40 @@ vi.mock('../../../hooks/use-deferred-after-interactions', () => ({
   },
 }));
 
+// The saved expand state the peek's request gate reads, and the headers show.
+const expandState = vi.hoisted(() => ({ map: {} as Record<string, boolean>, loaded: true }));
+vi.mock('../../../lib/section-expand-store', () => ({
+  useSectionExpanded: (key: string | undefined) => ({
+    expanded: key === undefined ? undefined : expandState.map[key],
+    loaded: expandState.loaded,
+  }),
+}));
+
+// Draws the line only while collapsed, as the real header does. Children always
+// render, so the body tests can see what each section is handed.
 vi.mock('../../CollapsibleSection', () => ({
   CollapsibleSection: ({
     title,
     summary,
     children,
     onHeaderLayout,
+    persistKey,
+    defaultExpanded = false,
   }: {
     title: string;
     summary?: string | null;
     children?: ReactNode;
     onHeaderLayout?: (height: number) => void;
+    persistKey?: string;
+    defaultExpanded?: boolean;
   }) => {
     onHeaderLayout?.(44);
-    return createElement('section', { 'data-title': title, 'data-summary': summary ?? undefined }, children);
+    const expanded = (persistKey ? expandState.map[persistKey] : undefined) ?? defaultExpanded;
+    return createElement(
+      'section',
+      { 'data-title': title, 'data-summary': expanded ? undefined : (summary ?? undefined) },
+      children,
+    );
   },
 }));
 
@@ -184,7 +218,14 @@ vi.mock('../../../lib/graphql/hooks', () => ({
     boardseshGradeQuery.calls.push({ boardName, climbUuid, angle, enabled: options?.enabled });
     return { data: boardseshGradeQuery.data };
   },
-  useClimbStatsHistory: () => ({ data: undefined }),
+  useClimbStatsHistory: (_boardName: string, climbUuid: string | null, options?: { enabled?: boolean }) => {
+    lineQueries.history.calls.push({ climbUuid, enabled: options?.enabled });
+    return { data: lineQueries.history.data };
+  },
+  useBetaLinks: (_boardName: string, climbUuid: string, enabled?: boolean) => {
+    lineQueries.beta.calls.push({ climbUuid, enabled });
+    return { data: lineQueries.beta.data };
+  },
   useFollowingClimbLogs: (boardName: string, climbUuid: string | null, options?: { enabled?: boolean }) => {
     crewQuery.calls.push({ boardName, climbUuid, enabled: options?.enabled });
     return { data: crewQuery.data };
@@ -192,6 +233,13 @@ vi.mock('../../../lib/graphql/hooks', () => ({
   useClimbLogsPreview: (args: { boardName: string; climbUuid: string | null; enabled: boolean }) => {
     everyoneQuery.calls.push(args);
     return { data: undefined };
+  },
+}));
+
+vi.mock('../../../lib/graphql/hooks/use-similar-climbs', () => ({
+  useSimilarClimbs: (_scope: unknown, climbUuid: string | null, angle: number) => {
+    lineQueries.similar.calls.push({ climbUuid, angle });
+    return { data: lineQueries.similar.data, source: lineQueries.similar.source, isResolvingSource: false };
   },
 }));
 
@@ -218,6 +266,7 @@ vi.mock('../../../hooks/use-grade-format', () => ({
 import { DeferredSections } from '../DeferredSections';
 import {
   DEFAULT_PLAY_DRAWER_SECTIONS,
+  type BelowFoldSectionId,
   type PlayDrawerSectionsVisibility,
 } from '../../../lib/play-drawer-sections-preference';
 
@@ -233,6 +282,7 @@ type RenderOptions = {
   enabled?: boolean;
   contentEnabled?: boolean;
   sections?: PlayDrawerSectionsVisibility;
+  order?: readonly BelowFoldSectionId[];
   onFirstSectionHeaderLayout?: (height: number) => void;
   description?: string | null;
   climbOverrides?: Partial<Climb>;
@@ -257,6 +307,7 @@ function renderSections(options: RenderOptions = {}) {
       enabled={options.enabled ?? true}
       contentEnabled={options.contentEnabled ?? false}
       sections={options.sections}
+      order={options.order}
       onFirstSectionHeaderLayout={options.onFirstSectionHeaderLayout}
       onSimilarClimbPress={vi.fn()}
       onOpenFullLogbook={options.onOpenFullLogbook}
@@ -286,6 +337,8 @@ describe('DeferredSections', () => {
     followedAuthors.result = { data: undefined, isError: false };
     followedAuthors.calls = [];
     climberLogsSection.props = null;
+    expandState.map = {};
+    expandState.loaded = true;
   });
 
   afterEach(() => {
@@ -653,6 +706,7 @@ describe('DeferredSections', () => {
     });
 
     it('summarises the collapsed card from the server counts', () => {
+      expandState.map = { climberLogs: false };
       i18n.locale = 'en-US';
       auth.isAuthenticated = true;
       deferred.ready = true;
@@ -828,5 +882,276 @@ describe('DeferredSections visibility preferences', () => {
       description: 'No match',
     });
     expect(container.childElementCount).toBe(0);
+  });
+
+  describe("in the climber's order", () => {
+    const SIMILAR_FIRST: BelowFoldSectionId[] = [
+      'similarClimbs',
+      'community',
+      'boardseshGrade',
+      'betaVideos',
+      'setterNotes',
+      'climberLogs',
+      'logbook',
+    ];
+    const sectionTitles = (container: HTMLElement) =>
+      [...container.querySelectorAll('section[data-title]')].map((node) => node.getAttribute('data-title'));
+
+    it('draws the sections in that order', () => {
+      deferred.ready = true;
+      const { container } = renderSections({
+        order: SIMILAR_FIRST,
+        contentEnabled: true,
+        description: 'Left hand first.',
+      });
+      expect(sectionTitles(container)).toEqual([
+        'mobile.similarClimbs.title',
+        'mobile.community.title',
+        'boardseshGrade.title',
+        'mobile.betaVideos.title',
+        'mobile.setterNotes.title',
+        'mobile.climberLogs.title',
+        'mobile.logbook.title',
+      ]);
+    });
+
+    it('mounts only the first header at the fold; Logbook waits like the rest when it is not first', () => {
+      const onFirstSectionHeaderLayout = vi.fn();
+      const { container } = renderSections({ order: SIMILAR_FIRST, onFirstSectionHeaderLayout });
+      expect(sectionTitles(container)).toEqual(['mobile.similarClimbs.title']);
+      expect(onFirstSectionHeaderLayout).toHaveBeenCalledWith(44);
+      expect(screen.queryByTestId('similar-climbs')).toBeNull();
+      expect(screen.queryByTestId('logbook')).toBeNull();
+    });
+
+    it('starts no query for a hidden section wherever it sits', () => {
+      deferred.ready = true;
+      renderSections({
+        order: SIMILAR_FIRST,
+        sections: { ...DEFAULT_PLAY_DRAWER_SECTIONS, logbook: false, climberLogs: false, boardseshGrade: false },
+        contentEnabled: true,
+      });
+      expect(logbook.calls.every(({ boardName }) => boardName === null)).toBe(true);
+      expect(boardseshGradeQuery.calls.every(({ enabled }) => !enabled)).toBe(true);
+      expect(everyoneQuery.calls).toHaveLength(0);
+      expect(screen.getByTestId('similar-climbs')).not.toBeNull();
+    });
+  });
+});
+
+describe('collapsed lines, and what each section may ask for', () => {
+  const ORDER: BelowFoldSectionId[] = [
+    'logbook',
+    'climberLogs',
+    'setterNotes',
+    'betaVideos',
+    'boardseshGrade',
+    'community',
+    'similarClimbs',
+  ];
+  const first = (sectionId: BelowFoldSectionId): BelowFoldSectionId[] => [
+    sectionId,
+    ...ORDER.filter((other) => other !== sectionId),
+  ];
+  const summaryOf = (container: HTMLElement, title: string) =>
+    container.querySelector(`section[data-title="${title}"]`)?.getAttribute('data-summary') ?? null;
+  const historyEntry = (angle: number, ascensionistCount: number) => ({
+    angle,
+    ascensionistCount,
+    qualityAverage: 3,
+    difficultyAverage: 20,
+    displayDifficulty: 20,
+    createdAt: '2026-10-01T00:00:00Z',
+  });
+
+  beforeEach(() => {
+    deferred.ready = false;
+    i18n.locale = 'en-US';
+    auth.isAuthenticated = true;
+    flags.boardseshGrade = true;
+    crewQuery.settled = true;
+    crewQuery.calls = [];
+    crewQuery.data = undefined;
+    everyoneQuery.calls = [];
+    everyoneQuery.offline = false;
+    followedAuthors.result = { data: { users: [{ userId: 'friend' }] }, isError: false };
+    logbook.calls = [];
+    boardseshGradeQuery.calls = [];
+    lineQueries.history = { calls: [], data: undefined };
+    lineQueries.beta = { calls: [], data: undefined };
+    lineQueries.similar = { calls: [], data: undefined, source: 'local' };
+    crewQuery.gateCalls = [];
+    expandState.loaded = true;
+    expandState.map = {
+      betaVideos: false,
+      community: false,
+      boardseshGrade: false,
+      similarClimbs: false,
+      setterNotes: false,
+    };
+  });
+
+  afterEach(() => {
+    expandState.map = {};
+  });
+
+  it.each([
+    ['Beta Videos', 'betaVideos' as const, () => lineQueries.beta.calls],
+    ['Community', 'community' as const, () => lineQueries.history.calls],
+  ])('%s as an open peek draws no line, so asks for none', (_label, sectionId, calls) => {
+    expandState.map = { ...expandState.map, [sectionId]: true };
+    renderSections({ order: first(sectionId) });
+    expect(calls().every(({ enabled }) => !enabled)).toBe(true);
+  });
+
+  it.each([
+    ['Beta Videos', 'betaVideos' as const, () => lineQueries.beta.calls],
+    ['Community', 'community' as const, () => lineQueries.history.calls],
+  ])('%s as a peek that has never been touched starts open, so asks for nothing', (_label, sectionId, calls) => {
+    expandState.map = {};
+    renderSections({ order: first(sectionId) });
+    expect(calls().every(({ enabled }) => !enabled)).toBe(true);
+  });
+
+  it('asks for nothing while the saved expand state is still loading', () => {
+    expandState.loaded = false;
+    renderSections({ order: first('community') });
+    expect(lineQueries.history.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(crewQuery.gateCalls.every(({ active }) => !active)).toBe(true);
+  });
+
+  it.each(['community', 'similarClimbs', 'boardseshGrade'] as const)(
+    'turns the settle gate on for a collapsed %s peek, and off for an open one',
+    (sectionId) => {
+      renderSections({ order: first(sectionId) });
+      expect(crewQuery.gateCalls.at(-1)?.active).toBe(true);
+      crewQuery.gateCalls = [];
+      expandState.map = { ...expandState.map, [sectionId]: true };
+      renderSections({ order: first(sectionId) });
+      expect(crewQuery.gateCalls.at(-1)?.active).toBe(false);
+    },
+  );
+
+  it("Setter's notes show their first written line", () => {
+    const { container } = renderSections({
+      order: first('setterNotes'),
+      description: 'No match\n\n  Start left, cross to the pinch.\nThen match the jug.',
+    });
+    expect(summaryOf(container, 'mobile.setterNotes.title')).toBe('Start left, cross to the pinch.');
+  });
+
+  it('Beta Videos as the peek ask for the videos once settled and count them', () => {
+    lineQueries.beta.data = [{}, {}, {}];
+    const { container } = renderSections({ order: first('betaVideos') });
+    expect(lineQueries.beta.calls.at(-1)).toEqual({ climbUuid: 'climb-1', enabled: true });
+    expect(summaryOf(container, 'Beta Videos')).toBe('3 videos');
+  });
+
+  it('Beta Videos say when there are none, so the shelf is never opened for nothing', () => {
+    lineQueries.beta.data = [];
+    const { container } = renderSections({ order: first('betaVideos') });
+    expect(summaryOf(container, 'Beta Videos')).toBe('None yet');
+  });
+
+  it.each([
+    ['on a climb only swiped past', () => (crewQuery.settled = false)],
+    ['with no signal', () => (everyoneQuery.offline = true)],
+  ])('Beta Videos as the peek ask for nothing %s', (_label, arrange) => {
+    arrange();
+    renderSections({ order: first('betaVideos') });
+    expect(lineQueries.beta.calls.every(({ enabled }) => !enabled)).toBe(true);
+  });
+
+  it('Community as the peek names the angle most climbers sent it at', () => {
+    lineQueries.history.data = [historyEntry(35, 12), historyEntry(40, 410), historyEntry(45, 90)];
+    const { container } = renderSections({ order: first('community') });
+    expect(lineQueries.history.calls.at(-1)).toEqual({ climbUuid: 'climb-1', enabled: true });
+    expect(summaryOf(container, 'Community')).toBe('Most sends at 40°');
+  });
+
+  it('Community shows no line until there is a send to point at', () => {
+    lineQueries.history.data = [historyEntry(40, 0)];
+    const { container } = renderSections({ order: first('community') });
+    expect(summaryOf(container, 'Community')).toBeNull();
+  });
+
+  it('Similar climbs as the peek name the closest match its first card shows', () => {
+    lineQueries.similar.data = [
+      { uuid: 'a', name: 'Off the wall', compatibleSizeIds: [99] },
+      { uuid: 'b', name: 'Guessing Games', compatibleSizeIds: [10] },
+    ];
+    const { container } = renderSections({ order: first('similarClimbs') });
+    expect(lineQueries.similar.calls.at(-1)).toEqual({ climbUuid: 'climb-1', angle: 40 });
+    expect(summaryOf(container, 'Similar Climbs')).toBe('Closest: Guessing Games');
+  });
+
+  it('Similar climbs say the board needs downloading when that is why there is nothing', () => {
+    lineQueries.similar.source = 'download';
+    const { container } = renderSections({ order: first('similarClimbs') });
+    expect(summaryOf(container, 'Similar Climbs')).toBe('Download to see them');
+  });
+
+  it('Similar climbs show no line while the answer is still out', () => {
+    const { container } = renderSections({ order: first('similarClimbs') });
+    expect(summaryOf(container, 'Similar Climbs')).toBeNull();
+  });
+
+  it('Similar climbs say when nothing matched', () => {
+    lineQueries.similar.data = [];
+    const { container } = renderSections({ order: first('similarClimbs') });
+    expect(summaryOf(container, 'Similar Climbs')).toBe('No similar climbs found');
+  });
+
+  it('Boardsesh grade as the peek asks for its grade once settled, before any scroll', () => {
+    renderSections({ order: first('boardseshGrade') });
+    expect(boardseshGradeQuery.calls.at(-1)?.enabled).toBe(true);
+  });
+
+  it('a section below the fold asks for nothing until the climber scrolls to it', () => {
+    const order: BelowFoldSectionId[] = [
+      'setterNotes',
+      'betaVideos',
+      'boardseshGrade',
+      'community',
+      'similarClimbs',
+      'climberLogs',
+      'logbook',
+    ];
+    renderSections({ order, description: 'Left hand first.' });
+    expect(logbook.calls.every(({ boardName }) => boardName === null)).toBe(true);
+    expect(crewQuery.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(everyoneQuery.calls).toHaveLength(0);
+    expect(lineQueries.beta.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(lineQueries.history.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(boardseshGradeQuery.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(lineQueries.similar.calls).toHaveLength(0);
+  });
+
+  it('a hidden section asks for nothing even as the peek would', () => {
+    renderSections({
+      order: first('similarClimbs'),
+      sections: { ...DEFAULT_PLAY_DRAWER_SECTIONS, similarClimbs: false, betaVideos: false, community: false },
+      contentEnabled: true,
+    });
+    expect(lineQueries.similar.calls).toHaveLength(0);
+    expect(lineQueries.beta.calls.every(({ enabled }) => !enabled)).toBe(true);
+  });
+
+  it('a section further down shows a line only from what is already cached', () => {
+    deferred.ready = true;
+    lineQueries.history.data = [historyEntry(30, 5), historyEntry(25, 40)];
+    lineQueries.beta.data = [{}];
+    const { container } = renderSections({ order: ORDER, contentEnabled: true });
+    expect(lineQueries.history.calls.at(-1)?.enabled).toBe(true); // the Boardsesh grade, now on screen, asks
+    expect(lineQueries.beta.calls.every(({ enabled }) => !enabled)).toBe(true);
+    expect(summaryOf(container, 'Community')).toBe('Most sends at 25°');
+    expect(summaryOf(container, 'Beta Videos')).toBe('1 video');
+    expect(lineQueries.similar.calls).toHaveLength(0);
+  });
+
+  it('keeps the Logbook peek reading its ticks and the crew, as before', () => {
+    renderSections({ order: ORDER });
+    expect(logbook.calls.at(-1)?.boardName).toBe('kilter');
+    expect(crewQuery.calls.at(-1)?.enabled).toBe(true);
   });
 });
