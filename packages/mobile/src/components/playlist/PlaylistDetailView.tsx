@@ -317,6 +317,10 @@ export function PlaylistDetailView({
       headerLargeTitle: false,
       headerTransparent: true,
       headerBlurEffect: 'none',
+      // iOS 26 dims the scroll view under a transparent bar. The hero runs up under
+      // it, so that dim reads as a dark band; the collapsed blur bar below is our
+      // own edge effect once the hero scrolls away.
+      scrollEdgeEffects: { top: 'hidden' },
       title: headerTitle,
       headerTitle: renderNoHeaderTitle,
       // Keyed on the memoised `actions` and `collapsed`, never on a rendered node:
@@ -544,6 +548,12 @@ export function PlaylistDetailView({
     ) : null;
 
   const baseColor = normalizePlaylistColor(hero.color) ?? PLAYLIST_COLORS[0];
+  const islandFillStyle = useMemo(
+    () => ({
+      experimental_backgroundImage: `linear-gradient(to bottom, ${baseColor} ${insets.top}px, transparent ${insets.top}px)`,
+    }),
+    [baseColor, insets.top],
+  );
 
   // Shared list state visuals. The first-page load renders skeleton rows (a far
   // better "shape of what's coming" cue than a bare spinner). Empty + footer are
@@ -808,11 +818,13 @@ export function PlaylistDetailView({
   );
 
   return (
-    <View style={styles.container}>
-      {/* Paints the status-bar / dynamic-island strip in the playlist colour so it
-          is never the bare screen background — even on the first frame before the
-          list lays its full-bleed hero out behind the island. */}
-      <View pointerEvents="none" style={[styles.islandFill, { height: insets.top, backgroundColor: baseColor }]} />
+    // The background paints the status-bar / dynamic-island strip in the playlist
+    // colour so it is never the bare screen background, even on the first frame
+    // before the list lays its full-bleed hero out behind the island. It is a
+    // background rather than a sibling view so the list stays the first child:
+    // react-native-screens finds the scroll view for `scrollEdgeEffects` by
+    // following first children only.
+    <View style={[styles.container, islandFillStyle]}>
       <ReadableColumn style={styles.container}>
         <ClimbProgressProvider targets={progressTargets} enabled={!editMode}>
           <FlashList
@@ -1040,12 +1052,6 @@ const createStyles = (textStyles: TypographyScale) =>
     container: {
       flex: 1,
       minHeight: 0,
-    },
-    islandFill: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
     },
     headerBar: {
       position: 'absolute',
