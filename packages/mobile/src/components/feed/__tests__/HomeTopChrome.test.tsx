@@ -45,6 +45,7 @@ vi.mock('react-native-paper', () => ({
       createElement('div', { 'data-appbar-header': 'true' }, children),
     Action: ({ onPress, accessibilityLabel }: { onPress?: () => void; accessibilityLabel?: string }) =>
       createElement('button', { onClick: onPress, 'data-appbar-action': accessibilityLabel ?? '' }),
+    Content: ({ title }: { title: string }) => createElement('div', { 'data-appbar-content': 'true' }, title),
   },
 }));
 
@@ -84,6 +85,14 @@ vi.mock('../../chrome/NotificationsToolbarAction', () => ({
   NotificationsToolbarAction: ({ variant, onPress }: { variant: 'glass' | 'material'; onPress: () => void }) =>
     createElement('button', { 'data-bell-variant': variant, onClick: onPress }),
 }));
+vi.mock('../../Text', () => ({
+  Text: ({ children, accessibilityRole }: { children?: ReactNode; accessibilityRole?: string }) =>
+    createElement(
+      'p',
+      { 'data-plain-title': 'true', role: accessibilityRole === 'header' ? 'heading' : undefined },
+      children,
+    ),
+}));
 vi.mock('../../Icon', () => ({ Icon: ({ name }: { name: string }) => createElement('span', { 'data-icon': name }) }));
 vi.mock('../FeedScopeTitle', () => ({
   FeedScopeTitle: ({ title }: { title: string }) => createElement('div', { 'data-feed-scope': 'true' }, title),
@@ -95,6 +104,7 @@ const ACTIONS: AppMenuAction[] = [{ label: 'My crew', selected: true }];
 
 function makeProps(over: Partial<HomeTopChromeProps> = {}) {
   return {
+    showScopeMenu: true,
     scopeTitle: 'My crew',
     scopeActions: ACTIONS,
     onSelectScopeIndex: vi.fn(),
@@ -165,6 +175,18 @@ describe('HomeTopChrome', () => {
       expect(container.querySelector('[data-appbar-header]')).toBeNull();
     });
 
+    it('shows a plain Home title, and keeps the header buttons, with nothing to scope', () => {
+      const { container } = render(
+        <HomeTopChrome {...makeProps({ showScopeMenu: false, scopeTitle: 'Home', scopeActions: [] })} />,
+      );
+      expect(container.querySelector('[data-feed-scope]')).toBeNull();
+      const title = container.querySelector('[data-plain-title]');
+      expect(title?.textContent).toBe('Home');
+      expect(title?.getAttribute('role')).toBe('heading');
+      expect(bell(container, 'glass')).not.toBeNull();
+      expect(searchAction(container)).not.toBeNull();
+    });
+
     it('fires onOpenSearch when the find-climbers action is pressed', () => {
       const onOpenSearch = vi.fn();
       const { container } = render(<HomeTopChrome {...makeProps({ onOpenSearch })} />);
@@ -194,6 +216,16 @@ describe('HomeTopChrome', () => {
       // No floating blur / glass islands on Material.
       expect(container.querySelector('[data-blur]')).toBeNull();
       expect(container.querySelector('[data-island]')).toBeNull();
+    });
+
+    it('shows a plain Home app-bar title, and keeps the actions, with nothing to scope', () => {
+      const { container } = render(
+        <HomeTopChrome {...makeProps({ showScopeMenu: false, scopeTitle: 'Home', scopeActions: [] })} />,
+      );
+      expect(container.querySelector('[data-feed-scope]')).toBeNull();
+      expect(container.querySelector('[data-appbar-content]')?.textContent).toBe('Home');
+      expect(bell(container, 'material')).not.toBeNull();
+      expect(searchAction(container)).not.toBeNull();
     });
 
     it('fires onOpenSearch from the app-bar action', () => {

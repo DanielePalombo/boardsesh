@@ -256,12 +256,25 @@ export default function HomeTab() {
 
   const sessionCardVisible = sectionLayout.visible.session;
   const playlistsVisible = sectionLayout.visible.playlists;
+  // The spinner follows the feed's refetch while the feed shows, as it always
+  // has. Without the feed it follows the sections' own refetches.
+  const [sectionsRefreshing, setSectionsRefreshing] = useState(false);
   const handleRefresh = useCallback(() => {
     // Only what is on screen. Each section subscribes to its own query, so the
     // screen refreshes it by key; Your board reads the phone and has nothing to fetch.
-    if (climbingNowVisible) void queryClient.invalidateQueries({ queryKey: FOLLOWED_LIVE_SESSIONS_QUERY_KEY });
-    if (sessionCardVisible) void queryClient.invalidateQueries({ queryKey: [SESSION_SUMMARY_QUERY_KEY] });
-    if (playlistsVisible) void queryClient.invalidateQueries({ queryKey: [SMART_PLAYLIST_COUNTS_QUERY_KEY] });
+    const sectionRefetches: Promise<void>[] = [];
+    if (climbingNowVisible) {
+      sectionRefetches.push(queryClient.invalidateQueries({ queryKey: FOLLOWED_LIVE_SESSIONS_QUERY_KEY }));
+    }
+    if (sessionCardVisible)
+      sectionRefetches.push(queryClient.invalidateQueries({ queryKey: [SESSION_SUMMARY_QUERY_KEY] }));
+    if (playlistsVisible) {
+      sectionRefetches.push(queryClient.invalidateQueries({ queryKey: [SMART_PLAYLIST_COUNTS_QUERY_KEY] }));
+    }
+    if (sectionRefetches.length > 0) {
+      setSectionsRefreshing(true);
+      void Promise.allSettled(sectionRefetches).then(() => setSectionsRefreshing(false));
+    }
     if (!feedVisible) return;
     void sessionVoteSummaries.refetch();
     void tickVoteSummaries.refetch();
@@ -517,7 +530,7 @@ export default function HomeTab() {
           ListHeaderComponent={header}
           refreshControl={
             <RefreshControl
-              refreshing={feedVisible && feed.isRefetching}
+              refreshing={feedVisible ? feed.isRefetching : sectionsRefreshing}
               onRefresh={handleRefresh}
               tintColor={brandColors.primary}
             />
@@ -599,6 +612,7 @@ export default function HomeTab() {
         />
       </ReadableColumn>
       <HomeTopChrome
+        showScopeMenu={scopeVisible}
         scopeTitle={scopeMenu.title}
         scopeActions={scopeMenu.actions}
         onSelectScopeIndex={scopeMenu.onSelectIndex}

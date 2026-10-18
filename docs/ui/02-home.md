@@ -31,7 +31,7 @@ Rules that hold in every layout:
 - While the Session card shows, Climbing now never offers Start (`showStartPrompt={false}` → `planLiveRail`), so Start is offered once.
 - The scope menu (My crew / a gym / Everyone / Find a gym) shows while the feed or Climbing now does. Without either, the chrome shows a plain "Home" title. The header buttons stay in every layout, so notifications and find climbers survive an empty Home.
 - Every section switched off: "Your Home is empty" with a Customize Home button. The header Customize button hides then, so it is not offered twice.
-- Pull to refresh refetches only the visible sections: Climbing now and the feed as before, `['sessionSummary']` for Session, `['mySmartPlaylistCounts']` for Playlists. Your board reads the phone and has nothing to fetch.
+- Pull to refresh refetches only the visible sections: Climbing now and the feed as before, `SESSION_SUMMARY_QUERY_KEY` for Session, `SMART_PLAYLIST_COUNTS_QUERY_KEY` for Playlists. Your board reads the phone and has nothing to fetch. The spinner follows the feed's refetch while the feed shows; without it, it stays up until the sections' refetches settle.
 - `testID="home-screen"` and the screenshot smoke marker stay in every layout.
 
 ### Customize Home
@@ -65,6 +65,6 @@ No board: Your board shows Choose board, and a first pick lands on Climbs. A fai
 ### Navigation
 
 - Your board → Browse climbs → Climbs tab; Change board → `/boards` (back to Home)
-- Session → Session tab (`/(tabs)/record`)
-- Playlists → `/(tabs)/discover/smart/[type]` with `source: 'home'` (`Smart Playlist Opened`); All playlists → Discover tab
+- Session → Session tab (`/(tabs)/record`). Start reports `Start Session Prompt Tapped { surface: 'home_session_card', variant: 'home_session_card' }`, with the other Start invitations
+- Playlists → `/(tabs)/discover/smart/[type]` with `source: 'home'` (`Smart Playlist Opened`), pushed `withAnchor` onto the Discover stack's `index` (`unstable_settings` in `app/(tabs)/discover/_layout.tsx`). The JS tab bars (Android, iPad, browser) mount a tab on first visit, so without the anchor a Discover tab never opened this launch would hold only the list, and Back would leave Discover's main page unreachable. All playlists → Discover tab
 - Climbing now and feed cards → as before (join preview, session detail, play drawer)

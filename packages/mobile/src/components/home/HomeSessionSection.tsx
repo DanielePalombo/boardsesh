@@ -2,12 +2,14 @@ import { memo, useCallback } from 'react';
 import { View } from 'react-native';
 import { useIsFocused } from 'expo-router';
 import { useTranslation } from 'react-i18next';
+import { SHARED_EVENTS } from '@boardsesh/analytics';
 import { Card } from '../Card';
 import { Icon } from '../Icon';
 import { PressableSurface } from '../PressableSurface';
 import { Text } from '../Text';
 import { SessionTimer } from '../session-screen/in-session/SessionTimer';
 import { useScopedRouter as useRouter } from '../../lib/routing/scoped-navigation';
+import { track } from '../../lib/analytics';
 import { useIsAppBackgrounded } from '../../lib/app-visibility';
 import { useSessionSummary } from '../../lib/graphql/hooks';
 import { hapticLight } from '../../lib/haptics';
@@ -40,6 +42,11 @@ export const HomeSessionSection = memo(function HomeSessionSection() {
     hapticLight();
     router.navigate('/(tabs)/record');
   }, [router]);
+  // Counted with the other Start invitations (Climbing now, the board sheet).
+  const startSession = useCallback(() => {
+    track(SHARED_EVENTS.StartSessionPromptTapped, { surface: 'home_session_card', variant: 'home_session_card' });
+    openSessionTab();
+  }, [openSessionTab]);
 
   return (
     <HomeSectionFrame title={tCommon('mobile.settings.homeSections.sections.session')} testID="home-section-session">
@@ -79,7 +86,7 @@ export const HomeSessionSection = memo(function HomeSessionSection() {
             </>
           ) : (
             <PressableSurface
-              onPress={openSessionTab}
+              onPress={startSession}
               feedback="opacity"
               rippleColor={systemColors.label as string}
               accessibilityRole="button"

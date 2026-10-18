@@ -53,6 +53,11 @@ export const HomeSections = memo(function HomeSections({
             showStartPrompt={!sessionCardShows}
           />
         );
+      default:
+        // A new top section stops compiling here until it gets a case. At run
+        // time it draws nothing.
+        sectionId satisfies never;
+        return null;
     }
   });
 });

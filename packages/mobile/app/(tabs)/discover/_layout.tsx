@@ -7,6 +7,10 @@ import { usePopToTopOnTabBlur } from '../../../src/hooks/use-pop-to-top-on-tab-b
 import { NativeTabContentInsetProbe } from '../../../src/components/navigation/NativeTabContentInsetProbe';
 import { BoardArtVisibilityProvider } from '../../../src/providers/board-art-visibility-provider';
 
+// The anchor a push from another tab lands on top of (`withAnchor`), so Back from
+// a playlist opened on Home or from the account menu reaches Discover's main page.
+export const unstable_settings = { initialRouteName: 'index' };
+
 export default function DiscoverLayout() {
   const { t } = useTranslation('playlists');
   const screenOptions = useStackScreenOptions();

@@ -10,11 +10,15 @@ const recorded = vi.hoisted(() => ({
   crewFeedEnabled: [] as boolean[],
   sessionFeedEnabled: [] as boolean[],
   railProps: [] as Array<{ enabled: boolean; showStartPrompt?: boolean }>,
-  chrome: [] as Array<{ scopeTitle: string; scopeActions: unknown[] }>,
+  chrome: [] as Array<{ showScopeMenu: boolean; scopeTitle: string; scopeActions: unknown[] }>,
   customizeSheet: [] as boolean[],
 }));
 const focus = vi.hoisted(() => ({ hasBeenFocused: true }));
-const refresh = vi.hoisted(() => ({ onRefresh: null as (() => void) | null, invalidateQueries: vi.fn() }));
+const refresh = vi.hoisted(() => ({
+  onRefresh: null as (() => void) | null,
+  refreshing: false,
+  invalidateQueries: vi.fn((_filters: unknown): Promise<void> => Promise.resolve()),
+}));
 const settings = vi.hoisted(() => ({
   listeners: new Set<(change: SettingsChange) => void>(),
   values: new Map<string, unknown>(),
@@ -38,8 +42,9 @@ vi.mock('react-native', () => ({
   View: ({ children, testID }: { children?: ReactNode; testID?: string }) =>
     createElement('div', { 'data-testid': testID }, children),
   StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
-  RefreshControl: ({ onRefresh }: { onRefresh: () => void }) => {
+  RefreshControl: ({ onRefresh, refreshing }: { onRefresh: () => void; refreshing: boolean }) => {
     refresh.onRefresh = onRefresh;
+    refresh.refreshing = refreshing;
     return null;
   },
 }));
@@ -95,8 +100,12 @@ vi.mock('../../../../src/components/you/CommentSheet', () => ({ CommentSheet: ()
 vi.mock('../../../../src/components/feed/FeedScopeTitle', () => ({ FeedScopeTitle: () => null }));
 vi.mock('../../../../src/components/feed/HomeTopChrome', () => ({
   TOP_ISLAND_BAND: 56,
-  HomeTopChrome: (props: { scopeTitle: string; scopeActions: unknown[] }) => {
-    recorded.chrome.push({ scopeTitle: props.scopeTitle, scopeActions: props.scopeActions });
+  HomeTopChrome: (props: { showScopeMenu: boolean; scopeTitle: string; scopeActions: unknown[] }) => {
+    recorded.chrome.push({
+      showScopeMenu: props.showScopeMenu,
+      scopeTitle: props.scopeTitle,
+      scopeActions: props.scopeActions,
+    });
     return null;
   },
 }));
@@ -202,7 +211,9 @@ beforeEach(() => {
   recorded.chrome = [];
   recorded.customizeSheet = [];
   refresh.onRefresh = null;
+  refresh.refreshing = false;
   refresh.invalidateQueries.mockClear();
+  refresh.invalidateQueries.mockImplementation(() => Promise.resolve());
 });
 
 afterEach(() => {
@@ -217,6 +228,7 @@ describe('Home sections', () => {
     expect(screen.getByText('mobile.home.feedTitle')).toBeTruthy();
     expect(screen.getByTestId('home-customize')).toBeTruthy();
     expect(recorded.crewFeedEnabled.at(-1)).toBe(true);
+    expect(lastChrome()?.showScopeMenu).toBe(true);
     expect(lastChrome()?.scopeActions.length).toBeGreaterThan(0);
     expect(lastChrome()?.scopeTitle).toBe('mobile.home.scope.myCrew');
   });
@@ -230,7 +242,7 @@ describe('Home sections', () => {
     expect(recorded.sessionFeedEnabled.every((enabled) => !enabled)).toBe(true);
     expect(screen.queryByText('mobile.home.feedTitle')).toBeNull();
     // Nothing to scope: a plain "Home" title, header buttons kept.
-    expect(lastChrome()).toEqual({ scopeTitle: 'mobile.nav.home', scopeActions: [] });
+    expect(lastChrome()).toEqual({ showScopeMenu: false, scopeTitle: 'mobile.nav.home', scopeActions: [] });
   });
 
   it('draws the sections in the order the climber chose', () => {
@@ -298,5 +310,37 @@ describe('Home sections', () => {
       { queryKey: ['sessionSummary'] },
       { queryKey: ['mySmartPlaylistCounts'] },
     ]);
+  });
+
+  it('keeps the spinner up while the cards refetch when the feed is hidden', async () => {
+    let settle: () => void = () => {};
+    refresh.invalidateQueries.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    homeSectionsStore.apply({
+      ...HOME_SECTIONS.defaults,
+      visible: { ...HOME_SECTIONS.defaults.visible, session: true, climbingNow: false, feed: false },
+    });
+    render(createElement(HomeTab));
+    act(() => refresh.onRefresh?.());
+    expect(refresh.refreshing).toBe(true);
+    await act(async () => {
+      settle();
+    });
+    expect(refresh.refreshing).toBe(false);
+  });
+
+  it('shows no spinner when nothing on screen has anything to fetch', () => {
+    homeSectionsStore.apply({
+      ...HOME_SECTIONS.defaults,
+      visible: { ...HOME_SECTIONS.defaults.visible, board: true, climbingNow: false, feed: false },
+    });
+    render(createElement(HomeTab));
+    act(() => refresh.onRefresh?.());
+    expect(refresh.invalidateQueries).not.toHaveBeenCalled();
+    expect(refresh.refreshing).toBe(false);
   });
 });

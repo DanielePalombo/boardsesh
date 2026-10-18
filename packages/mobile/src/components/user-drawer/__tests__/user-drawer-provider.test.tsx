@@ -570,8 +570,11 @@ describe('user-drawer route defers each action until the route unmounts', () => 
     expect(routerMock.push).not.toHaveBeenCalled();
 
     rerender(<Harness showScreen={false} />);
-    const navigate = route === '/(tabs)/discover/all' ? routerMock.navigate : routerMock.push;
-    expect(navigate).toHaveBeenCalledWith(route);
+    if (route === '/(tabs)/discover/all') {
+      expect(routerMock.navigate).toHaveBeenCalledWith(route, { withAnchor: true });
+    } else {
+      expect(routerMock.push).toHaveBeenCalledWith(route);
+    }
   });
 
   it('shows the "New" pill on the What\'s New row when there is an unseen changelog entry', async () => {

@@ -99,7 +99,9 @@ export function UserDrawerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const navigateToPlaylists = useCallback(() => {
-    router.navigate('/(tabs)/discover/all');
+    // With its anchor, so Back reaches Discover's main page even when Discover
+    // was never opened this launch (the JS tab bars mount tabs lazily).
+    router.navigate('/(tabs)/discover/all', { withAnchor: true });
   }, []);
 
   const navigateToMyGyms = useCallback(() => {

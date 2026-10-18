@@ -46,7 +46,10 @@ export const HomePlaylistsSection = memo(function HomePlaylistsSection() {
   const openSmartPlaylist = useCallback(
     (smartType: SmartPlaylistType) => {
       hapticLight();
-      router.push(smartPlaylistHref(smartType, 'home'));
+      // With its anchor: a Discover tab that has not been opened yet would
+      // otherwise hold only this list, and back would leave Discover's main page
+      // unreachable (the JS tab bars mount tabs lazily).
+      router.push(smartPlaylistHref(smartType, 'home'), { withAnchor: true });
     },
     [router],
   );

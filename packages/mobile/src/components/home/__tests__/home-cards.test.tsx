@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 const router = vi.hoisted(() => ({ push: vi.fn(), navigate: vi.fn() }));
+const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 const state = vi.hoisted(() => ({
   sessionId: null as string | null,
   startedAt: null as string | null,
@@ -30,6 +31,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../../lib/routing/scoped-navigation', () => ({ useScopedRouter: () => router }));
 vi.mock('../../../lib/app-visibility', () => ({ useIsAppBackgrounded: () => state.backgrounded }));
 vi.mock('../../../lib/haptics', () => ({ hapticLight: vi.fn() }));
+vi.mock('../../../lib/analytics', () => ({ track: analytics.track }));
 vi.mock('../../../lib/graphql/hooks', () => ({
   useSessionSummary: (sessionId: string | null) => ({
     data: sessionId && state.startedAt ? { startedAt: state.startedAt } : undefined,
@@ -84,6 +86,7 @@ import { HomePlaylistsSection } from '../HomePlaylistsSection';
 beforeEach(() => {
   router.push.mockClear();
   router.navigate.mockClear();
+  analytics.track.mockClear();
   state.sessionId = null;
   state.startedAt = null;
   state.focused = true;
@@ -97,10 +100,14 @@ afterEach(() => {
 });
 
 describe('HomeSessionSection', () => {
-  it('offers Start a session, which opens the Session tab', () => {
+  it('offers Start a session, which opens the Session tab and counts the tap', () => {
     render(createElement(HomeSessionSection));
     fireEvent.click(screen.getByTestId('home-session-start'));
     expect(router.navigate).toHaveBeenCalledExactlyOnceWith('/(tabs)/record');
+    expect(analytics.track).toHaveBeenCalledExactlyOnceWith('Start Session Prompt Tapped', {
+      surface: 'home_session_card',
+      variant: 'home_session_card',
+    });
     expect(screen.queryByTestId('home-session-open')).toBeNull();
   });
 
@@ -111,6 +118,8 @@ describe('HomeSessionSection', () => {
     expect(screen.queryByTestId('session-timer')).toBeNull();
     fireEvent.click(screen.getByTestId('home-session-open'));
     expect(router.navigate).toHaveBeenCalledExactlyOnceWith('/(tabs)/record');
+    // Opening a running session is not a Start.
+    expect(analytics.track).not.toHaveBeenCalled();
   });
 
   it('ticks the timer only while Home is on screen', () => {
@@ -159,10 +168,11 @@ describe('HomePlaylistsSection', () => {
   it('opens a list tagged as opened from Home, and All playlists on Discover', () => {
     render(createElement(HomePlaylistsSection));
     fireEvent.click(screen.getByTestId('home-playlists-liked-climbs'));
-    expect(router.push).toHaveBeenCalledExactlyOnceWith({
-      pathname: '/(tabs)/discover/smart/[type]',
-      params: { type: 'LIKED_CLIMBS', source: 'home' },
-    });
+    // With its anchor, so Back lands on Discover's main page, opened or not.
+    expect(router.push).toHaveBeenCalledExactlyOnceWith(
+      { pathname: '/(tabs)/discover/smart/[type]', params: { type: 'LIKED_CLIMBS', source: 'home' } },
+      { withAnchor: true },
+    );
     fireEvent.click(screen.getByTestId('home-playlists-all'));
     expect(router.navigate).toHaveBeenCalledExactlyOnceWith('/(tabs)/discover');
   });

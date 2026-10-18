@@ -217,7 +217,8 @@ export const SHARED_EVENTS = {
   // Tapped { surface, reason, viewerIsMember, participantCount } → Live Session
   // Joined { source } (fired by the join screen, so it only counts joins that
   // started on a live-session card). Start Session Prompt Tapped { surface,
-  // variant } is the empty-state invitation.
+  // variant } is the empty-state invitation; Home's Session card (#6289) sends
+  // it with surface and variant 'home_session_card'.
   LiveSessionsShelfViewed: 'Live Sessions Shelf Viewed',
   LiveSessionCardTapped: 'Live Session Card Tapped',
   LiveSessionJoined: 'Live Session Joined',

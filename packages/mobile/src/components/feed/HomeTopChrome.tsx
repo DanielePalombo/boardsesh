@@ -38,13 +38,15 @@ const ROW_GUTTER = spacing[4];
 export const TOP_ISLAND_BAND = spacing[1] + TOP_ACTION_SIZE + spacing[2];
 
 export type HomeTopChromeProps = {
+  /**
+   * False when Home shows neither the feed nor Climbing now: there is nothing
+   * to scope, so `scopeTitle` ("Home") shows as a plain title and the actions
+   * are ignored. The header buttons stay either way.
+   */
+  showScopeMenu: boolean;
   /** The active feed scope, shown as the title-menu. */
   scopeTitle: string;
-  /**
-   * Scope menu rows, in render order. Empty when Home shows neither the feed
-   * nor Climbing now: there is nothing to scope, so `scopeTitle` ("Home")
-   * shows as a plain title.
-   */
+  /** Scope menu rows, in render order. */
   scopeActions: AppMenuAction[];
   onSelectScopeIndex: (index: number) => void;
   /** Open the full-screen climber search (the find-climbers action). */
@@ -63,6 +65,7 @@ export const HomeTopChrome = createVariantComponent('HomeTopChrome', {
 });
 
 function HomeTopChromeGlass({
+  showScopeMenu,
   scopeTitle,
   scopeActions,
   onSelectScopeIndex,
@@ -124,7 +127,7 @@ function HomeTopChromeGlass({
             <UserAvatarToolbarAction variant="glass" />
           </GlassActionToolbar>
           <View pointerEvents="box-none" style={styles.headerCenter}>
-            {scopeActions.length > 0 ? (
+            {showScopeMenu ? (
               <FeedScopeTitle
                 title={scopeTitle}
                 actions={scopeActions}
@@ -156,6 +159,7 @@ function HomeTopChromeGlass({
 }
 
 function HomeTopChromeMaterial({
+  showScopeMenu,
   scopeTitle,
   scopeActions,
   onSelectScopeIndex,
@@ -196,7 +200,7 @@ function HomeTopChromeMaterial({
         style={[styles.materialAppbar, { backgroundColor: systemColors.secondaryBackground }]}
       >
         <UserAvatarToolbarAction variant="material" />
-        {scopeActions.length > 0 ? (
+        {showScopeMenu ? (
           <>
             <FeedScopeTitle
               title={scopeTitle}
