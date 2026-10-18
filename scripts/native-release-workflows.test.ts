@@ -1,6 +1,9 @@
 /// <reference types="node" />
 
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
@@ -24,6 +27,8 @@ const retiredAndroidPrereleaseName = ['Boardsesh', 'Next'].join(' ');
 const dispatchGate = `github.ref == 'refs/heads/main' || github.ref == 'refs/heads/${releaseBranch}'`;
 const releaseBranchExpression =
   "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}";
+const TRAIN_BASELINE_STEP = 'Materialize origin/main and the merge-base to compare against the train';
+const TRAIN_GUARD_STEP = 'Skip platforms whose runtimeVersion the train does not own';
 
 describe('native release workflow contracts', () => {
   const ios = workflow('ios-testflight-rn.yml');
@@ -40,17 +45,43 @@ describe('native release workflow contracts', () => {
     expect(() => parse(source)).not.toThrow();
   });
 
-  it('automatically builds from both trusted release branches', () => {
+  // release-train-sync.yml keeps release/next level with main, so the train is
+  // the one place a push builds. main keeps manual dispatch for hotfixes.
+  it('builds on push only from the release train, and on dispatch from either trusted branch', () => {
     for (const source of [ios, android]) {
-      expect(parse(source).on.push.branches).toEqual(['main', releaseBranch]);
+      expect(parse(source).on.push.branches).toEqual([releaseBranch]);
       expect(source).toContain(dispatchGate);
       expect(source).toContain('environment: Production');
       expect(source).not.toContain(`environment: ${retiredNativeEnvironment}`);
     }
-    expect(ios).toContain('group: ios-testflight-rn');
-    expect(android).toContain('group: android-apk-rn');
     expect(ios.match(/environment: Production/g)).toHaveLength(1);
-    expect(android.match(/environment: Production/g)).toHaveLength(3);
+    // gate (maps key), play-review (Play credential), build-and-release, record-candidate.
+    expect(android.match(/environment: Production/g)).toHaveLength(4);
+  });
+
+  // With the sync pushing the train after every main merge, the default
+  // concurrency would silently replace whatever was pending in these groups (a
+  // main hotfix dispatch, a beta or production promotion, the sync bot's retry)
+  // with the next train push.
+  it('queues every run in the native upload groups instead of replacing pending ones', () => {
+    for (const [name, group] of [
+      ['ios-testflight-rn.yml', 'ios-testflight-rn'],
+      ['android-apk-rn.yml', 'android-apk-rn'],
+      ['mobile-store-android-beta.yml', 'android-apk-rn'],
+      ['mobile-store-android-production.yml', 'android-apk-rn'],
+    ] as const) {
+      expect(parse(workflow(name)).concurrency, name).toEqual({ group, 'cancel-in-progress': false, queue: 'max' });
+    }
+  });
+
+  it('gives iOS the same force_native dispatch input as Android', () => {
+    const forceNative = (source: string) =>
+      (parse(source) as { on: { workflow_dispatch: { inputs: Record<string, Record<string, unknown>> } } }).on
+        .workflow_dispatch.inputs['force_native'];
+    for (const source of [ios, android]) {
+      expect(forceNative(source)).toMatchObject({ type: 'boolean', required: false, default: true });
+      expect(String(forceNative(source)?.['description'])).toMatch(/^Force a native build even if this fingerprint/);
+    }
   });
 
   // The amendment to the train design: release/next publishes production OTAs
@@ -74,12 +105,14 @@ describe('native release workflow contracts', () => {
   });
 
   // xprem serves the newest commitTime FOR A GIVEN runtimeVersion. While the
-  // train's fingerprint still equals main's, a publish from the train would be
-  // handed to the whole store fleet — so the train only publishes once a native
-  // change has moved it off main's runtimeVersion.
-  it('refuses to publish a train OTA onto a runtimeVersion main still owns', () => {
+  // train's fingerprint is one the store fleet runs, a publish from the train
+  // would be handed to the whole fleet — so the train only publishes once a
+  // native change of its own has moved it off both main's runtimeVersion and its
+  // merge-base's. Main alone is not enough: a late run on an older train commit
+  // still carries the fleet's fingerprint after main has moved on.
+  it('refuses to publish a train OTA onto a runtimeVersion the train does not own', () => {
     const steps = stepsOfJob(productionOta, 'publish');
-    const guard = steps.find((step) => step.name === 'Skip platforms whose runtimeVersion main still owns');
+    const guard = steps.find((step) => step.name === TRAIN_GUARD_STEP);
     expect(guard, 'the production OTA workflow must carry the train fingerprint guard').toBeDefined();
     expect(String(guard?.if ?? '')).toContain(`github.ref == 'refs/heads/${releaseBranch}'`);
 
@@ -89,11 +122,33 @@ describe('native release workflow contracts', () => {
     expect(run).toContain("echo 'publish_ios=false'");
     expect(run).toContain("echo 'publish_android=false'");
     expect(run.indexOf('publish_ios=false')).toBeLessThan(run.indexOf('check:mobile-ota-compat'));
+    expect(run.indexOf('publish_ios=false')).toBeLessThan(run.indexOf('TRAIN_SUPERSEDED'));
+    // Both baselines feed the compare.
+    expect(run).toContain('--base-dir "$RUNNER_TEMP/main-baseline"');
+    expect(run).toContain('--base-dir "$MERGE_BASE_DIR"');
+    expect(guard?.env).toMatchObject({
+      TRAIN_SUPERSEDED: '${{ steps.train_baselines.outputs.superseded }}',
+      TRAIN_MERGE_BASE: '${{ steps.train_baselines.outputs.merge_base }}',
+      MERGE_BASE_DIR: '${{ steps.train_baselines.outputs.merge_base_dir }}',
+    });
 
-    // The baseline it compares against is materialised from origin/main.
-    const baseline = steps.find((step) => step.name === 'Materialize origin/main to compare against the train');
-    expect(baseline, 'the guard needs an origin/main baseline worktree').toBeDefined();
+    // The baselines are materialised from origin/main and the merge-base, and a
+    // superseded push run stops before it pays for either install.
+    const baselineIndex = steps.findIndex((step) => step.name === TRAIN_BASELINE_STEP);
+    const baseline = steps[baselineIndex];
+    expect(baseline, 'the guard needs origin/main and merge-base worktrees').toBeDefined();
+    expect(baseline?.id).toBe('train_baselines');
+    expect(baselineIndex).toBeLessThan(steps.findIndex((step) => step.name === TRAIN_GUARD_STEP));
     expect(String(baseline?.if ?? '')).toContain(`github.ref == 'refs/heads/${releaseBranch}'`);
+    const baselineRun = String(baseline?.run ?? '');
+    expect(baselineRun).toContain('git merge-base origin/main HEAD');
+    expect(baselineRun).toContain('git worktree add "$RUNNER_TEMP/main-baseline" origin/main');
+    expect(baselineRun).toContain('git worktree add --detach "$RUNNER_TEMP/merge-base-baseline" "$merge_base"');
+    const supersededCheck = baselineRun.indexOf(
+      'scripts/push-run-superseded.ts --workflow .github/workflows/mobile-ota-production.yml',
+    );
+    expect(supersededCheck).toBeGreaterThan(-1);
+    expect(supersededCheck).toBeLessThan(baselineRun.indexOf('vp install'));
 
     // Both publishes consume the verdict.
     for (const [stepName, output] of [
@@ -277,6 +332,13 @@ describe('native release workflow contracts', () => {
     expect(draft).not.toContain(`environment: ${retiredNativeEnvironment}`);
   });
 
+  // release-train-sync.yml waits for an in-progress draft of the train before it
+  // moves the branch, and a workflow_run run lists the default branch as its
+  // head_branch, so the title is the only place the source branch shows.
+  it('names the source branch in every draft run title', () => {
+    expect(parse(draft)['run-name']).toBe(`Mobile Store Draft (${releaseBranchExpression})`);
+  });
+
   it('drafts follow each completed native deploy instead of a schedule', () => {
     const triggers = parse(draft)['on'] as Record<string, unknown>;
     expect(triggers).not.toHaveProperty('schedule');
@@ -287,7 +349,10 @@ describe('native release workflow contracts', () => {
       'Android Play Internal Deploy (React Native)',
     ]);
     expect(workflowRun.types).toEqual(['completed']);
-    expect(workflowRun.branches).toEqual(['main', releaseBranch]);
+    // The deploy workflows' push branches: only the train builds on push.
+    expect(workflowRun.branches).toEqual([releaseBranch]);
+    expect(workflowRun.branches).toEqual(parse(ios).on.push.branches);
+    expect(workflowRun.branches).toEqual(parse(android).on.push.branches);
     expect(triggers).toHaveProperty('workflow_dispatch');
     // No enable flag: the candidate gates are the protection, and the lanes only make drafts.
     expect(draft).not.toContain('ENABLE_STORE_DRAFT_SUBMISSION');
@@ -313,6 +378,11 @@ describe('native release workflow contracts', () => {
     expect(fastfile).toContain('track_promote_to: "production",');
     expect(fastfile).toContain('track_promote_release_status: "draft",');
     expect(fastfile).not.toMatch(/track: "production",\n\s+version_code:/);
+    // deliver renames the editable version to the one it drafts, so the lane
+    // refuses before deliver runs when a different version is still open.
+    const draftLane = fastfile.slice(fastfile.indexOf('lane :draft_submission do'));
+    expect(draftLane.indexOf('other_open_app_store_versions(')).toBeGreaterThan(-1);
+    expect(draftLane.indexOf('other_open_app_store_versions(')).toBeLessThan(draftLane.indexOf('upload_to_app_store('));
     // The processing wait (45 min) must fit inside the ios job's timeout.
     expect(draft).toMatch(/^  ios:\n(?:.*\n){1,12}?\s+timeout-minutes: 60$/m);
   });
@@ -719,5 +789,491 @@ describe('native release workflow contracts', () => {
     for (const job of [releaseJob, draftJob]) {
       expect(job?.concurrency).toEqual({ group: 'play-production-track', 'cancel-in-progress': false });
     }
+  });
+});
+
+// ─── The decisions, executed ────────────────────────────────────────────────
+// The build gates and the train OTA guard decide in shell, and an inverted test
+// in shell is invisible to a text assertion. These run the exact `run:` blocks
+// from the workflows under bash, with git, vp and the superseded check stubbed
+// on PATH, and read back what each block wrote to $GITHUB_OUTPUT.
+
+type ExecutedStep = { id?: string; name?: string; run?: string; env?: Record<string, unknown> };
+
+function workflowStep(source: string, jobName: string, predicate: (step: ExecutedStep) => boolean): ExecutedStep {
+  const job = (parse(source) as { jobs: Record<string, { steps?: ExecutedStep[] }> }).jobs[jobName];
+  const step = job?.steps?.find(predicate);
+  if (!step?.run) throw new Error(`no matching step with a run block in job ${jobName}`);
+  return step;
+}
+
+type ScriptRun = { status: number | null; stdout: string; outputs: Record<string, string>; calls: string[] };
+
+/** Runs a step's script the way GitHub does (`bash -eo pipefail`), in a throwaway directory. */
+function runStepScript(
+  script: string,
+  options: { env: Record<string, string>; stubs: Record<string, string>; files?: Record<string, string> },
+): ScriptRun {
+  const sandbox = mkdtempSync(join(tmpdir(), 'release-step-'));
+  try {
+    const bin = join(sandbox, 'bin');
+    mkdirSync(bin);
+    for (const [command, body] of Object.entries(options.stubs)) {
+      writeFileSync(join(bin, command), body);
+      chmodSync(join(bin, command), 0o755);
+    }
+    for (const [relativePath, contents] of Object.entries(options.files ?? {})) {
+      const filePath = join(sandbox, relativePath);
+      mkdirSync(join(filePath, '..'), { recursive: true });
+      writeFileSync(filePath, contents);
+    }
+    const outputPath = join(sandbox, 'github-output');
+    const callLog = join(sandbox, 'calls');
+    writeFileSync(outputPath, '');
+    writeFileSync(callLog, '');
+    const scriptPath = join(sandbox, 'step.sh');
+    writeFileSync(scriptPath, script);
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', scriptPath], {
+      cwd: sandbox,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        // A non-interactive bash still sources $BASH_ENV; keep the run hermetic.
+        BASH_ENV: undefined,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        HOME: sandbox,
+        GITHUB_OUTPUT: outputPath,
+        STUB_CALL_LOG: callLog,
+        REAL_NODE: process.execPath,
+        ...options.env,
+      },
+    });
+    // The last write of a key wins, as it does on GitHub.
+    const outputs: Record<string, string> = {};
+    for (const line of readFileSync(outputPath, 'utf8').split('\n')) {
+      const separator = line.indexOf('=');
+      if (separator > 0) outputs[line.slice(0, separator)] = line.slice(separator + 1);
+    }
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      outputs,
+      calls: readFileSync(callLog, 'utf8').split('\n').filter(Boolean),
+    };
+  } finally {
+    rmSync(sandbox, { recursive: true, force: true });
+  }
+}
+
+// `git ls-remote --tags origin <glob>...` answered from $STUB_TAGS; any other git call is a no-op.
+const GIT_STUB = `#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$STUB_CALL_LOG"
+if [ "\${STUB_GIT_FAIL:-}" = 1 ]; then exit 128; fi
+[ "$1" = ls-remote ] || exit 0
+shift
+patterns=()
+for arg in "$@"; do
+  case "$arg" in --*|origin) ;; *) patterns+=("$arg") ;; esac
+done
+while IFS= read -r tag; do
+  [ -n "$tag" ] || continue
+  for pattern in "\${patterns[@]}"; do
+    if [[ "refs/tags/$tag" == $pattern ]]; then
+      printf '%s\\trefs/tags/%s\\n' 0000000000000000000000000000000000000000 "$tag"
+      break
+    fi
+  done
+done <<< "\${STUB_TAGS:-}"
+`;
+
+// The fingerprint resolver: prints $STUB_FINGERPRINT as expo-updates would, or nothing.
+const RESOLVER_VP_STUB = `#!/usr/bin/env bash
+printf 'vp %s\\n' "$*" >> "$STUB_CALL_LOG"
+if [ -n "\${STUB_FINGERPRINT:-}" ]; then printf '{"runtimeVersion":"%s"}\\n' "$STUB_FINGERPRINT"; fi
+`;
+
+// scripts/push-run-superseded.ts answers $STUB_SUPERSEDED; every other node call is real.
+const NODE_STUB = `#!/usr/bin/env bash
+case "$*" in
+  *push-run-superseded.ts*)
+    printf 'superseded %s\\n' "$*" >> "$STUB_CALL_LOG"
+    if [ "$STUB_SUPERSEDED" = error ]; then exit 1; fi
+    printf '%s\\n' "$STUB_SUPERSEDED"
+    exit 0
+    ;;
+esac
+exec "$REAL_NODE" "$@"
+`;
+
+// Each case spawns bash, git and node stubs; a busy full-suite run can take seconds.
+describe('native build gates, executed', { timeout: 30_000 }, () => {
+  const FINGERPRINT = 'ab12cd34'.repeat(5);
+  const platforms = [
+    { platform: 'ios', file: 'ios-testflight-rn.yml' },
+    { platform: 'android', file: 'android-apk-rn.yml' },
+  ] as const;
+
+  type GateScenario = {
+    event?: 'push' | 'workflow_dispatch';
+    forceNative?: string;
+    fingerprint?: string;
+    version?: string | null;
+    tags?: readonly string[];
+    superseded?: 'true' | 'false' | 'error';
+    gitFails?: boolean;
+  };
+
+  function runGate(file: string, scenario: GateScenario = {}): ScriptRun {
+    const step = workflowStep(workflow(file), 'gate', (candidate) => candidate.id === 'fp');
+    const version = scenario.version === undefined ? '2.7.0' : scenario.version;
+    return runStepScript(String(step.run), {
+      stubs: { git: GIT_STUB, vp: RESOLVER_VP_STUB, node: NODE_STUB },
+      files: {
+        'packages/mobile/app.config.ts':
+          version === null
+            ? "export default { name: 'Boardsesh' };\n"
+            : `export default {\n  name: 'Boardsesh',\n  version: '${version}',\n};\n`,
+      },
+      env: {
+        EVENT_NAME: scenario.event ?? 'push',
+        FORCE_NATIVE: scenario.forceNative ?? '',
+        GITHUB_SHA: 'c'.repeat(40),
+        GITHUB_REF: `refs/heads/${releaseBranch}`,
+        STUB_FINGERPRINT: scenario.fingerprint ?? FINGERPRINT,
+        STUB_TAGS: (scenario.tags ?? []).join('\n'),
+        STUB_SUPERSEDED: scenario.superseded ?? 'false',
+        STUB_GIT_FAIL: scenario.gitFails ? '1' : '',
+      },
+    });
+  }
+
+  it.each(platforms)('$platform reads its event and force_native through env, not inline expressions', ({ file }) => {
+    const step = workflowStep(workflow(file), 'gate', (candidate) => candidate.id === 'fp');
+    expect(step.env).toEqual({ EVENT_NAME: '${{ github.event_name }}', FORCE_NATIVE: '${{ inputs.force_native }}' });
+    expect(step.run).not.toContain('${{');
+    // The same regex the build job reads the version with.
+    const versionRegex = String.raw`/\bversion:\s*['"]([^'"]+)['"]/`;
+    expect(step.run).toContain(versionRegex);
+    const buildJob = file === 'ios-testflight-rn.yml' ? 'build-and-upload' : 'build-and-release';
+    expect(
+      workflowStep(workflow(file), buildJob, (candidate) => candidate.name === 'Resolve mobile app version').run,
+    ).toContain(versionRegex);
+  });
+
+  it.each(platforms)('$platform builds a new fingerprint', ({ file }) => {
+    const run = runGate(file);
+    expect(run.status).toBe(0);
+    expect(run.outputs).toEqual({ fingerprint: FINGERPRINT, should_build: 'true' });
+  });
+
+  // The marketing version is not part of the fingerprint, so release-train-sync's
+  // bump keeps a shipped fingerprint. The missing build tag is what starts the build.
+  it.each(platforms)(
+    '$platform builds a version that has no build yet on a shipped fingerprint',
+    ({ platform, file }) => {
+      const run = runGate(file, {
+        tags: [`fingerprint-${platform}-${FINGERPRINT}`, `build-${platform}-v2.6.0-9-ab12cd34ab12`],
+      });
+      expect(run.outputs.should_build).toBe('true');
+      expect(run.stdout).toContain(`no build-${platform}-v2.7.0-* tag`);
+    },
+  );
+
+  it.each(platforms)('$platform skips when the fingerprint and the version both shipped', ({ platform, file }) => {
+    const run = runGate(file, {
+      tags: [`fingerprint-${platform}-${FINGERPRINT}`, `build-${platform}-v2.7.0-3-ab12cd34ab12`],
+    });
+    expect(run.status).toBe(0);
+    expect(run.outputs.should_build).toBe('false');
+  });
+
+  it.each(platforms)('$platform skips a push run a later push has superseded', ({ file }) => {
+    const run = runGate(file, { superseded: 'true' });
+    expect(run.status).toBe(0);
+    expect(run.outputs.should_build).toBe('false');
+    expect(run.calls).toContain(
+      `superseded --experimental-strip-types scripts/push-run-superseded.ts --workflow .github/workflows/${file}`,
+    );
+  });
+
+  it.each(platforms)('$platform fails rather than guess when the superseded check errors', ({ file }) => {
+    const run = runGate(file, { superseded: 'error' });
+    expect(run.status).not.toBe(0);
+    expect(run.outputs.should_build).toBeUndefined();
+  });
+
+  it.each(platforms)('$platform builds a forced dispatch even when everything shipped', ({ platform, file }) => {
+    const run = runGate(file, {
+      event: 'workflow_dispatch',
+      forceNative: 'true',
+      tags: [`fingerprint-${platform}-${FINGERPRINT}`, `build-${platform}-v2.7.0-3-ab12cd34ab12`],
+    });
+    expect(run.outputs.should_build).toBe('true');
+    // A dispatch is explicit: there is no later push run to defer to.
+    expect(run.calls.some((call) => call.startsWith('superseded'))).toBe(false);
+  });
+
+  it.each(platforms)('$platform honours the gate on an unforced dispatch', ({ platform, file }) => {
+    const shipped = runGate(file, {
+      event: 'workflow_dispatch',
+      forceNative: 'false',
+      tags: [`fingerprint-${platform}-${FINGERPRINT}`, `build-${platform}-v2.7.0-3-ab12cd34ab12`],
+    });
+    expect(shipped.outputs.should_build).toBe('false');
+    expect(shipped.calls.some((call) => call.startsWith('superseded'))).toBe(false);
+    const missingVersion = runGate(file, {
+      event: 'workflow_dispatch',
+      forceNative: 'false',
+      tags: [`fingerprint-${platform}-${FINGERPRINT}`],
+    });
+    expect(missingVersion.outputs.should_build).toBe('true');
+  });
+
+  it.each(platforms)('$platform builds to be safe when the fingerprint cannot be resolved', ({ file }) => {
+    const run = runGate(file, { fingerprint: '' });
+    expect(run.outputs).toEqual({ should_build: 'true' });
+    expect(run.stdout).toContain('::warning::Could not resolve');
+  });
+
+  it.each(platforms)('$platform fails when app.config.ts has no readable version', ({ file }) => {
+    for (const version of [null, 'next']) {
+      const run = runGate(file, { version });
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain('Could not read a MAJOR.MINOR.PATCH version');
+      expect(run.outputs.should_build).toBeUndefined();
+    }
+  });
+
+  it.each(platforms)('$platform fails rather than guess when tags cannot be listed', ({ file }) => {
+    const run = runGate(file, { gitFails: true });
+    expect(run.status).toBe(1);
+    expect(run.outputs.should_build).toBeUndefined();
+  });
+
+  // TestFlight rejects every build of a version Apple has approved, after the
+  // whole 60-minute macOS build; the anchor tag answers that on ubuntu.
+  it('refuses an approved iOS version on every event, a forced dispatch included', () => {
+    for (const scenario of [
+      {},
+      { event: 'workflow_dispatch', forceNative: 'true' },
+      { event: 'workflow_dispatch', forceNative: 'false' },
+    ] as const) {
+      const run = runGate('ios-testflight-rn.yml', { ...scenario, tags: ['release/ios-v2.7.0-84dca13e7422'] });
+      expect(run.status, JSON.stringify(scenario)).toBe(1);
+      expect(run.stdout).toContain('::error::Apple has already approved iOS 2.7.0 (release/ios-v2.7.0-84dca13e7422)');
+      expect(run.outputs.should_build).toBeUndefined();
+    }
+    // Another version's anchor is no reason to stop.
+    expect(runGate('ios-testflight-rn.yml', { tags: ['release/ios-v2.6.0-84dca13e7422'] }).outputs.should_build).toBe(
+      'true',
+    );
+  });
+
+  it('skips, rather than fails, a superseded run for an approved iOS version', () => {
+    const run = runGate('ios-testflight-rn.yml', { superseded: 'true', tags: ['release/ios-v2.7.0-84dca13e7422'] });
+    expect(run.status).toBe(0);
+    expect(run.outputs.should_build).toBe('false');
+  });
+
+  it('never holds Android on a store approval', () => {
+    const run = runGate('android-apk-rn.yml', {
+      tags: ['release/ios-v2.7.0-84dca13e7422', 'release/android-v2.7.0-84dca13e7422'],
+    });
+    expect(run.outputs.should_build).toBe('true');
+  });
+});
+
+describe('Play review pre-check before the Android build', () => {
+  const android = parse(workflow('android-apk-rn.yml')) as {
+    jobs: Record<
+      string,
+      {
+        needs?: string | string[];
+        if?: string;
+        environment?: string;
+        'continue-on-error'?: boolean;
+        outputs?: Record<string, string>;
+        steps?: ExecutedStep[];
+      }
+    >;
+  };
+
+  it('asks Play, GET-only, only when the gate wants a build', () => {
+    const job = android.jobs['play-review'];
+    expect(job?.needs).toBe('gate');
+    expect(job?.if).toBe("needs.gate.outputs.should_build == 'true'");
+    expect(job?.environment).toBe('Production');
+    expect(job?.outputs?.['pending']).toBe('${{ steps.review.outputs.pending }}');
+    const check = job?.steps?.find((step) => step.id === 'review');
+    expect(check?.run).toBe('vp exec node --import tsx scripts/mobile-store-android-review-pending.ts');
+    expect(check?.env).toEqual({ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: '${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}' });
+    // The deferral says who picks the build up again.
+    const notice = job?.steps?.find((step) => String(step.run).includes('Android build deferred'));
+    expect(notice?.run).toContain("release-train-sync.yml's hourly retry");
+  });
+
+  // Fails open: only an explicit pending=true holds the build, so a review check
+  // that errored (or never ran) still builds, and the upload's own guard decides.
+  // A pre-check that fails (checkout or install, never the script) must neither
+  // red the run, which would stop the draft and screenshot workflows that follow
+  // only a green run, nor strand an upload that went through: every job after
+  // the build decides on the build's own result, never on the implicit
+  // success() that also covers play-review.
+  it('never lets a failed pre-check red the run or strand an uploaded build', () => {
+    expect(android.jobs['play-review']?.['continue-on-error']).toBe(true);
+    const downstream = Object.entries(android.jobs).filter(([, job]) =>
+      [job.needs ?? []].flat().includes('build-and-release'),
+    );
+    expect(downstream.map(([name]) => name)).toEqual(['record-candidate']);
+    for (const [name, job] of downstream) {
+      const condition = String(job.if).replace(/\s+/g, ' ').trim();
+      expect(condition, name).toMatch(/^\$\{\{ !cancelled\(\) && needs\.build-and-release\.result == 'success'/);
+    }
+  });
+
+  it('holds the build only on an explicit pending review', () => {
+    const build = android.jobs['build-and-release'];
+    expect(build?.needs).toEqual(['gate', 'play-review']);
+    const condition = String(build?.if).replace(/\s+/g, ' ').trim();
+    expect(condition).toBe(
+      "!cancelled() && needs.gate.result == 'success' && needs.gate.outputs.should_build == 'true' && needs.play-review.outputs.pending != 'true'",
+    );
+  });
+});
+
+// Each case spawns bash, git and node stubs; a busy full-suite run can take seconds.
+describe('train OTA guard, executed', { timeout: 30_000 }, () => {
+  const HEAD = '1'.repeat(40);
+  const MERGE_BASE = '2'.repeat(40);
+  const MAIN = '3'.repeat(40);
+  const RUNNER_TEMP = '/runner-temp';
+
+  // `vp run check:mobile-ota-compat -- --base-dir <dir> ...`: the verdicts against
+  // main's worktree or against the merge-base's, from the stub env.
+  const COMPAT_VP_STUB = `#!/usr/bin/env bash
+printf 'vp %s\\n' "$*" >> "$STUB_CALL_LOG"
+base_dir=''
+previous=''
+for arg in "$@"; do
+  if [ "$previous" = --base-dir ]; then base_dir="$arg"; fi
+  previous="$arg"
+done
+if [ "$base_dir" = "$RUNNER_TEMP/main-baseline" ]; then printf '%s\\n' "$STUB_VS_MAIN"; else printf '%s\\n' "$STUB_VS_MERGE_BASE"; fi
+`;
+
+  const verdicts = (iosVerdict: string, androidVerdict: string) =>
+    [
+      `[mobile-ota-compat] iOS: ${iosVerdict} (pr=aaaaaaaaaaaa main=bbbbbbbbbbbb)`,
+      `[mobile-ota-compat] Android: ${androidVerdict} (pr=aaaaaaaaaaaa main=bbbbbbbbbbbb)`,
+      '[mobile-ota-compat] overall: native-change-required',
+    ].join('\n');
+  const NATIVE = 'native-change-required';
+  const COMPATIBLE = 'ota-compatible';
+
+  type GuardScenario = {
+    superseded?: string;
+    head?: string;
+    mergeBase?: string;
+    main?: string;
+    mergeBaseDir?: string;
+    platform?: string;
+    vsMain?: string;
+    vsMergeBase?: string;
+  };
+
+  function runGuard(scenario: GuardScenario): ScriptRun {
+    const step = workflowStep(
+      workflow('mobile-ota-production.yml'),
+      'publish',
+      (candidate) => candidate.name === TRAIN_GUARD_STEP,
+    );
+    return runStepScript(String(step.run), {
+      stubs: { vp: COMPAT_VP_STUB },
+      env: {
+        RUNNER_TEMP,
+        GITHUB_SHA: HEAD,
+        GOOGLE_MAPS_API_KEY: '',
+        INPUT_PLATFORM: scenario.platform ?? 'all',
+        TRAIN_SUPERSEDED: scenario.superseded ?? 'false',
+        TRAIN_HEAD: scenario.head ?? HEAD,
+        TRAIN_MERGE_BASE: scenario.mergeBase ?? MERGE_BASE,
+        TRAIN_MAIN: scenario.main ?? MAIN,
+        MERGE_BASE_DIR: scenario.mergeBaseDir ?? `${RUNNER_TEMP}/merge-base-baseline`,
+        STUB_VS_MAIN: scenario.vsMain ?? verdicts(NATIVE, NATIVE),
+        STUB_VS_MERGE_BASE: scenario.vsMergeBase ?? verdicts(NATIVE, NATIVE),
+      },
+    });
+  }
+
+  it('publishes a platform whose fingerprint differs from both main and the merge-base', () => {
+    const run = runGuard({});
+    expect(run.status).toBe(0);
+    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'true' });
+    expect(run.calls).toHaveLength(2);
+    expect(run.calls[0]).toContain(`--base-dir ${RUNNER_TEMP}/main-baseline --platform all`);
+    expect(run.calls[1]).toContain(
+      `--base-dir ${RUNNER_TEMP}/merge-base-baseline --base-branch merge-base --platform all`,
+    );
+  });
+
+  // The race this guard exists for: main has moved to a new native change, and a
+  // late run on an older train commit still carries the store fleet's
+  // fingerprint. It differs from main, but not from its merge-base.
+  it('refuses a train commit whose fingerprint is still its merge-base’s, even though main moved', () => {
+    const run = runGuard({ vsMergeBase: verdicts(COMPATIBLE, COMPATIBLE) });
+    expect(run.status).toBe(0);
+    expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
+    expect(run.stdout).toContain('equals its merge-base with main');
+  });
+
+  it('decides each platform on its own', () => {
+    const run = runGuard({ vsMergeBase: verdicts(NATIVE, COMPATIBLE) });
+    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false' });
+  });
+
+  it('refuses a runtimeVersion main still owns', () => {
+    for (const vsMain of [verdicts(COMPATIBLE, COMPATIBLE), verdicts('unknown', 'unknown')]) {
+      const run = runGuard({ vsMain });
+      expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
+    }
+  });
+
+  it('treats an unknown merge-base verdict as not owned', () => {
+    const run = runGuard({ vsMergeBase: verdicts('unknown', 'unknown') });
+    expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
+  });
+
+  it('publishes nothing, without resolving, from a superseded or undecided run', () => {
+    for (const superseded of ['true', '']) {
+      const run = runGuard({ superseded });
+      expect(run.status).toBe(0);
+      expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
+      expect(run.calls).toEqual([]);
+    }
+  });
+
+  it('publishes nothing when main already contains the train', () => {
+    const run = runGuard({ mergeBase: HEAD, mergeBaseDir: '' });
+    expect(run.status).toBe(0);
+    expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
+    expect(run.calls).toEqual([]);
+  });
+
+  it('compares once when the merge-base is main itself', () => {
+    const run = runGuard({ mergeBase: MAIN, mergeBaseDir: `${RUNNER_TEMP}/main-baseline`, vsMergeBase: 'never read' });
+    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'true' });
+    expect(run.calls).toHaveLength(1);
+  });
+
+  it('fails closed when the merge-base baseline is missing', () => {
+    const run = runGuard({ mergeBaseDir: '' });
+    expect(run.status).toBe(1);
+    expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
+  });
+
+  it('answers only the platform a republish asked about', () => {
+    const run = runGuard({ platform: 'ios' });
+    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false' });
+    for (const call of run.calls) expect(call).toContain('--platform ios');
   });
 });

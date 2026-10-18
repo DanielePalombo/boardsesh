@@ -2,9 +2,11 @@ name: iOS TestFlight Deploy (React Native)
 
 on:
   push:
-    # Both release branches build replacements when the native fingerprint moves.
-    # JS-only pushes skip the native build; manual dispatch forces a rebuild.
-    branches: [main, release/next]
+    # Only the release train builds on push. release-train-sync.yml keeps it level
+    # with main and bumps its version once a version is released, so a native
+    # change or a new version on main reaches TestFlight through the train. main
+    # keeps manual dispatch for hotfix builds. JS-only pushes skip the native build.
+    branches: [release/next]
     paths:
       - 'packages/mobile/**'
       - 'packages/shared/**'
@@ -21,12 +23,29 @@ on:
         description: 'Added to GH run_number for CFBundleVersion (raise to clear ASC collisions)'
         required: false
         default: '100000'
+      # Same lever as android-apk-rn.yml (issue #3098): on, a dispatch builds even
+      # when this fingerprint and version already shipped, to push an urgent
+      # JS-only fix to binaries that can no longer receive an OTA. Off, it honours
+      # the same gate as a push; release-train-sync.yml dispatches it that way to
+      # retry a version that has no build yet.
+      force_native:
+        description: 'Force a native build even if this fingerprint and version already shipped (push an urgent JS-only fix to orphaned binaries). Uncheck to honour the gate.'
+        type: boolean
+        required: false
+        default: true
 
 concurrency:
   # Platform-global so App Store build-number reads/uploads cannot race across a
   # scheduled release build and an emergency manual dispatch.
   group: ios-testflight-rn
   cancel-in-progress: false
+  # QUEUE, never supersede. cancel-in-progress governs only the RUNNING run; by
+  # default GitHub still replaces a *pending* run when a newer one queues. With
+  # release-train-sync.yml pushing the train after every main merge, that would
+  # silently drop a pending main hotfix dispatch, or the sync bot's dispatch for
+  # a version that has no build yet, behind the next train push. Queued push runs
+  # cost little: the gate skips one whose commit a later push has superseded.
+  queue: max
 
 # ─── SHARED BUILD ENV (workflow-level) ───────────────────────────────────────
 # Declared at the workflow level so the cheap `gate` job (fingerprint resolve)
@@ -77,7 +96,8 @@ env:
 jobs:
   # Fingerprint gate: resolve the iOS runtimeVersion fingerprint on a cheap Linux
   # runner and skip the ~60-min macOS build when a binary with that fingerprint
-  # already shipped (a fingerprint-ios-<hash> tag exists). The OTA publish
+  # AND this marketing version already shipped (a fingerprint-ios-<hash> tag and a
+  # build-ios-v<version>-* tag both exist). The OTA publish
   # (mobile-ota-production.yml) still delivers the JS to matching binaries. This
   # gate is the ONE canonical resolution: the build job embeds this exact value in
   # the binary via EXPO_UPDATES_FINGERPRINT_OVERRIDE (no macOS re-resolve) and tags
@@ -126,34 +146,100 @@ jobs:
 
       - name: Resolve fingerprint and check for an existing native build
         id: fp
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # Empty on a push; a dispatch carries the checkbox.
+          FORCE_NATIVE: ${{ inputs.force_native }}
         run: |
           set -uo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          build() { echo "should_build=true" >> "$GITHUB_OUTPUT"; echo "::notice::$1"; exit 0; }
+          skip() { echo "should_build=false" >> "$GITHUB_OUTPUT"; echo "::notice::$1"; exit 0; }
+
           # No GOOGLE_MAPS_API_KEY here: iOS uses Apple Maps, so the iOS binary's
           # fingerprint is resolved without it (the Android gate sets it).
           raw="$(cd packages/mobile && vp exec expo-updates runtimeversion:resolve --platform ios 2>/dev/null || true)"
           fp="$(printf '%s' "$raw" | jq -r '.runtimeVersion // empty' 2>/dev/null || true)"
-          if ! printf '%s' "$fp" | grep -qiE '^[0-9a-f]{8,}$'; then
-            echo "::warning::Could not resolve the iOS fingerprint — building to be safe."
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Manual dispatch — building iOS regardless of fingerprint $fp."
-            exit 0
-          fi
-          tag="fingerprint-ios-$fp"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            # The marketing version and build numbers are not part of the fingerprint
-            # (fingerprint.config.js sourceSkips), so a push that only bumps `version`
-            # lands here too. A new version number needs a manual dispatch.
-            echo "::notice::iOS fingerprint $fp already built (tag $tag) — skipping the native build; the OTA delivers the JS. A version-only bump does not move the fingerprint: dispatch this workflow by hand to ship a binary with the new version number."
+          if printf '%s' "$fp" | grep -qiE '^[0-9a-f]{8,}$'; then
+            echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
           else
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::iOS fingerprint $fp is new — running the native build."
+            fp=''
           fi
+
+          # The marketing version, read with the regex the build job's "Resolve
+          # mobile app version" step uses, so the gate decides for the version the
+          # binary will carry.
+          # (Through a file: a heredoc inside $(...) trips older bash parsers.)
+          version_file="$(mktemp)"
+          node > "$version_file" <<'NODE'
+          const appConfig = require('node:fs').readFileSync('packages/mobile/app.config.ts', 'utf8');
+          const versionMatch = appConfig.match(/\bversion:\s*['"]([^'"]+)['"]/);
+          if (versionMatch) process.stdout.write(versionMatch[1]);
+          NODE
+          version="$(cat "$version_file")"
+          printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || fail "Could not read a MAJOR.MINOR.PATCH version from packages/mobile/app.config.ts (got \"$version\")."
+
+          # Runs queue behind a 60-minute build (queue: max), so the branch may
+          # have moved on by now. Checked before the version checks below, so a
+          # stale run skips quietly instead of failing for a version the branch
+          # has already moved past. Skip only when a later push changed this
+          # workflow's paths: that push has its own run, which decides for the
+          # newer commit. A tip that moved only outside those paths starts no run,
+          # so this one must still decide.
+          if [ "$EVENT_NAME" = push ]; then
+            superseded="$(node --experimental-strip-types scripts/push-run-superseded.ts --workflow .github/workflows/ios-testflight-rn.yml)" \
+              || fail "Could not tell whether $GITHUB_SHA is still the newest iOS build input on ${GITHUB_REF#refs/heads/}."
+            if [ "$superseded" = true ]; then
+              skip "Superseded: ${GITHUB_REF#refs/heads/} has moved past $GITHUB_SHA; the run for the newer commit decides."
+            fi
+          fi
+
+          # Apple closes a version for new builds once it approves it, so every
+          # later upload of the same marketing version is rejected, after the
+          # whole 60-minute macOS build. mobile-auto-version-bump.yml anchors each
+          # approved version as release/ios-v<version>-<shortfp>, which makes the
+          # check cheap. Every event, a forced dispatch included.
+          anchors="$(git ls-remote --tags origin "refs/tags/release/ios-v${version}-*")" \
+            || fail "Could not list release anchors on origin."
+          if [ -n "$anchors" ]; then
+            anchor="$(printf '%s\n' "$anchors" | head -n 1 | awk '{ print $2 }')"
+            fail "Apple has already approved iOS $version (${anchor#refs/tags/}), so TestFlight rejects every new build of it. release-train-sync.yml moves release/next to the next version once a version is released; a build from main needs its version bumped first."
+          fi
+
+          # The escape hatch for shipping an urgent JS-only fix to OTA-orphaned
+          # binaries (issue #3098). Unchecked, a dispatch honours the same gate as
+          # a push, below.
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$FORCE_NATIVE" = true ]; then
+            build "Manual dispatch with force_native — building iOS $version regardless of fingerprint ${fp:-<unresolved>}."
+          fi
+
+          if [ -z "$fp" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not resolve the iOS fingerprint — building iOS $version to be safe."
+            exit 0
+          fi
+
+          fingerprint_tag="fingerprint-ios-$fp"
+          fingerprint_tags="$(git ls-remote --tags origin "refs/tags/$fingerprint_tag")" \
+            || fail "Could not look up $fingerprint_tag on origin."
+          if [ -z "$fingerprint_tags" ]; then
+            build "iOS fingerprint $fp is new — running the native build."
+          fi
+
+          # The marketing version and build numbers are not part of the fingerprint
+          # (fingerprint.config.js sourceSkips), so a push that only bumps
+          # `version` keeps an already-built fingerprint. The build-number tag is
+          # what records that a version reached TestFlight, so a version without
+          # one still builds: this is how release-train-sync.yml's version bump
+          # becomes a TestFlight build.
+          version_builds="$(git ls-remote --tags origin "refs/tags/build-ios-v${version}-*")" \
+            || fail "Could not list iOS $version builds on origin."
+          if [ -z "$version_builds" ]; then
+            build "iOS fingerprint $fp already built (tag $fingerprint_tag), but no build of version $version exists yet (no build-ios-v${version}-* tag) — building so TestFlight gets $version."
+          fi
+
+          skip "iOS fingerprint $fp and version $version both already built (tag $fingerprint_tag and a build-ios-v${version}-* tag) — skipping the native build; the OTA delivers the JS."
 
   build-and-upload:
     needs: gate

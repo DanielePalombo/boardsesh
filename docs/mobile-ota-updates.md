@@ -402,15 +402,16 @@ Pushes to `release/next` still run `.github/workflows/mobile-ota-production.yml`
 directly. `main` serves the store fleet; `release/next` (the release train,
 see `docs/mobile-store-release.md`) serves the testers running the train's
 TestFlight / Play-internal binary, so they get JS as fast as everyone else —
-including after a `main` → `release/next` sync.
+including after a sync. `release-train-sync.yml` keeps the train level with `main`.
 
-**The train's publish is fingerprint-guarded.** xprem serves whichever update has
-the newest `commitTime` *for a given runtimeVersion*. While the train's
-fingerprint still equals main's — that is, before any native change has landed on
-it — a publish from the train would be handed to the entire store fleet, silently
-replacing main's JS with the train's. So the train workflow resolves `origin/main`
-in a sibling worktree and skips any platform whose fingerprint still matches
-main's, with a `::warning::` saying so. It fails closed: an unresolvable or flaky
+**The train's publish is guarded.** xprem serves whichever update has
+the newest `commitTime` *for a given runtimeVersion*. While the train carries no
+native change of its own, a publish from the train would be handed to the entire
+store fleet, silently replacing main's JS with the train's. So the train workflow
+resolves `origin/main` and the merge-base of `origin/main` and the train in
+sibling worktrees, and skips any platform whose fingerprint matches either one,
+with a `::warning::` saying so. A push run that a later push to the train has
+superseded publishes nothing. It fails closed: an unresolvable or flaky
 comparison publishes nothing. The train therefore starts publishing only once it
 carries a native change, which is also exactly when it has its own fingerprint and
 its own binaries to serve. Everything else in that workflow stays main-only: the
@@ -1246,16 +1247,18 @@ it can't silently drop out of one channel (which would revert that channel to th
 
 ## Native releases and build gating
 
-Both `main` and `release/next` automatically build TestFlight and Play-internal
-binaries when the native fingerprint changes. JS-only pushes skip native builds;
-manual dispatch can rebuild either branch. Native PRs into either branch are
-informational in the OTA compatibility check and require no waiver label.
-Screenshot and store-draft automation follow the build's source branch. Build
-numbers, upload concurrency and fingerprint tags remain global per platform.
+Only `release/next` automatically builds TestFlight and Play-internal binaries on
+push, when the native fingerprint is new or the marketing version has no
+`build-<platform>-v<version>-*` tag yet. JS-only pushes skip native builds;
+`main` builds only by manual dispatch (hotfix rebuilds). Native PRs into either
+branch are informational in the OTA compatibility check and require no waiver
+label. Screenshot and store-draft automation follow `release/next` builds only.
+Build numbers, upload concurrency and fingerprint tags remain global per platform.
 See `docs/mobile-store-release.md` for the release checklist and draft safeguards.
 
 `main` owns production OTA delivery to the store fleet. The train also publishes
-OTAs, but only when its native fingerprint differs from main's; this prevents
+OTAs, but only when it carries its own native change (its fingerprint differs from
+main's and from the merge-base's); this prevents
 the train's JS taking over main's runtime. A native change makes older installed
 binaries incompatible with later bundles. Users need the replacement store
 binary before they receive those OTAs. Prepare the version and localized release
@@ -1372,16 +1375,17 @@ Expo config. The second name is `@expo/fingerprint`'s own default, restated beca
 Two marketing versions can now share one fingerprint. What follows from that:
 
 1. A push to `release/next` that only bumps `version` resolves an existing
-   `fingerprint-<platform>-<hash>` tag, so both native workflows skip the build. To ship a store
-   binary that differs only by version number:
-   1. Bump `version` and the release notes on `release/next`.
-   2. Dispatch `ios-testflight-rn.yml` on `release/next`.
-   3. Dispatch `android-apk-rn.yml` on `release/next` with `force_native` on.
+   `fingerprint-<platform>-<hash>` tag, but the new version has no
+   `build-<platform>-v<version>-*` tag, so both native gates still build. No manual dispatch is
+   needed: `release-train-sync.yml` bumps the train's version once the current one is released
+   (merged back to `main` or Apple-approved), and that push ships the tester builds. The iOS gate
+   fails fast if the version already has a `release/ios-v<version>-*` anchor. The Android build is
+   deferred while a Play review is pending, and the sync's hourly run dispatches it again.
 
    `mobile-store-draft.yml` then runs from the two completions.
 2. After a version-only build the post-build OTA republish is skipped. The train guard in
-   `mobile-ota-production.yml` does not publish while the train's fingerprint equals main's, so that
-   binary runs its embedded bundle until main's next production publish.
+   `mobile-ota-production.yml` does not publish while the train carries no native change of its own,
+   so that binary runs its embedded bundle until main's next production publish.
 3. A version-only release gets no "App update" marker in the in-app changelog (markers come from
    `fingerprint-*` tags) and no automatic screenshot run (that needs a fingerprint tag at the
    triggering commit). Dispatch the screenshot workflows by hand.
@@ -1397,7 +1401,7 @@ version uses `expo-application` (the installed binary), so an OTA built from a n
 not change what an older binary shows or reports. Sentry release and dist come from the native
 build.
 
-These steps come from reading the workflows. No version-only release has been run end to end yet.
+These steps come from reading the workflows. No automatic version-only release has been run end to end yet.
 
 ### Publish ordering: a binary can outrank a newer OTA
 
@@ -1583,10 +1587,11 @@ fingerprints made the churn safe. That was wrong at the time and broke productio
 was part of the fingerprint, so bumping it on `main` moved off the fingerprint of the binary
 **already in the field**, and "accepted" is not "adopted" — almost every install is still on the
 previous store binary until it updates, so those installs stopped receiving OTAs. The version is no
-longer hashed, so a bump alone would not strand anyone. It stays a manual decision because a new
-version number only reaches the stores through a native build, and a version-only push does not
-start one (dispatch both native workflows, see [Version-only releases](#version-only-releases)). The workflow name (`Mobile
-Release Anchor`) and file name are kept; only the bump was removed.
+longer hashed, so a bump alone would not strand anyone. The marketing-version bump now lives on the
+train, in `release-train-sync.yml`, not here and never on `main`. That cannot strand `main`'s
+OTAs, because the version is outside the fingerprint and `main` no longer builds native on push.
+The bump push is what starts the tester builds (see [Version-only releases](#version-only-releases)).
+The workflow name (`Mobile Release Anchor`) and file name are kept; this workflow still only anchors.
 
 **iOS anchoring is strict:** it uses App Store Connect's exact approved build number, and if no
 `build-ios-v<version>-<buildNumber>-*` tag matches it, it skips (rather than anchoring a different

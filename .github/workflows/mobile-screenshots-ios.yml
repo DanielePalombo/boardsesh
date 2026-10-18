@@ -5,7 +5,7 @@ name: Mobile Screenshots (iOS)
 # gates PRs. There is no cron.
 #
 # WHEN IT RUNS — two ways, and only these two:
-#   * automatically, after an iOS TestFlight deploy on main or release/next
+#   * automatically, after an iOS TestFlight deploy on release/next
 #     that actually SHIPPED a binary. Every checkout pins the deploy's head_sha;
 #   * on a manual `workflow_dispatch`, from any branch, with the inputs below.
 #
@@ -140,8 +140,9 @@ on:
     workflows:
       - iOS TestFlight Deploy (React Native)
     types: [completed]
-    # Follow the native workflows on both trusted release branches.
-    branches: [main, release/next]
+    # The deploy workflow's push branches; only the release train builds on push.
+    # A hand-dispatched main build gets its screenshots by dispatch too.
+    branches: [release/next]
   workflow_dispatch:
     inputs:
       flow:
