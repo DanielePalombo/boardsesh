@@ -103,6 +103,9 @@ function ensureCommit(sha: string): void {
   } catch {
     // Not present yet; fetch it below.
   }
+  // Fetching a bare SHA needs the server to allow it (uploadpack.allowReachableSHA1InWant).
+  // GitHub allows it for any commit reachable from a ref. If the fetch fails, main() exits 1
+  // and each calling workflow step applies its own policy to that.
   const shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true';
   git(['fetch', '--no-tags', ...(shallow ? ['--depth=1'] : []), 'origin', sha]);
 }
