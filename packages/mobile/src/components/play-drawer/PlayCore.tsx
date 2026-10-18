@@ -2005,6 +2005,15 @@ export function PlayCore({
                         contentEnabled={belowFoldContentRequested}
                         sections={sections}
                         order={sectionOrder}
+                        // Only while Active holds is on, so a playback frame
+                        // never re-renders the sections for nothing.
+                        activeHoldsFrames={
+                          sections.activeHolds
+                            ? playback.isAnimatable
+                              ? playback.currentFrameString
+                              : displayedClimb.frames
+                            : undefined
+                        }
                         onSimilarClimbPress={handleSimilarClimbPress}
                         onFirstSectionHeaderLayout={onSectionHeaderMeasured}
                         onFirstSectionLayout={handleFirstSectionLayout}

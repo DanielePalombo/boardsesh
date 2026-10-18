@@ -122,6 +122,7 @@ const ble = vi.hoisted(() => ({
 
 const drawerSections = vi.hoisted(() => ({
   defaults: {
+    activeHolds: false,
     logbook: true,
     climberLogs: true,
     setterNotes: true,
@@ -131,6 +132,7 @@ const drawerSections = vi.hoisted(() => ({
     similarClimbs: true,
   },
   sections: {
+    activeHolds: false,
     logbook: true,
     climberLogs: true,
     setterNotes: true,
@@ -141,8 +143,18 @@ const drawerSections = vi.hoisted(() => ({
   },
   ready: true,
 }));
+
 vi.mock('../../../lib/play-drawer-sections-preference', () => {
-  const order = ['logbook', 'climberLogs', 'setterNotes', 'betaVideos', 'boardseshGrade', 'community', 'similarClimbs'];
+  const order = [
+    'activeHolds',
+    'logbook',
+    'climberLogs',
+    'setterNotes',
+    'betaVideos',
+    'boardseshGrade',
+    'community',
+    'similarClimbs',
+  ];
   return {
     DEFAULT_PLAY_DRAWER_SECTIONS: drawerSections.defaults,
     DEFAULT_PLAY_DRAWER_SECTION_ORDER: order,
@@ -1654,6 +1666,7 @@ describe('PlayDrawer — the anonymous joins', () => {
   // back. They get the defaults instead, ready at once: there is nothing to read.
   it('gives a signed-out reader the default sections, whatever this device stored', () => {
     drawerSections.sections = {
+      activeHolds: false,
       logbook: false,
       climberLogs: false,
       setterNotes: false,
@@ -1691,6 +1704,7 @@ describe('PlayDrawer — the anonymous joins', () => {
   it("keeps a member's stored Hide all", () => {
     auth.isAuthenticated = true;
     drawerSections.sections = {
+      activeHolds: false,
       logbook: false,
       climberLogs: false,
       setterNotes: false,
@@ -1709,6 +1723,7 @@ describe('PlayDrawer — the anonymous joins', () => {
   // honour them. Only the anonymous reader, who can reach neither, is overridden.
   it('keeps a signed-out member viewer on their stored Hide all', () => {
     drawerSections.sections = {
+      activeHolds: false,
       logbook: false,
       climberLogs: false,
       setterNotes: false,
@@ -1721,6 +1736,20 @@ describe('PlayDrawer — the anonymous joins', () => {
 
     expect(auth.isAuthenticated).toBe(false);
     expect(recorded.deferredSections).toHaveLength(0);
+  });
+
+  // The reader gets the default sections, and Active holds is off by default.
+  it('never shows a signed-out reader Active holds, even when this device switched it on', () => {
+    drawerSections.sections = { ...drawerSections.defaults, activeHolds: true };
+    renderDrawer('anonymous');
+    expect(recorded.deferredSections.at(-1)?.sections).toEqual(drawerSections.defaults);
+    expect(recorded.deferredSections.at(-1)?.activeHoldsFrames).toBeUndefined();
+  });
+
+  it('shows Active holds to a member who switched it on', () => {
+    drawerSections.sections = { ...drawerSections.defaults, activeHolds: true };
+    renderDrawer('member');
+    expect(recorded.deferredSections.at(-1)?.activeHoldsFrames).toEqual(expect.any(String));
   });
 
   it("keeps a signed-out member viewer's partial choices too", () => {
