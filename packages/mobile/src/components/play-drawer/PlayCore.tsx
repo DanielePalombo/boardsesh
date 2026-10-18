@@ -1033,15 +1033,20 @@ export function PlayCore({
   // with a back glyph). On the wall and Live it opens the explainer.
   // The header chip as drawn (`resolveHeaderPillState`): during a preview it is
   // the way back, when back goes anywhere.
-  const headerPill = resolveHeaderPillState({
-    wallPillState,
-    previewPinned: isPreview,
-    isAnonymous,
-    displayedClimbUuid: displayedClimbUuid ?? null,
-    committedHeadUuid: currentClimbQueueItem?.climb.uuid ?? null,
-    wallClimbUuid,
-    isPane,
-  });
+  const committedHeadUuid = currentClimbQueueItem?.climb.uuid ?? null;
+  const headerPill = useMemo(
+    () =>
+      resolveHeaderPillState({
+        wallPillState,
+        previewPinned: isPreview,
+        isAnonymous,
+        displayedClimbUuid: displayedClimbUuid ?? null,
+        committedHeadUuid,
+        wallClimbUuid,
+        isPane,
+      }),
+    [wallPillState, isPreview, isAnonymous, displayedClimbUuid, committedHeadUuid, wallClimbUuid, isPane],
+  );
   const headerPillState: WallPillState = headerPill?.state ?? null;
   const headerBackTarget = headerPill?.backTarget ?? null;
   // Browsing, the chip (a back glyph and the face of whoever lit the wall) IS
