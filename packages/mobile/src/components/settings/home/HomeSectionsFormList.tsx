@@ -19,10 +19,10 @@ const NO_SEPARATORS = { highlight: () => {}, unhighlight: () => {}, updateProps:
  * scrolls. Five rows at most, so there is nothing to virtualise.
  */
 function StaticRowList({ data, renderItem, keyExtractor }: FlatListProps<HomeSectionRow>) {
-  const rows = Array.from(data ?? []);
+  // `data` is only `ArrayLike` here, so map it in `Array.from` itself: no copy first.
   return (
     <View>
-      {rows.map((item, index) => (
+      {Array.from(data ?? [], (item, index) => (
         <Fragment key={keyExtractor ? keyExtractor(item, index) : item.id}>
           {renderItem?.({ item, index, separators: NO_SEPARATORS })}
         </Fragment>

@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   offline: { isBlocked: false, reason: null as string | null },
 }));
 const openClimb = vi.hoisted(() => vi.fn());
+type ItemLayout = { length: number; offset: number; index: number };
+const list = vi.hoisted(() => ({
+  getItemLayout: null as ((data: unknown, index: number) => ItemLayout) | null,
+}));
 
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios' },
@@ -33,16 +37,20 @@ vi.mock('react-native', () => ({
     data,
     renderItem,
     keyExtractor,
+    getItemLayout,
   }: {
     data: Video[];
     renderItem: (entry: { item: Video; index: number }) => ReactNode;
     keyExtractor: (item: Video) => string;
-  }) =>
-    createElement(
+    getItemLayout: (data: unknown, index: number) => ItemLayout;
+  }) => {
+    list.getItemLayout = getItemLayout;
+    return createElement(
       'ul',
       { 'data-testid': 'beta-list' },
       ...data.map((item, index) => createElement('li', { key: keyExtractor(item) }, renderItem({ item, index }))),
-    ),
+    );
+  },
 }));
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -101,6 +109,7 @@ beforeEach(() => {
   state.query = { data: undefined, isPending: false, isError: false, refetch: vi.fn() };
   state.offline = { isBlocked: false, reason: null };
   openClimb.mockClear();
+  list.getItemLayout = null;
 });
 
 afterEach(() => {
@@ -121,6 +130,16 @@ describe('HomeBetaSection', () => {
     render(createElement(HomeBetaSection, { boardType: null, layoutId: null, enabled: true }));
     expect(state.calls.at(-1)).toEqual([20, null, null, true]);
     expect(screen.getByText('mobile.home.sections.beta.title')).toBeTruthy();
+  });
+
+  it('places each card after the shelf inset, one card and gap apart', () => {
+    state.query.data = [VIDEO];
+    render(createElement(HomeBetaSection, { boardType: 'kilter', layoutId: 1, enabled: true }));
+    const getItemLayout = list.getItemLayout;
+    if (!getItemLayout) throw new Error('the shelf gave no item layout');
+    // 16 of inset, then 108 of card and 12 of gap per step.
+    expect(getItemLayout(null, 0)).toEqual({ length: 120, offset: 16, index: 0 });
+    expect(getItemLayout(null, 2)).toEqual({ length: 120, offset: 256, index: 2 });
   });
 
   it('opens the climb under a card in the player', () => {

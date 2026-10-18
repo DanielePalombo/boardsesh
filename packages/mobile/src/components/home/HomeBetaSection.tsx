@@ -20,12 +20,14 @@ import { borderRadius, spacing } from '../../theme/tokens';
 const RECENT_BETA_LIMIT = 20;
 const CARD_GAP = spacing[3];
 const CARD_STEP = BETA_CARD_WIDTH + CARD_GAP;
+// The list's leading padding (`listContent`), before the first card.
+const LIST_INSET = spacing[4];
 const SKELETON_KEYS = ['beta-skeleton-1', 'beta-skeleton-2', 'beta-skeleton-3'];
 
 const keyExtractor = (video: RecentBetaVideo) => betaLinkIdentity(video.betaLink.link);
 const getItemLayout = (_data: ArrayLike<RecentBetaVideo> | null | undefined, index: number) => ({
   length: CARD_STEP,
-  offset: CARD_STEP * index,
+  offset: LIST_INSET + CARD_STEP * index,
   index,
 });
 
@@ -216,7 +218,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing[2],
   },
   listContent: {
-    paddingHorizontal: spacing[4],
+    paddingHorizontal: LIST_INSET,
   },
   cardGap: {
     width: CARD_GAP,
