@@ -128,3 +128,8 @@ export const climbLogsPreviewQueryKey = (viewerId: string | undefined, boardName
  */
 export const SESSION_SUMMARY_QUERY_KEY = 'sessionSummary';
 export const sessionSummaryQueryKey = (sessionId: string | null) => [SESSION_SUMMARY_QUERY_KEY, sessionId] as const;
+
+/** Home's Fresh beta shelf. Here so pull to refresh can invalidate it without rendering the shelf's query. */
+export const RECENT_BETA_LINKS_QUERY_KEY = 'recentBetaLinks';
+export const recentBetaLinksQueryKey = (limit: number, boardType: string | null, layoutId: number | null) =>
+  [RECENT_BETA_LINKS_QUERY_KEY, limit, boardType, layoutId] as const;

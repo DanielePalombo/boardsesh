@@ -72,9 +72,9 @@ The mobile Settings screen contains appearance and UI-style controls that have n
 - **Material**: JS `MaterialTabBar` + opaque M3 surfaces.
 - All three options are always **selectable** on every platform — any phone can opt into Liquid Glass, falling back to JS buttons where the native iOS 26 chrome can't render. An explanatory footnote switches between `mobile.settings.uiStyle.description` (glass-capable), `mobile.settings.uiStyle.glassFallback` (iOS < 26), and `mobile.settings.uiStyle.glassFallbackAndroid` (Android) based on capability and platform.
 
-**Home** (Settings › General):
+**Home** (its own page in the root's second group, after Board and Climbs & grades; the row's value is the matching preset: Default, Focused or Custom):
 
-- One switch per Home section (Your board, Session, Playlists, Climbing now, Feed) in the saved order, then Show all, Focused and Restore defaults. Native form, no arrows: the order changes in Home's Customize Home sheet. Stored as `homeSectionsV1` in the MMKV settings store. See `02-home.md`.
+- One switch per Home section (Your board, Session, Playlists, Climbing now, Fresh beta, Feed) in the saved order, then Show all, Focused and Restore defaults. Native form like Board and Climbs & grades (`HomeSettingsScreen`, `home-settings-model.ts`), no arrows: the order changes in Home's Customize Home sheet. Stored as `homeSectionsV1` in the MMKV settings store. See `02-home.md`.
 
 **Grade Format** (V-Grade / Font / Both):
 

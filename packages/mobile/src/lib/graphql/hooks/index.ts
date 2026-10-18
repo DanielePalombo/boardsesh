@@ -1255,6 +1255,7 @@ export type RecentBetaVideo = Omit<RecentBetaLinkGqlRow, 'betaLink'> & {
 };
 
 export { useBetaLinks } from './use-beta-links';
+export { selectRecentBetaVideos, useRecentBetaLinks } from './use-recent-beta-links';
 
 const USER_BETA_LINKS_PAGE_SIZE = 20;
 

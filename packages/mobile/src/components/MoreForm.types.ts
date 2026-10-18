@@ -40,6 +40,7 @@ export type MoreIconName =
   | 'account'
   | 'general'
   | 'climbs'
+  | 'home'
   | 'earlyAccess'
   | 'developer'
   | 'export'

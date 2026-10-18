@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { LiveSessionsRail } from '../live-sessions/LiveSessionsRail';
 import type { HomeTopSectionId } from '../../lib/home-sections';
+import { HomeBetaSection } from './HomeBetaSection';
 import { HomeBoardSection } from './HomeBoardSection';
 import { HomePlaylistsSection } from './HomePlaylistsSection';
 import { HomeSessionSection } from './HomeSessionSection';
@@ -15,8 +16,11 @@ type HomeSectionsProps = {
   cardsReady: boolean;
   /** Climbing now's scope: the selected board in gym mode, null in crew mode. */
   liveBoardUuid: string | null;
-  /** False until Home's scope has settled, so a cold start fetches Climbing now once. */
+  /** False until Home's scope has settled, so a cold start fetches Climbing now and Fresh beta once. */
   liveEnabled: boolean;
+  /** Fresh beta's board: Home's selected board, in either mode. Null is every board. */
+  betaBoardType: string | null;
+  betaLayoutId: number | null;
   onInvite: (sessionId: string) => void;
 };
 
@@ -30,6 +34,8 @@ export const HomeSections = memo(function HomeSections({
   cardsReady,
   liveBoardUuid,
   liveEnabled,
+  betaBoardType,
+  betaLayoutId,
   onInvite,
 }: HomeSectionsProps) {
   // The Session card offers Start, so Climbing now doesn't offer it a second time.
@@ -53,6 +59,10 @@ export const HomeSections = memo(function HomeSections({
             showStartPrompt={!sessionCardShows}
           />
         );
+      case 'beta':
+        return cardsReady ? (
+          <HomeBetaSection key={sectionId} boardType={betaBoardType} layoutId={betaLayoutId} enabled={liveEnabled} />
+        ) : null;
       default:
         // A new top section stops compiling here until it gets a case. At run
         // time it draws nothing.

@@ -70,6 +70,8 @@ export const QUERIES_NO_CAPTURE_SENDS: readonly string[] = [
   'GetPlaylistsForClimb',
   'GetPlaylistsForClimbs',
   'GetPopularBoardConfigs',
+  // Home's Fresh beta shelf (#6289), off by default; captures shoot the default Home.
+  'GetRecentBetaLinks',
   'GetSessionHealthExport',
   'GetSprayWallArchive',
   'GetSprayWallArt',

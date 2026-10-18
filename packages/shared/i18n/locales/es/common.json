@@ -298,6 +298,9 @@
         "climbs": {
           "title": "Bloques y grados"
         },
+        "home": {
+          "title": "Inicio"
+        },
         "earlyAccess": {
           "title": "Acceso anticipado"
         },
@@ -743,7 +746,7 @@
         "moved": "{{section}}, {{position}} de {{count}}"
       },
       "homeSections": {
-        "title": "Inicio",
+        "groupTitle": "En Inicio",
         "customize": "Personalizar Inicio",
         "description": "Elige qué muestra Inicio y en qué orden. Enfocado muestra tu plafón, tu sesión y tus listas.",
         "settingsFooter": "Elige qué muestra Inicio. Para cambiar el orden, toca Personalizar Inicio en Inicio.",
@@ -756,6 +759,7 @@
           "session": "Sesión",
           "playlists": "Listas",
           "climbingNow": "Escalando ahora",
+          "beta": "Beta reciente",
           "feed": "Feed"
         },
         "descriptions": {
@@ -763,7 +767,12 @@
           "session": "Empieza una sesión o mira su cronómetro",
           "playlists": "Bloques favoritos y Proyectos",
           "climbingNow": "Sesiones en directo a las que unirte",
+          "beta": "Vídeos de beta nuevos para tu plafón",
           "feed": "Sesiones y bloques nuevos de tu crew. Siempre al final."
+        },
+        "presets": {
+          "default": "Predeterminado",
+          "custom": "Personalizado"
         }
       },
       "climbList": {

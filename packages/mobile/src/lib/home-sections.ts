@@ -7,12 +7,13 @@ import {
 } from './section-layout-store';
 
 // The sections Home shows, and in what order (#6289). The default is today's
-// Home: Climbing now, then the feed. The three Boardz-style cards start hidden,
-// so nobody's Home changes on an update, and "Focused" is one tap away.
+// Home: Climbing now, then the feed. The three Boardz-style cards and Fresh beta
+// (the beta shelf Home had until #5518) start hidden, so nobody's Home changes
+// on an update, and "Focused" is one tap away.
 //
 // The feed stays last: it scrolls forever, so nothing could sit under it.
 
-export const HOME_SECTION_IDS = ['board', 'session', 'playlists', 'climbingNow', 'feed'] as const;
+export const HOME_SECTION_IDS = ['board', 'session', 'playlists', 'climbingNow', 'beta', 'feed'] as const;
 export type HomeSectionId = (typeof HOME_SECTION_IDS)[number];
 /** The sections drawn above the feed; the feed is the list itself. */
 export type HomeTopSectionId = Exclude<HomeSectionId, 'feed'>;
@@ -25,7 +26,7 @@ export const HOME_SECTIONS: SectionLayoutSpec<HomeSectionId> = {
   ids: HOME_SECTION_IDS,
   defaults: {
     order: HOME_SECTION_IDS,
-    visible: { board: false, session: false, playlists: false, climbingNow: true, feed: true },
+    visible: { board: false, session: false, playlists: false, climbingNow: true, beta: false, feed: true },
   },
   lockedLast: 'feed',
 };
@@ -36,6 +37,7 @@ const FOCUSED_VISIBILITY: Readonly<Record<HomeSectionId, boolean>> = {
   session: true,
   playlists: true,
   climbingNow: false,
+  beta: false,
   feed: false,
 };
 
@@ -50,6 +52,14 @@ export function isFocusedHomeLayout(layout: SectionLayout<HomeSectionId>): boole
 
 export function isDefaultHomeLayout(layout: SectionLayout<HomeSectionId>): boolean {
   return isSameSectionLayout(layout, HOME_SECTIONS.defaults);
+}
+
+/** Which preset a layout matches, for the value beside Settings › Home. */
+export type HomeLayoutPreset = 'default' | 'focused' | 'custom';
+
+export function homeLayoutPreset(layout: SectionLayout<HomeSectionId>): HomeLayoutPreset {
+  if (isDefaultHomeLayout(layout)) return 'default';
+  return isFocusedHomeLayout(layout) ? 'focused' : 'custom';
 }
 
 /** The sections above the feed that are switched on, in order. */

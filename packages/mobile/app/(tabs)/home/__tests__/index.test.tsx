@@ -10,6 +10,7 @@ const recorded = vi.hoisted(() => ({
   crewFeedEnabled: [] as boolean[],
   sessionFeedEnabled: [] as boolean[],
   railProps: [] as Array<{ enabled: boolean; showStartPrompt?: boolean }>,
+  betaProps: [] as Array<{ boardType: string | null; layoutId: number | null; enabled: boolean }>,
   chrome: [] as Array<{ showScopeMenu: boolean; scopeTitle: string; scopeActions: unknown[] }>,
   customizeSheet: [] as boolean[],
 }));
@@ -127,6 +128,12 @@ vi.mock('../../../../src/components/home/HomeSessionSection', () => ({
 vi.mock('../../../../src/components/home/HomePlaylistsSection', () => ({
   HomePlaylistsSection: () => createElement('div', { 'data-testid': 'section-playlists' }),
 }));
+vi.mock('../../../../src/components/home/HomeBetaSection', () => ({
+  HomeBetaSection: (props: { boardType: string | null; layoutId: number | null; enabled: boolean }) => {
+    recorded.betaProps.push(props);
+    return createElement('div', { 'data-testid': 'section-beta' });
+  },
+}));
 vi.mock('../../../../src/components/live-sessions/LiveSessionsRail', () => ({
   LiveSessionsRail: (props: { enabled: boolean; showStartPrompt?: boolean }) => {
     recorded.railProps.push(props);
@@ -162,6 +169,7 @@ vi.mock('../../../../src/lib/graphql/hooks', () => ({
 vi.mock('../../../../src/lib/graphql/query-keys', () => ({
   FOLLOWED_LIVE_SESSIONS_QUERY_KEY: ['followed'],
   SESSION_SUMMARY_QUERY_KEY: 'sessionSummary',
+  RECENT_BETA_LINKS_QUERY_KEY: 'recentBetaLinks',
 }));
 vi.mock('@boardsesh/playlists-react', () => ({ SMART_PLAYLIST_COUNTS_QUERY_KEY: 'mySmartPlaylistCounts' }));
 vi.mock('../../../../src/lib/graphql/hooks/use-home-board', () => ({
@@ -208,6 +216,7 @@ beforeEach(() => {
   recorded.crewFeedEnabled = [];
   recorded.sessionFeedEnabled = [];
   recorded.railProps = [];
+  recorded.betaProps = [];
   recorded.chrome = [];
   recorded.customizeSheet = [];
   refresh.onRefresh = null;
@@ -342,5 +351,20 @@ describe('Home sections', () => {
     act(() => refresh.onRefresh?.());
     expect(refresh.invalidateQueries).not.toHaveBeenCalled();
     expect(refresh.refreshing).toBe(false);
+  });
+
+  it('mounts Fresh beta only when it is switched on, scoped to the selected board', () => {
+    render(createElement(HomeTab));
+    expect(recorded.betaProps).toEqual([]);
+    cleanup();
+    homeSectionsStore.setVisible('beta', true);
+    render(createElement(HomeTab));
+    expect(sectionOrder()).toEqual(['section-climbingNow', 'section-beta']);
+    // No home board resolved in this test, so the shelf is every board.
+    expect(recorded.betaProps.at(-1)).toEqual({ boardType: null, layoutId: null, enabled: true });
+    act(() => refresh.onRefresh?.());
+    expect(refresh.invalidateQueries.mock.calls.map(([filters]) => filters)).toContainEqual({
+      queryKey: ['recentBetaLinks'],
+    });
   });
 });

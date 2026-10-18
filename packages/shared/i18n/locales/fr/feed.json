@@ -36,6 +36,16 @@
         "empty": {
           "title": "Ton accueil est vide",
           "body": "Réactive des sections pour voir ta board, ta session ou ton crew."
+        },
+        "beta": {
+          "title": "Beta récente",
+          "titleBoard": "Beta récente sur cette board",
+          "empty": "Aucune vidéo beta pour le moment",
+          "error": "Impossible de charger les vidéos beta.",
+          "offline": "Pas de réseau. La beta récente réapparaîtra quand tu seras de nouveau en ligne.",
+          "offlineMode": "Le mode hors ligne est activé. La beta récente réapparaîtra quand tu le désactiveras.",
+          "unknownClimb": "Bloc inconnu",
+          "openClimb": "Ouvrir {{climb}}"
         }
       }
     },

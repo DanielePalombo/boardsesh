@@ -26,6 +26,9 @@
         "climbs": {
           "title": "Blocs et cotations"
         },
+        "home": {
+          "title": "Accueil"
+        },
         "earlyAccess": {
           "title": "Accès anticipé"
         },
@@ -471,7 +474,7 @@
         "moved": "{{section}}, {{position}} sur {{count}}"
       },
       "homeSections": {
-        "title": "Accueil",
+        "groupTitle": "Sur l'accueil",
         "customize": "Personnaliser l'accueil",
         "description": "Choisis ce qu'affiche l'accueil, et dans quel ordre. Essentiel affiche ta board, ta session et tes listes.",
         "settingsFooter": "Choisis ce qu'affiche l'accueil. Pour changer l'ordre, touche Personnaliser l'accueil sur l'accueil.",
@@ -484,6 +487,7 @@
           "session": "Session",
           "playlists": "Listes",
           "climbingNow": "En train de grimper",
+          "beta": "Beta récente",
           "feed": "Fil"
         },
         "descriptions": {
@@ -491,7 +495,12 @@
           "session": "Démarrer une session ou voir son chrono",
           "playlists": "Voies aimées et Projets",
           "climbingNow": "Sessions en direct à rejoindre",
+          "beta": "Nouvelles vidéos beta pour ta board",
           "feed": "Sessions et nouveaux blocs de ton crew. Toujours en bas."
+        },
+        "presets": {
+          "default": "Par défaut",
+          "custom": "Personnalisé"
         }
       },
       "climbList": {

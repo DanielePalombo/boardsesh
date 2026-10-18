@@ -36,6 +36,16 @@
         "empty": {
           "title": "Tu Inicio está vacío",
           "body": "Vuelve a activar secciones para ver tu plafón, tu sesión o tu crew."
+        },
+        "beta": {
+          "title": "Beta reciente",
+          "titleBoard": "Beta reciente en este plafón",
+          "empty": "Aún no hay vídeos de beta",
+          "error": "No se pudieron cargar los vídeos de beta.",
+          "offline": "Sin conexión. La beta reciente vuelve a aparecer cuando recuperes la conexión.",
+          "offlineMode": "El modo sin conexión está activado. La beta reciente vuelve a aparecer cuando lo desactives.",
+          "unknownClimb": "Bloque desconocido",
+          "openClimb": "Abrir {{climb}}"
         }
       }
     },

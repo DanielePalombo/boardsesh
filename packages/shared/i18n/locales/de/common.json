@@ -26,6 +26,9 @@
         "climbs": {
           "title": "Boulder & Grade"
         },
+        "home": {
+          "title": "Start"
+        },
         "earlyAccess": {
           "title": "Früher Zugang"
         },
@@ -471,7 +474,7 @@
         "moved": "{{section}}, {{position}} von {{count}}"
       },
       "homeSections": {
-        "title": "Start",
+        "groupTitle": "Auf Start",
         "customize": "Start anpassen",
         "description": "Wähle, was Start zeigt und in welcher Reihenfolge. Fokus zeigt dein Board, deine Session und deine Playlists.",
         "settingsFooter": "Wähle, was Start zeigt. Die Reihenfolge änderst du mit Start anpassen auf dem Start-Tab.",
@@ -484,6 +487,7 @@
           "session": "Session",
           "playlists": "Playlists",
           "climbingNow": "Gerade am Klettern",
+          "beta": "Frische Beta",
           "feed": "Feed"
         },
         "descriptions": {
@@ -491,7 +495,12 @@
           "session": "Session starten oder ihre Zeit sehen",
           "playlists": "Gelikte Boulder und Projekte",
           "climbingNow": "Live-Sessions zum Mitmachen",
+          "beta": "Neue Beta-Videos für dein Board",
           "feed": "Sessions und neue Boulder deiner Crew. Immer ganz unten."
+        },
+        "presets": {
+          "default": "Standard",
+          "custom": "Eigene"
         }
       },
       "climbList": {

@@ -150,6 +150,7 @@ describe('HomeCustomizeSheet', () => {
       `${SECTION_KEY}.session`,
       `${SECTION_KEY}.playlists`,
       `${SECTION_KEY}.climbingNow`,
+      `${SECTION_KEY}.beta`,
       `${SECTION_KEY}.feed`,
     ]);
     expect(screen.getAllByRole('switch').map((element) => (element as HTMLInputElement).checked)).toEqual([
@@ -157,6 +158,7 @@ describe('HomeCustomizeSheet', () => {
       false,
       false,
       true,
+      false,
       true,
     ]);
     expect(screen.getByTestId('section-layout-move-up-climbingNow')).toBeTruthy();
@@ -181,7 +183,14 @@ describe('HomeCustomizeSheet', () => {
     act(() => {
       fireEvent.click(screen.getByTestId('section-layout-move-up-climbingNow'));
     });
-    expect(homeSectionsStore.getLayout().order).toEqual(['board', 'session', 'climbingNow', 'playlists', 'feed']);
+    expect(homeSectionsStore.getLayout().order).toEqual([
+      'board',
+      'session',
+      'climbingNow',
+      'playlists',
+      'beta',
+      'feed',
+    ]);
     expect(switchLabels()[2]).toBe(`${SECTION_KEY}.climbingNow`);
     expect(analytics.trackSettingChanged).toHaveBeenCalledWith('homeScreen', 'moveUp', 'climbingNow');
   });
@@ -204,7 +213,7 @@ describe('HomeCustomizeSheet', () => {
     const { result } = renderHook(() => useHomeSectionControls());
     let moved: boolean | undefined;
     act(() => {
-      moved = result.current.onMove('climbingNow', 1);
+      moved = result.current.onMove('beta', 1);
     });
     expect(moved).toBe(false);
     expect(analytics.trackSettingChanged).not.toHaveBeenCalled();
@@ -212,6 +221,13 @@ describe('HomeCustomizeSheet', () => {
       moved = result.current.onMove('board', 1);
     });
     expect(moved).toBe(true);
-    expect(homeSectionsStore.getLayout().order).toEqual(['session', 'board', 'playlists', 'climbingNow', 'feed']);
+    expect(homeSectionsStore.getLayout().order).toEqual([
+      'session',
+      'board',
+      'playlists',
+      'climbingNow',
+      'beta',
+      'feed',
+    ]);
   });
 });

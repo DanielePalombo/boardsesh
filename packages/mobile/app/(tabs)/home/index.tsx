@@ -28,7 +28,11 @@ import { HomeTopChrome, TOP_ISLAND_BAND } from '../../../src/components/feed/Hom
 import { FeedScopeTitle } from '../../../src/components/feed/FeedScopeTitle';
 import { type AppMenuAction } from '../../../src/components/AppMenu';
 import { useBulkVoteSummaries, useSessionGroupedFeed } from '../../../src/lib/graphql/hooks';
-import { FOLLOWED_LIVE_SESSIONS_QUERY_KEY, SESSION_SUMMARY_QUERY_KEY } from '../../../src/lib/graphql/query-keys';
+import {
+  FOLLOWED_LIVE_SESSIONS_QUERY_KEY,
+  RECENT_BETA_LINKS_QUERY_KEY,
+  SESSION_SUMMARY_QUERY_KEY,
+} from '../../../src/lib/graphql/query-keys';
 import { SMART_PLAYLIST_COUNTS_QUERY_KEY } from '@boardsesh/playlists-react';
 import { useHomeBoard } from '../../../src/lib/graphql/hooks/use-home-board';
 import { useAuth } from '../../../src/providers/auth-provider';
@@ -256,6 +260,7 @@ export default function HomeTab() {
 
   const sessionCardVisible = sectionLayout.visible.session;
   const playlistsVisible = sectionLayout.visible.playlists;
+  const betaVisible = sectionLayout.visible.beta;
   // The spinner follows the feed's refetch while the feed shows, as it always
   // has. Without the feed it follows the sections' own refetches.
   const [sectionsRefreshing, setSectionsRefreshing] = useState(false);
@@ -271,6 +276,7 @@ export default function HomeTab() {
     if (playlistsVisible) {
       sectionRefetches.push(queryClient.invalidateQueries({ queryKey: [SMART_PLAYLIST_COUNTS_QUERY_KEY] }));
     }
+    if (betaVisible) sectionRefetches.push(queryClient.invalidateQueries({ queryKey: [RECENT_BETA_LINKS_QUERY_KEY] }));
     if (sectionRefetches.length > 0) {
       setSectionsRefreshing(true);
       void Promise.allSettled(sectionRefetches).then(() => setSectionsRefreshing(false));
@@ -284,6 +290,7 @@ export default function HomeTab() {
     climbingNowVisible,
     sessionCardVisible,
     playlistsVisible,
+    betaVisible,
     feedVisible,
     feed,
     isAuthenticated,
@@ -459,6 +466,8 @@ export default function HomeTab() {
           cardsReady={hasBeenFocused}
           liveBoardUuid={liveBoardUuid}
           liveEnabled={scopeReady}
+          betaBoardType={selectedBoard?.boardType ?? null}
+          betaLayoutId={selectedBoard?.layoutId ?? null}
           onInvite={handleOpenInvite}
         />
         {/* An empty Home offers Customize in its empty state instead. */}
@@ -479,6 +488,7 @@ export default function HomeTab() {
       hasBeenFocused,
       liveBoardUuid,
       scopeReady,
+      selectedBoard,
       handleOpenInvite,
       homeEmpty,
       handleOpenCustomize,
