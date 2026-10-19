@@ -3,13 +3,17 @@
 /** Trusted artifacts only: main's deployment and the stable controller's own checkpoints. */
 export const SOURCE_WORKFLOW = '.github/workflows/production-deploy.yml';
 export const STABLE_WORKFLOW = '.github/workflows/mobile-ota-stable-release.yml';
+/** Hard ceiling for complete job listings; each caller also bounds its total API work. */
+export const MAX_GITHUB_JOB_PAGES = 100;
+/** Keep in sync with the workflow; unknown jobs cannot prove production ownership. */
+export const STABLE_CONTROLLER_JOBS = ['resolve', 'prepare', 'qualify', 'tick', 'smokes', 'boot'];
 
 export interface TrustedWorkflowRun {
   runId: number;
   headSha: string;
   status: string;
   conclusion: string | null;
-  command: 'prepare' | 'tick' | 'plan' | 'qualify' | 'abort' | null;
+  command: 'prepare' | 'tick' | 'plan' | 'qualify' | 'abort' | 'start' | 'force-release' | null;
   runAttempt: number;
 }
 
@@ -51,7 +55,7 @@ export function parseTrustedRun(input: unknown, repository: string, workflow: st
   }
   let command: TrustedWorkflowRun['command'] = null;
   if (workflow === STABLE_WORKFLOW) {
-    const match = /^OTA stable (prepare|tick|plan|qualify|abort)$/.exec(String(run.display_title));
+    const match = /^OTA stable (prepare|tick|plan|qualify|abort|start|force-release)$/.exec(String(run.display_title));
     if (match === null) throw new Error('Stable workflow run has no trusted controller command.');
     command = match[1] as TrustedWorkflowRun['command'];
   }
@@ -97,7 +101,8 @@ export function parseTrustedArtifact(
 export interface StableGithubClient {
   latestSource(): Promise<TrustedArtifact>;
   source(runId: number): Promise<TrustedArtifact>;
-  latestCheckpoint(excludeRunId: number): Promise<TrustedArtifact | null>;
+  /** External publishers may inspect the latest state only while holding mobile-ota-production. */
+  latestCheckpoint(excludeRunId: number, productionLockHeld?: boolean): Promise<TrustedArtifact | null>;
   candidate(runId: number): Promise<TrustedArtifact>;
   downloadArtifact(artifactId: number): Promise<Uint8Array>;
 }
@@ -178,7 +183,7 @@ export function createStableGithubClient(options: {
       return false;
     const jobs: unknown[] = [];
     let total: number | null = null;
-    for (let page = 1; page <= 100; page++) {
+    for (let page = 1; page <= MAX_GITHUB_JOB_PAGES; page++) {
       const response = object(
         await api(`/actions/runs/${run.runId}/attempts/1/jobs?per_page=100&page=${page}`),
         'Attempt jobs',
@@ -194,7 +199,8 @@ export function createStableGithubClient(options: {
       jobs.push(...response.jobs);
       if (jobs.length > total) throw new Error('GitHub attempt jobs exceed the reported total.');
       if (jobs.length === total) break;
-      if (response.jobs.length !== 100 || page === 100) throw new Error('GitHub attempt jobs are incomplete.');
+      if (response.jobs.length !== 100 || page === MAX_GITHUB_JOB_PAGES)
+        throw new Error('GitHub attempt jobs are incomplete.');
     }
     if (jobs.length === 0) return run.conclusion === 'startup_failure';
     const controllers: Record<string, string> = {
@@ -212,6 +218,7 @@ export function createStableGithubClient(options: {
       'Retain preparation checkpoint',
       'Retain frozen candidate',
       'Retain final checkpoint even when QA fails',
+      'Check qualified candidate without waiting for cron',
       'Collect durable upload leases',
       'Retain checkpoint and upload leases',
     ]);
@@ -296,14 +303,82 @@ export function createStableGithubClient(options: {
       }
       throw new Error('No successful main deployment has a staged OTA artifact.');
     },
-    async latestCheckpoint(excludeRunId) {
+    async latestCheckpoint(excludeRunId, productionLockHeld = false) {
       const currentRunId = BigInt(githubId(excludeRunId, 'Current checkpoint run id'));
       for await (const input of runs(STABLE_WORKFLOW)) {
         const listedRunId = BigInt(githubId(object(input, 'Workflow run').id, 'Workflow run id'));
         if (listedRunId === currentRunId) continue;
         const run = parseTrustedRun(input, options.repository, STABLE_WORKFLOW);
         if (run.command === 'plan') continue;
-        if (listedRunId > currentRunId) {
+        if (productionLockHeld && run.status !== 'completed' && run.runAttempt !== 1)
+          throw new Error('An unfinished repeated controller attempt needs explicit checkpoint recovery.');
+        if (productionLockHeld && ['queued', 'pending', 'waiting', 'requested'].includes(run.status)) continue;
+        let finishedLockedWriter = false;
+        if (productionLockHeld && run.status === 'in_progress') {
+          // Preparation only publishes to its candidate branch, never production.
+          // The production lock prevents a queued tick from beginning its job.
+          if (run.command === 'prepare') continue;
+          const jobs: unknown[] = [];
+          let total: number | null = null;
+          for (let page = 1; page <= MAX_GITHUB_JOB_PAGES; page++) {
+            const response = object(
+              await api(`/actions/runs/${run.runId}/jobs?per_page=100&page=${page}`),
+              'Locked writer jobs',
+            );
+            if (
+              !Array.isArray(response.jobs) ||
+              !Number.isSafeInteger(response.total_count) ||
+              Number(response.total_count) < 0
+            )
+              throw new Error('Locked writer job pagination is incomplete.');
+            if (total !== null && total !== response.total_count) throw new Error('Locked writer job count changed.');
+            total = Number(response.total_count);
+            jobs.push(...response.jobs);
+            if (jobs.length === total) break;
+            if (jobs.length > total || response.jobs.length !== 100 || page === MAX_GITHUB_JOB_PAGES)
+              throw new Error('Locked writer job pagination is incomplete.');
+          }
+          const jobIds = new Set<number>();
+          const jobNames = new Set<string>();
+          const checkedJobs = jobs.map((job) => {
+            const checked = object(job, 'Locked writer job');
+            const id = githubId(checked.id, 'Locked writer job id');
+            if (
+              checked.run_id !== run.runId ||
+              checked.head_sha !== run.headSha ||
+              checked.run_attempt !== 1 ||
+              checked.run_url !== `${apiBase}/actions/runs/${run.runId}` ||
+              !STABLE_CONTROLLER_JOBS.includes(String(checked.name)) ||
+              jobIds.has(id) ||
+              jobNames.has(String(checked.name))
+            )
+              throw new Error('Locked controller job identity or uniqueness cannot be proven.');
+            jobIds.add(id);
+            jobNames.add(String(checked.name));
+            return checked;
+          });
+          const writers = checkedJobs.filter((job) => job.name === 'tick');
+          if (
+            writers.length !== 1 ||
+            writers[0].run_id !== run.runId ||
+            writers[0].head_sha !== run.headSha ||
+            writers[0].run_attempt !== run.runAttempt
+          )
+            throw new Error('Cannot prove which controller job is waiting for the production lock.');
+          const writer = writers[0];
+          if (['queued', 'pending', 'waiting', 'requested'].includes(String(writer.status))) {
+            if (
+              !Array.isArray(writer.steps) ||
+              writer.steps.some((step) =>
+                ['completed', 'in_progress'].includes(String(object(step, 'Waiting controller step').status)),
+              )
+            )
+              throw new Error('Waiting controller job already reports executed steps.');
+            continue;
+          }
+          finishedLockedWriter = writer.status === 'completed';
+        }
+        if (!productionLockHeld && listedRunId > currentRunId) {
           // Queued successors cannot write yet. A newer started/completed writer
           // means allocation order is not execution order: never load older state.
           if (['queued', 'pending', 'waiting', 'requested'].includes(run.status)) continue;
@@ -311,7 +386,7 @@ export function createStableGithubClient(options: {
             `Newer stable write run ${run.runId} is ${run.status}; dispatch a new controller run before releasing.`,
           );
         }
-        if (run.status !== 'completed')
+        if (run.status !== 'completed' && !finishedLockedWriter)
           throw new Error(`Stable checkpoint run ${run.runId} is still ${run.status}; hold until it finishes.`);
         const artifact = await artifactFor(run, 'mobile-ota-stable-state');
         if (artifact === null) {

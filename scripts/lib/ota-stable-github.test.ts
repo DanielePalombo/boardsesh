@@ -1,6 +1,9 @@
 /// <reference types="node" />
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 import {
   createStableGithubClient,
   parseTrustedArtifact,
@@ -62,7 +65,7 @@ describe('trusted workflow and artifact provenance', () => {
       headSha,
       command: null,
     });
-    for (const command of ['prepare', 'tick', 'plan', 'qualify', 'abort']) {
+    for (const command of ['prepare', 'tick', 'plan', 'qualify', 'abort', 'start', 'force-release']) {
       expect(
         parseTrustedRun(
           runInput(12, STABLE_WORKFLOW, { display_title: `OTA stable ${command}` }),
@@ -160,6 +163,7 @@ function failedJobs(runId: number, command = 'tick') {
         'Run actions/download-artifact@' + 'c'.repeat(40),
         'Record blocking QA verdict',
         'Retain final checkpoint even when QA fails',
+        'Check qualified candidate without waiting for cron',
         'Complete job',
       ]);
     if (command !== 'prepare' && name === 'tick')
@@ -178,6 +182,34 @@ function failedJobs(runId: number, command = 'tick') {
 }
 
 describe('missing checkpoint recovery', () => {
+  it.each(['prepare', 'tick'])(
+    'accepts pre-write failure evidence built from the actual %s workflow steps',
+    async (command) => {
+      const workflow = parse(readFileSync(resolve(import.meta.dirname, '../../', STABLE_WORKFLOW), 'utf8')) as {
+        jobs: Record<string, { name?: string; steps?: { name?: string; uses?: string }[] }>;
+      };
+      const activeJobs = command === 'prepare' ? ['resolve', 'prepare', 'qualify'] : ['resolve', 'tick'];
+      const jobs = Object.entries(workflow.jobs).map(([jobName, job]) => {
+        const names = activeJobs.includes(jobName)
+          ? ['Set up job', ...(job.steps ?? []).map((step) => step.name ?? `Run ${step.uses}`), 'Complete job']
+          : [];
+        return jobInput(14, job.name ?? jobName, names);
+      });
+      const { client } = mockClient({
+        'mobile-ota-stable-release.yml/runs': {
+          workflow_runs: [
+            runInput(14, STABLE_WORKFLOW, { conclusion: 'failure', display_title: `OTA stable ${command}` }),
+            runInput(13),
+          ],
+        },
+        'runs/14/artifacts': { artifacts: [] },
+        'runs/14/attempts/1/jobs': { total_count: jobs.length, jobs },
+        'runs/13/artifacts': { artifacts: [artifactInput(13, 'mobile-ota-stable-state')] },
+      });
+      await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 13 });
+    },
+  );
+
   it('bootstraps through the complete prepare/tick failure chain back to an empty startup failure', async () => {
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { client } = mockClient({
@@ -405,6 +437,85 @@ describe('missing checkpoint recovery', () => {
 });
 
 describe('newest eligible artifact selection', () => {
+  it('external locked publishers read newer completed state without weakening controller ordering', async () => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': { workflow_runs: [runInput(20), runInput(13)] },
+      'runs/20/artifacts': { artifacts: [artifactInput(20, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15)).rejects.toThrow('Newer stable write run');
+    await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 20 });
+  });
+
+  it('locked publisher skips first-attempt jobs proven queued behind its production lock', async () => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [
+          runInput(22, STABLE_WORKFLOW, { status: 'pending', conclusion: null }),
+          runInput(21, STABLE_WORKFLOW, {
+            status: 'in_progress',
+            conclusion: null,
+            display_title: 'OTA stable prepare',
+          }),
+          runInput(20, STABLE_WORKFLOW, { status: 'in_progress', conclusion: null }),
+          runInput(19),
+        ],
+      },
+      'runs/20/jobs': { total_count: 1, jobs: [jobInput(20, 'tick', [], { status: 'queued', conclusion: null })] },
+      'runs/19/artifacts': { artifacts: [artifactInput(19, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 19 });
+  });
+
+  it.each([
+    { jobs: [jobInput(20, 'tick', [], { status: 'in_progress' })] },
+    { jobs: [jobInput(20, 'tick', [], { status: 'queued', head_sha: 'b'.repeat(40) })] },
+    {
+      jobs: [
+        jobInput(20, 'tick', [], {
+          status: 'queued',
+          run_url: 'https://api.github.com/repos/other/repo/actions/runs/20',
+        }),
+      ],
+    },
+    { jobs: [jobInput(20, 'tick', [], { status: 'queued', run_attempt: 2 })] },
+    { jobs: [jobInput(20, 'tick', ['Judge and apply at most one timed step'], { status: 'queued' })] },
+    { jobs: [jobInput(20, 'tick'), jobInput(20, 'tick', [], { id: 2999 })] },
+    { jobs: [jobInput(20, 'unknown', [], { status: 'queued' })] },
+    { jobs: [] },
+  ])('locked publisher refuses unknown, running or contradictory writer evidence %#', async ({ jobs }) => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [runInput(20, STABLE_WORKFLOW, { status: 'in_progress', conclusion: null }), runInput(19)],
+      },
+      'runs/20/jobs': { total_count: jobs.length, jobs },
+      'runs/19/artifacts': { artifacts: [artifactInput(19, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15, true)).rejects.toThrow();
+  });
+
+  it('locked publisher refuses a queued rerun that may have written in its first attempt', async () => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [
+          runInput(20, STABLE_WORKFLOW, { status: 'queued', conclusion: null, run_attempt: 2 }),
+          runInput(19),
+        ],
+      },
+    });
+    await expect(client.latestCheckpoint(15, true)).rejects.toThrow('repeated controller attempt');
+  });
+
+  it('locked publisher reads the last complete checkpoint of an already-finished controller job', async () => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [runInput(20, STABLE_WORKFLOW, { status: 'in_progress', conclusion: null })],
+      },
+      'runs/20/jobs': { total_count: 1, jobs: [jobInput(20, 'tick')] },
+      'runs/20/artifacts': { artifacts: [artifactInput(20, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 20 });
+  });
+
   it('pins a successful main deployment and validates its staged artifact provenance', async () => {
     const { client } = mockClient({
       'actions/runs/14': runInput(14, SOURCE_WORKFLOW),
@@ -498,16 +609,19 @@ describe('newest eligible artifact selection', () => {
     },
   );
 
-  it('uses the latest abort checkpoint rather than resurrecting a previous active canary', async () => {
-    const { client, fetchImpl } = mockClient({
-      'mobile-ota-stable-release.yml/runs': {
-        workflow_runs: [runInput(14, STABLE_WORKFLOW, { display_title: 'OTA stable abort' }), runInput(13)],
-      },
-      'runs/14/artifacts': { artifacts: [artifactInput(14, 'mobile-ota-stable-state')] },
-    });
-    await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 14 });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
+  it.each(['abort', 'start', 'force-release'])(
+    'uses the latest %s checkpoint without resurrecting older state',
+    async (command) => {
+      const { client, fetchImpl } = mockClient({
+        'mobile-ota-stable-release.yml/runs': {
+          workflow_runs: [runInput(14, STABLE_WORKFLOW, { display_title: `OTA stable ${command}` }), runInput(13)],
+        },
+        'runs/14/artifacts': { artifacts: [artifactInput(14, 'mobile-ota-stable-state')] },
+      });
+      await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 14 });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('holds after an abort whose latest state artifact is missing', async () => {
     const { client, fetchImpl } = mockClient({
