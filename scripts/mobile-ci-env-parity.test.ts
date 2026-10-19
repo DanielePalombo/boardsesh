@@ -318,11 +318,14 @@ describe('mobile CI env parity (OTA fingerprint invariant)', () => {
     for (const { name, platform } of expectedWorkflowResolvers) {
       const source = readWorkflow(name);
       const resolverCalls = source.match(/vp exec expo-updates runtimeversion:resolve/g) ?? [];
-      expect(resolverCalls, `${name} must resolve each explicit fingerprint`).toHaveLength(name === OTA ? 11 : 1);
+      expect(resolverCalls, `${name} must resolve each explicit fingerprint`).toHaveLength(name === OTA ? 9 : 1);
       expect(source).toContain(
         `cd packages/mobile && vp exec expo-updates runtimeversion:resolve --platform ${platform}`,
       );
       if (name === OTA) {
+        // Both stability reads use one platform-aware resolver definition.
+        expect(source).toContain('runtime="$(resolve_train_runtime "$platform")"');
+        expect(source).toContain('confirmed="$(resolve_train_runtime "$platform")"');
         expect(source).toContain(
           'env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios',
         );

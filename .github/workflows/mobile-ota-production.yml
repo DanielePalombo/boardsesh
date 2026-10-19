@@ -418,22 +418,21 @@ jobs:
             ios|android|all) ;;
             *) echo '::error::Unknown publish platform.'; exit 1 ;;
           esac
+          resolve_train_runtime() {
+            if [ "$1" = ios ]; then
+              (cd packages/mobile && env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios | jq -r '.runtimeVersion // empty')
+            else
+              (cd packages/mobile && GOOGLE_MAPS_API_KEY="$ANDROID_MAPS_KEY" vp exec expo-updates runtimeversion:resolve --platform android | jq -r '.runtimeVersion // empty')
+            fi
+          }
           for platform in ios android; do
             if [ "$INPUT_PLATFORM" != all ] && [ "$INPUT_PLATFORM" != "$platform" ]; then continue; fi
-            if [ "$platform" = ios ]; then
-              runtime="$(cd packages/mobile && env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios | jq -r '.runtimeVersion // empty')"
-            else
-              runtime="$(cd packages/mobile && GOOGLE_MAPS_API_KEY="$ANDROID_MAPS_KEY" vp exec expo-updates runtimeversion:resolve --platform android | jq -r '.runtimeVersion // empty')"
-            fi
+            runtime="$(resolve_train_runtime "$platform")"
             if ! printf '%s' "$runtime" | grep -Eq '^[0-9a-f]{40}$'; then
               echo "::error::No full $platform train fingerprint; publishing nothing."
               exit 1
             fi
-            if [ "$platform" = ios ]; then
-              confirmed="$(cd packages/mobile && env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios | jq -r '.runtimeVersion // empty')"
-            else
-              confirmed="$(cd packages/mobile && GOOGLE_MAPS_API_KEY="$ANDROID_MAPS_KEY" vp exec expo-updates runtimeversion:resolve --platform android | jq -r '.runtimeVersion // empty')"
-            fi
+            confirmed="$(resolve_train_runtime "$platform")"
             if [ "$runtime" != "$confirmed" ]; then
               echo "::error::Unstable $platform train fingerprint; publishing nothing."
               exit 1
@@ -1129,6 +1128,7 @@ jobs:
     if: always() && !cancelled() && github.ref == 'refs/heads/release/next'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    continue-on-error: true
     environment: Production
     steps:
       # Outputs carry only publication results; webhook delivery runs main code.
@@ -1181,3 +1181,8 @@ jobs:
           path: train-deployment-events.json
           if-no-files-found: ignore
           retention-days: 30
+      - name: Surface train notification failure
+        if: failure()
+        run: |
+          echo '::warning::Train Discord delivery failed; successful OTA publications remain valid.'
+          echo 'Train Discord delivery failed. Pending events remain in the retained artifact.' >> "$GITHUB_STEP_SUMMARY"

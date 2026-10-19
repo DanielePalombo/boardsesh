@@ -253,6 +253,61 @@ describe('dual-base PR preview replay', { timeout: 30_000 }, () => {
     expect(result.selections[0]!.candidate.targetRef).toBe(baseRef);
     expect(result.selections[0]!.platform).toBe('ios');
   });
+  it('retains the successful platform receipt when its sibling publish fails', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ota-partial-preview-'));
+    directories.push(directory);
+    const scratch = join(directory, 'scratch');
+    const out = join(directory, 'artifacts');
+    mkdirSync(scratch);
+    const prepared = { ...candidate('main'), directory: 'candidate', baselineDirectory: 'baseline' };
+    prepared.platforms.android = { status: 'ota-compatible', runtimeVersion: fingerprint };
+    writeFileSync(join(scratch, 'candidates.json'), JSON.stringify([prepared]));
+    vi.stubEnv('BRANCH', 'pr-7');
+    vi.stubEnv('GITHUB_RUN_ID', '10');
+    vi.stubEnv('DEPLOYMENT_ID', '20');
+    vi.stubEnv('GITHUB_OUTPUT', join(directory, 'outputs'));
+    const originalExitCode = process.exitCode;
+    try {
+      runPreviewCandidates(
+        directory,
+        {
+          headSha: 'e'.repeat(40),
+          baseSha: 'b'.repeat(40),
+          baseRef: 'main',
+          mainSha: 'b'.repeat(40),
+        },
+        scratch,
+        out,
+        'publish',
+        (_directory, _binary, arguments_, environment = process.env) => {
+          if (arguments_.at(-1) === 'android') throw new Error('Android upload failed');
+          writeFileSync(
+            environment.OTA_PREVIEW_RECEIPT_PATH!,
+            JSON.stringify({
+              platform: 'ios',
+              branch: 'pr-7',
+              commitHash: prepared.commitHash,
+              runtimeVersion: fingerprint,
+              bundleSha256: 'b'.repeat(64),
+              updateId: '12345678-1234-1234-1234-123456789abc',
+            }),
+          );
+        },
+        () => fingerprint,
+      );
+      const receipt = JSON.parse(readFileSync(join(out, 'receipt.json'), 'utf8')) as {
+        platforms: { ios?: unknown; android?: unknown };
+        candidates: PreviewCandidate[];
+      };
+      expect(receipt.platforms.ios).toBeDefined();
+      expect(receipt.platforms.android).toBeUndefined();
+      expect(receipt.candidates[0]!.platforms.android!.status).toBe('failed');
+      expect(readFileSync(join(directory, 'outputs'), 'utf8')).toContain('published=true\nfailed=true');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = originalExitCode;
+    }
+  });
   it('never deduplicates different full runtimes sharing the same display hash', () => {
     const main = candidate('main', 'a'.repeat(12) + 'b'.repeat(28));
     const train = candidate('release/next', 'a'.repeat(12) + 'c'.repeat(28));

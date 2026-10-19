@@ -129,7 +129,8 @@ export async function deliverDeploymentEvents(options: {
 }): Promise<void> {
   if (options.outbox.pending.length === 0) return;
   if (!options.webhook) throw new Error('DISCORD_DEPLOY_WEBHOOK is missing; deployment events remain pending.');
-  for (const event of options.outbox.pending) {
+  const deliveries = [...options.outbox.pending];
+  for (const event of deliveries) {
     if (!options.outbox.sent.includes(event.id)) {
       const response = await (options.fetcher ?? fetch)(options.webhook, {
         method: 'POST',
@@ -142,6 +143,7 @@ export async function deliverDeploymentEvents(options: {
       options.outbox.sent.push(event.id);
     }
     options.outbox.pending = options.outbox.pending.filter((pending) => pending.id !== event.id);
+    // Commit each receipt before the next post so a later failure cannot replay it.
     options.save();
   }
 }

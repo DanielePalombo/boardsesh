@@ -371,7 +371,8 @@ export function assertPublishTrainAuthorization(
     git(['rev-parse', 'HEAD']) !== trainSha
   )
     throw new Error('Train or main advanced after authorization');
-  const live = parseLiveStoreRuntimes(JSON.parse(env.OTA_LIVE_STORE_RUNTIMES ?? 'null'));
+  if (!env.OTA_LIVE_STORE_RUNTIMES) throw new Error('Missing OTA_LIVE_STORE_RUNTIMES for train publication');
+  const live = parseLiveStoreRuntimes(JSON.parse(env.OTA_LIVE_STORE_RUNTIMES));
   if (
     !mayPublishTrainRuntime(live, platform, runtime) ||
     isRuntimeReservedByMain(platform, runtime, mainSha, runner, ROOT_DIR)

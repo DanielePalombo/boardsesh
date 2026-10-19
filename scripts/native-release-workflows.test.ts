@@ -37,6 +37,25 @@ describe('native release workflow contracts', () => {
   const otaCheck = workflow('mobile-ota-check.yml');
   const productionOta = workflow('mobile-ota-production.yml');
 
+  it('keeps train notification failures separate from successful OTA publications', () => {
+    const jobs = (
+      parse(productionOta) as {
+        jobs: Record<
+          string,
+          {
+            'continue-on-error'?: boolean;
+            steps: Array<{ name?: string; if?: string; run?: string }>;
+          }
+        >;
+      }
+    ).jobs;
+    expect(jobs.publish['continue-on-error']).toBeUndefined();
+    expect(jobs['notify-train-deployment']['continue-on-error']).toBe(true);
+    expect(
+      jobs['notify-train-deployment'].steps.find((step) => step.name === 'Surface train notification failure'),
+    ).toMatchObject({ if: 'failure()', run: expect.stringContaining('::warning::') });
+  });
+
   it.each([
     ['ios-testflight-rn.yml', ios],
     ['android-apk-rn.yml', android],

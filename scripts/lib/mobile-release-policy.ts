@@ -47,7 +47,10 @@ export function parseLiveStoreRuntimes(input: unknown, now = Date.now()): LiveSt
     throw new Error('Invalid live store runtime schema or timestamp');
   }
   const age = now - Date.parse(checkedAt);
-  if (age < -60_000 || age > LIVE_STORE_MAX_AGE_MS) throw new Error('Live store runtime evidence is stale');
+  if (age < -60_000 || age > LIVE_STORE_MAX_AGE_MS)
+    throw new Error(
+      `Live store runtime evidence is stale (age ${Math.floor(age / 1000)} seconds; maximum ${LIVE_STORE_MAX_AGE_MS / 1000} seconds)`,
+    );
   const platformRecord = (platform: MobilePlatform): LiveStoreRuntime => {
     const runtime = record(parsed[platform]);
     const { version, buildNumber, runtimeVersion, buildTag, commit, protectedRuntimeVersions } = runtime;

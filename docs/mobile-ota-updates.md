@@ -3182,6 +3182,9 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   retain the existing explicit maintainer authorization; a base push never
   silently authorizes new fork code. The sticky comment reports each target
   and platform independently, including conflicts and native changes.
+  Refresh dispatches one run per matching PR. Per-PR lanes coalesce pending
+  refreshes, but there is no global preview runner cap. An active train can
+  double the export work, so account for open PR count when sizing runners.
   To inspect availability from a laptop, use the fingerprint a native build baked:
   `vp run mobile:ota-surf-doctor -- --platform ios --runtime-version <hash>` (take `<hash>` from that
   build's `EXPO_UPDATES_FINGERPRINT_OVERRIDE`; a locally resolved one is macOS-flavoured and will not

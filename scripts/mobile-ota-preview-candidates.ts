@@ -241,6 +241,7 @@ export function runPreviewCandidates(
   out: string,
   phase: string,
   runCommand = command,
+  runtimeResolver = resolvePreviewRuntime,
 ) {
   const tooling = resolve(import.meta.dirname, '..');
   const planPath = join(scratch, 'candidates.json');
@@ -330,8 +331,8 @@ export function runPreviewCandidates(
     for (const platform of ['ios', 'android'] as const) {
       const result = candidate.platforms[platform];
       if (result?.status !== 'ota-compatible') continue;
-      const runtime = resolvePreviewRuntime(candidate.directory, platform, process.env);
-      const baseline = resolvePreviewRuntime(candidate.baselineDirectory, platform, process.env);
+      const runtime = runtimeResolver(candidate.directory, platform, process.env);
+      const baseline = runtimeResolver(candidate.baselineDirectory, platform, process.env);
       if (!runtime || !baseline) {
         result.status = 'runtime-unresolved';
         failed = true;

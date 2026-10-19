@@ -367,6 +367,26 @@ describe('resolving the runtimeVersion a publish targeted', () => {
 
 describe('guarded train publish runtime', () => {
   const fingerprint = 'a'.repeat(40);
+  it('identifies missing store evidence explicitly before any upload', () => {
+    const mainSha = 'd'.repeat(40);
+    const trainSha = 'e'.repeat(40);
+    const git = vi.fn((_binary: string, arguments_: readonly string[]) => {
+      if (arguments_[0] === 'fetch') return '';
+      return arguments_[1] === 'origin/main' ? mainSha : trainSha;
+    });
+    expect(() =>
+      assertPublishTrainAuthorization(
+        'ios',
+        processEnv({
+          GITHUB_ACTIONS: 'true',
+          OTA_EXPECT_MAIN_SHA: mainSha,
+          OTA_EXPECT_TRAIN_SHA: trainSha,
+          OTA_EXPECT_RUNTIME_VERSION: fingerprint,
+        }),
+        git as unknown as typeof execFileSync,
+      ),
+    ).toThrow('Missing OTA_LIVE_STORE_RUNTIMES');
+  });
   it('independently resolves without overrides and freezes the authorized runtime for the upload', () => {
     const input = processEnv({
       GITHUB_ACTIONS: 'true',
