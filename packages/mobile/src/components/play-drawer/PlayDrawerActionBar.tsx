@@ -8,9 +8,9 @@ import { BleLightbulbButton } from '../ble/BleLightbulbButton';
 import type { BleLightbulbLabelKind } from '../ble/ble-lightbulb-button-state';
 import { LightbulbHolderBadge } from './LightbulbHolderBadge';
 import { FirstConnectPill } from './FirstConnectPill';
-import { PlayDrawerCommitBar } from './PlayDrawerCommitBar';
-import type { CommitBarMode, CommitButtonLabel } from './wall-state';
-import { resolveActionBarLayout, type ActionBarSecondaryItem } from './action-bar-layout';
+import { PlayDrawerCommitBar, PutOnWallButton } from './PlayDrawerCommitBar';
+import type { CommitButtonLabel } from './wall-state';
+import { resolveActionBarLayout, type ActionBarCommitButton, type ActionBarSecondaryItem } from './action-bar-layout';
 import { DEFAULT_PLAYER_BUTTONS, type PlayerButtonsLayout } from '../../lib/player-buttons';
 import { ActionButton, SIZES, type ButtonSize, drawerActionBarStyles } from '../drawer-action-bar/DrawerActionBar';
 import { useTheme } from '../../providers/theme-provider';
@@ -78,25 +78,21 @@ type PlayDrawerActionBarProps = {
    *  appears twice in the drawer (see `shouldShowHolderBadge` in wall-state.ts). */
   showHolderBadge?: boolean;
   /**
-   * What the SECOND row is doing. `'commit'` swaps the utilities (heart, angle,
-   * share, and the queue on a mirror board) for the browse latch's own controls —
-   * same 64pt row, no added height. Resolved by `resolveCommitBarModel`; an
-   * anonymous viewer is forced back to `'actions'` here, alongside the rest of the
-   * `viewer` rules.
+   * The browse latch's control in the second row. `putOnWall` puts one button in
+   * the middle of the usual row; `confirm` (someone else moved the wall while you
+   * looked around) swaps the row for Keep theirs / Put mine up. Resolved from
+   * `resolveCommitBarModel`; an anonymous viewer never gets either, alongside the
+   * rest of the `viewer` rules.
    */
-  secondaryMode?: CommitBarMode;
-  /** Commit-mode only: leave the latch and go back to the committed climb. */
-  showBackToLive?: boolean;
-  /** Commit-mode only: hidden when the displayed climb is already the lit one. */
-  showPutOnWall?: boolean;
-  /** Commit-mode only: someone moved the wall mid-browse, so the pair swaps to
-   *  Keep theirs / Put mine up and the question floats above the row. */
-  showConfirm?: boolean;
-  /** Commit-mode only: the lit climb's name, for the confirm's question. */
+  commitButton?: ActionBarCommitButton;
+  /** Confirm only: the lit climb's name, for the question. */
   wallClimbName?: string | null;
-  /** Commit-mode only: "Put on the wall" vs "Set active" where no wall is reachable. */
+  /** Confirm only: the lit climb's uuid, to name who put it up. */
+  wallClimbUuid?: string | null;
+  /** "Put on the wall" vs "Set active" where no wall is reachable. */
   commitLabel?: CommitButtonLabel;
-  onBackToLive?: () => void;
+  /** Confirm only: leave their climb up. */
+  onKeepTheirs?: () => void;
   onCommit?: () => void;
   ascentCount: number;
   currentAngle?: number;
@@ -166,13 +162,11 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
   connectPill = false,
   onConnectPill,
   showHolderBadge = true,
-  secondaryMode = 'actions',
-  showBackToLive = false,
-  showPutOnWall = false,
-  showConfirm = false,
+  commitButton = null,
   wallClimbName = null,
+  wallClimbUuid = null,
   commitLabel = 'putOnWall',
-  onBackToLive,
+  onKeepTheirs,
   onCommit,
   ascentCount,
   currentAngle,
@@ -217,14 +211,15 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
   // A signed-out reader has no queue to commit into and no wall to take, so the
   // suppression lives here with the rest of the `viewer` rules rather than only
   // in the resolver — the same shape as `showLightbulb` above.
-  const inCommitMode = secondaryMode === 'commit' && !isAnonymous && onBackToLive != null && onCommit != null;
+  const commit: ActionBarCommitButton =
+    isAnonymous || onCommit == null || (commitButton === 'confirm' && onKeepTheirs == null) ? null : commitButton;
   // Which button sits where. The host resolves the same layout to learn which
   // buttons ⋯ has to stand in for, so both read one rule.
   const layout = resolveActionBarLayout({
     supportsMirroring,
     isAnonymous,
     connectPill,
-    inCommitMode,
+    commitButton: commit,
     showLightbulb,
     hasShare: onShare != null,
     angleAvailable: onOpenAngleSelector != null && currentAngle != null,
@@ -232,8 +227,8 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
     previousNext,
   });
   // No second row at all: the climber switched every small button off, and
-  // neither the commit bar nor the connect pill wants the row.
-  const hasSecondaryRow = layout.secondaryRow === 'commit' || layout.secondaryRow.length > 0;
+  // neither Put on the wall, the busy-wall question nor the connect pill wants it.
+  const hasSecondaryRow = layout.secondaryRow === 'confirm' || layout.secondaryRow.length > 0;
 
   // Haptics follow HIG "Playing haptics": plain buttons (prev / next / share /
   // sign in / angle) get none — the press itself is the feedback. The two
@@ -358,32 +353,17 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
         </View>
       </View>
 
-      {/* Commit mode paints the row's own faint violet track edge-to-edge — a
-          bottom "mode strip" that pairs with the header pill up top, and still
-          0pt: it's a background on a row that already exists. With every small
-          button switched off the row goes, and commit mode or the connect pill
-          brings it back. */}
       {hasSecondaryRow ? (
-        <View
-          style={[
-            drawerActionBarStyles.rowSecondary,
-            styles.rowSecondaryHeight,
-            inCommitMode && { backgroundColor: theme.systemColors.fill },
-          ]}
-        >
-          {/* `inCommitMode` already needs both handlers; restated so TS sees them. */}
-          {layout.secondaryRow === 'commit' && onBackToLive && onCommit ? (
+        <View style={[drawerActionBarStyles.rowSecondary, styles.rowSecondaryHeight]}>
+          {layout.secondaryRow === 'confirm' && onKeepTheirs && onCommit ? (
             <PlayDrawerCommitBar
-              showBackToLive={showBackToLive}
-              showPutOnWall={showPutOnWall}
-              showConfirm={showConfirm}
               wallClimbName={wallClimbName}
-              commitLabel={commitLabel}
-              onBackToLive={onBackToLive}
-              onCommit={onCommit}
+              wallClimbUuid={wallClimbUuid}
+              onKeepTheirs={onKeepTheirs}
+              onConfirm={onCommit}
             />
-          ) : layout.secondaryRow === 'commit' ? null : (
-            layout.secondaryRow.map((item: ActionBarSecondaryItem) => {
+          ) : layout.secondaryRow === 'confirm' ? null : (
+            layout.secondaryRow.map((item: ActionBarSecondaryItem, index: number) => {
               switch (item) {
                 case 'mirror':
                   return (
@@ -423,7 +403,10 @@ export const PlayDrawerActionBar = memo(function PlayDrawerActionBar({
                     </PressableSurface>
                   ) : null;
                 case 'spacer':
-                  return <View key={item} style={drawerActionBarStyles.spacer} />;
+                  // Put on the wall sits between two spacers, so position keys them.
+                  return <View key={`${item}-${index}`} style={drawerActionBarStyles.spacer} />;
+                case 'putOnWall':
+                  return onCommit ? <PutOnWallButton key={item} commitLabel={commitLabel} onPress={onCommit} /> : null;
                 case 'connectPill':
                   return (
                     <FirstConnectPill key={item} pending={lightbulbPending} onPress={onConnectPill ?? onLightbulb} />

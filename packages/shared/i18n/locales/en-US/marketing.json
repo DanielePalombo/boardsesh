@@ -556,7 +556,7 @@
       },
       "crowd": {
         "title": "Browsing without moving the wall",
-        "p1": "With someone else in your session, swiping stops lighting the board and a Browsing pill appears. Tap Put on the wall when you want it.",
+        "p1": "With someone else in your session, swiping stops lighting the board. Tap Put on the wall when you want yours up, or tap the face at the top to go back to the climb on the wall.",
         "p2": "Climbing alone? Hold the lightbulb and turn off Light problems on swipe and Light problems when tapping the list.",
         "previewLink": "Preview a climb from any list"
       },

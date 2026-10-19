@@ -32,7 +32,7 @@ Three fixes have already shipped against this, and the model below builds on the
 - #4829 (closed 2026-09-06): swipes in the player walk the list you opened the climb from,
   not the queue.
 - #4281 (closed 2026-08-23): in a crew, looking at a climb opens a preview with a
-  **Browsing** pill and a **Put on the wall** button instead of taking the wall. It ships
+  back chip and a **Put on the wall** button instead of taking the wall. It ships
   behind a flag that is still off, so climbers don't have it yet (item 4 below).
 - #4731 (merged 2026-10-04): a playlist can be added to the queue without clearing it.
 
@@ -49,7 +49,7 @@ Player wording is being agreed with #6229. Until then this page uses these words
 | Track, shown as "From …"     | The list the player is walking. Today the player does not name it anywhere.                                                    | `playlistSuggestionSource`                           |
 | Queue                        | Your climbs in order: **History** (climbs before the current one), **Now** (the current climb), **Up next**. In a crew, the room's queue. | `queue`, `currentClimbQueueItem`                     |
 | Preview                      | The player shows a climb without making it current.                                                                             | `previewQueueItem`                                   |
-| Browsing (pill)              | A preview whose swipes are guaranteed not to touch the wall.                                                                    | `WallPillState 'browsing'`                           |
+| Browsing (back chip)         | A preview whose swipes are guaranteed not to touch the wall.                                                                    | `WallPillState 'browsing'`                           |
 | Live (pill)                  | Your next swipe changes the climb on the wall.                                                                                  | `WallPillState 'live'`                               |
 | On the wall (pill)           | The climb on screen is the one lit on the board.                                                                                | `WallPillState 'onWall'`                             |
 | Put on the wall / Set active | The commit button under a preview. It says Set active when no board is connected and nothing is lit.                            | `CommitButtonLabel`, `wall-state.ts:166`             |
@@ -140,13 +140,13 @@ The player's header pill and the row under the board say what a swipe will do. T
 | No pill                   | The plain player.                                                                                                       | Solo, no board connected and nothing lit (`wall-state.ts:82`); or a committed climb with Light on swipe off, where swipes don't commit. |
 | Live                      | A Live pill. Your next swipe changes the climb on the wall.                                                             | A committed climb while a board is connected or a climb is lit, and swipes commit (`wall-state.ts:81`).                                                                              |
 | On the wall               | The driver's avatar in the pill.                                                                                        | The climb on screen is the lit one (`wall-state.ts:79`). It outranks Browsing.                                                                                                       |
-| Browsing                  | A Browsing pill and a row with **Back to live** and **Put on the wall** (or **Set active**). Swipes never touch the wall. | Any preview or swipe while Light on swipe is off (`play-drawer-navigation.ts:67`); with the crew flag on, a list tap in a crew.                                                       |
-| Preview without Browsing  | The Put on the wall / Set active row but no Browsing pill. Swiping and Next do nothing: there is no list to walk. With a board connected or a climb lit, the pill even says **Live** (`wall-state.ts:81`; `PlayCore.tsx:794-799` judges Live as if no preview were open). | A search tap with Light on tap off, the long-press **Preview** action, a deep link, the Home new-climb card or a workout preview row, while Light on swipe is on (`src/components/play-drawer/PlayCore.tsx:783-790`). |
+| Browsing                  | A back chip (back glyph plus the face of whoever lit the wall) that returns to the climb on the wall, and **Put on the wall** (or **Set active**) in the middle of the action row. Swipes never touch the wall. | Any preview or swipe while Light on swipe is off (`play-drawer-navigation.ts:67`); with the crew flag on, a list tap in a crew.                                                       |
+| Preview without Browsing  | The Put on the wall / Set active button, and the back chip whenever there's a committed climb to go back to (it stands in for the **Live** chip during a preview; `resolveHeaderPillState` in `wall-state.ts`). Swiping and Next do nothing: there is no list to walk. | A search tap with Light on tap off, the long-press **Preview** action, a deep link, the Home new-climb card or a workout preview row, while Light on swipe is on (`src/components/play-drawer/PlayCore.tsx:783-790`). |
 | Wrong-board preview       | A Switch board overlay over the action row. Swipes walk the playlist without touching the queue, and stop at its end.    | A playlist climb from a board you are not on (`use-playlist-activation.ts:846-878`).                                                                                                 |
 
-<img src="images/list-model/player-browsing.png" alt="The player in a preview: the Browsing pill and the Put on the wall row" width="300">
+<img src="images/list-model/player-browsing.png" alt="The player in a preview: the back chip with the face of whoever lit the wall at the top left, and Put on the wall between the heart and share" width="300">
 
-_The player after the long-press Preview action with Light on swipe off. (1) The Browsing pill. (2) Put on the wall, with Back to live beside it. The Previous and Next buttons are greyed out: this preview has no list to walk._
+_The player after the long-press Preview action with Light on swipe off. (1) The back chip with the face of whoever lit the wall; tapping it returns to the climb on the wall. (2) Put on the wall, between the heart and share. The face shows as a "?" here because the simulator's wall has no named driver._
 
 ## Eleven inconsistencies
 
@@ -234,7 +234,7 @@ The gate that makes a tap a private look in a crew (#4281) is behind the PostHog
 `queue-provider.tsx:2558`). On 2026-10-18 the flag was inactive at 0%, as it has been since
 2026-08-25. So in a crew today every tap commits for the whole room, and a playlist, For You
 or setter tap replaces the room's queue. The /help page already promises the gate: "With
-someone else in your session, swiping stops lighting the board and a Browsing pill appears"
+someone else in your session, swiping stops lighting the board. Tap Put on the wall when you want yours up, or tap the face at the top to go back to the climb on the wall"
 (`marketing.json` `help.sessions.crowd.p1`).
 
 With the flag on, search, playlists, For You, setter pages, the logbook, sessions, profile,
@@ -260,7 +260,7 @@ A preview without a track has nothing to walk, so swiping and Next do nothing
 preview is like this:
 
 - Search with Light on tap off (#5157): `app/(tabs)/climbs/index.tsx:1313-1318`. Its comment
-  promises the Browsing pill, which only appears if Light on swipe is off too. With the crew
+  promises the back chip and Put on the wall button, which only appear if Light on swipe is off too. With the crew
   flag on, the same tap in a crew does get the results as a track (`:1321-1326`).
 - The long-press **Preview** action, a deep link, the Home new-climb card and workout preview
   rows.
@@ -359,7 +359,7 @@ _The queue sheet. (1) History. (2) The current climb. (3) Up next. (4) Suggestio
 ## The model: play from a list, queue on purpose
 
 Seven rules. Each one reuses a part that already exists in the code: the list track from
-#4829, Browsing and Put on the wall from #4281, and Add to queue from #4731.
+#4829, the browse preview and Put on the wall from #4281, and Add to queue from #4731.
 
 1. **Tap a climb in any list and the player plays from that list**, and says so in its header:
    "From Projects · 4 of 23".
@@ -461,7 +461,7 @@ Post this page in Discord before filing F1 to F6, and ask @brownbeagle whether i
 | `src/lib/playlists/use-playlist-activation.ts`                         | Every list tap that goes through a track: wrong board, crew preview, replace, insert.                         |
 | `src/components/play-drawer/use-play-selection-controller.ts`          | Opens without a track (logbook, sessions, profile, feed) and the similar-climbs tap.                          |
 | `src/components/play-drawer/play-drawer-navigation.ts`                 | Whether a swipe stays a preview or commits.                                                                    |
-| `src/components/play-drawer/wall-state.ts`                             | The header pill and the Put on the wall / Set active row.                                                     |
+| `src/components/play-drawer/wall-state.ts`                             | The header pill and the Put on the wall / Set active button.                                                 |
 | `src/providers/queue-provider.tsx`                                     | `setCurrentClimb`, `nextClimb`, `setQueue`, `appendQueueItems`, and where the prune is switched on.            |
 | `src/providers/queue/use-queue-persistence.ts`, `src/lib/queue-snapshot-store.ts` | The solo queue saved across restarts.                                                                |
 | `src/components/play-drawer/QueueList.tsx`, `use-queue-sheet-handlers.ts` | The queue sheet: sections, suggestions, row taps.                                                          |

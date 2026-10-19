@@ -442,12 +442,14 @@ with no light kit.
 
 Saving a climb also fires `Set Active Climb`, because the create screen puts
 the saved climb on the queue. Those carry `trigger = 'climb_saved'` and are
-left out of step 2. Every spray wall starts empty and the first thing anyone
+left out of step 2. A commit from the Put on the wall button carries
+`trigger = 'put_on_wall'`; it is a real pick and stays in step 2. Every spray wall starts empty and the first thing anyone
 does on one is set a climb, so with saves counted step 2 would read "saved a
 climb" for nearly everyone and could not tell a climber who came back from one
 who did not. In HogQL the filter is
 `coalesce(toString(properties.trigger), '') != 'climb_saved'`: `trigger` is
-null on a climb the climber chose.
+null on most climbs the climber chose and `put_on_wall` on one put up from a
+browse preview, so the filter keeps both.
 
 `boardType` on both step 2 events is the climb's own board, not the board the
 app has active. A spray climb opened from a shared link by someone whose active
@@ -1006,6 +1008,7 @@ finished the period shown as final. Mark the current, unfinished period.
 | #6342 backend deploy (fill in the date when it ships) | Consented capture is geolocated to the visitor again; country-based filters work from here |
 | #6574 OTA (fill in the date when it ships) | The Bluetooth quickstart lists boards with no serial. `Board Quickstart Scan Finished` gains `serialless_count` (boards heard with no serial, one per Bluetooth device: MoonBoards and Kilter-built boxes advertising a bare `Kilter Board`) and `moonboard_count` (the MoonBoard part of it). `found_count` stays serials-only, so its series continues across the change. Both new counts are devices, not boards: an Android controller that rotates its private address mid-scan can count twice. Earlier events have no `serialless_count`; a scan that heard nothing has all three at zero |
 | #6358 web deploy and OTA (fill in the date when it ships) | Analytics starts on by default outside the prompt regions (EU, EEA, UK, Switzerland, China, South Korea and the rest of `CONSENT_PROMPT_COUNTRIES`), so PostHog person and event counts from those other countries jump on this date. Do not compare those counts across it. Install attribution (`Install Attributed`, Apple Ads campaign fields, `install_*` person properties) keeps needing an explicit Allow, so its counts do not jump; the share of people who carry them falls instead |
+| 2026-10-19 (crew browse UI, #4281) | `Set Active Climb` gains `trigger = 'put_on_wall'` when a climber commits a pinned preview on purpose: the Put on the wall (or Set active) button, or the lightbulb relaying it. It is a real pick: filters on `trigger != 'climb_saved'` count it unchanged. Crew commits are the ones with `participantCount >= 2` |
 
 None of these repairs past data. Annotate them; do not backfill.
 

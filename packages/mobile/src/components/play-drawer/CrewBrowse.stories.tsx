@@ -5,13 +5,15 @@ import type { ScenarioOverrides } from '../../dev/stories/scenario-overrides';
 import type { StoryModule } from '../../dev/stories/types';
 import { setSetting } from '../../settings';
 import { spacing } from '../../theme/tokens';
-import { PlayDrawerCommitBar } from './PlayDrawerCommitBar';
+import { PlayDrawerCommitBar, PutOnWallButton } from './PlayDrawerCommitBar';
 import { WallStateCallout } from './WallStateCallout';
 import { WallStatePill, type WallStatePillState } from './WallStatePill';
 
-// Browsing in a crew session (#4281): the pill in the drawer header, the card it
-// opens, and the commit row. The scenario stories put the real drawer into the
-// same states with a fake second climber, since a real crew needs two phones.
+// Browsing in a crew session (#4281): the chip in the drawer header (the wall
+// driver's face, with a back glyph while you browse), the Put on the wall button
+// and the busy-wall question, and the explainer the On the wall / Live chips open.
+// The scenario stories put the real drawer into the same states with a fake
+// second climber, since a real crew needs two phones.
 
 const noop = () => {};
 
@@ -39,6 +41,11 @@ const asCrewClimber = () => {
   setSetting('lightOnSwipe', true);
 };
 
+// A real crew always has a climb up. The drawer scenarios open the first climb
+// solo (which commits it and lights the wall), then the crew arrives, so a swipe
+// browses away from a climb the back chip can return to.
+const CREW_JOINS_AFTER_MS = 6000;
+
 const stories: StoryModule = {
   title: 'Play drawer / Crew browse',
   stories: {
@@ -59,46 +66,31 @@ const stories: StoryModule = {
       ),
     },
     commitBar: {
-      name: 'Commit row',
+      name: 'Put on the wall, and the busy-wall question',
       render: () => (
         <View style={styles.stack}>
           <StoryVariant label="browsing, wall reachable">
             <StorySurface>
-              <PlayDrawerCommitBar
-                showBackToLive
-                showPutOnWall
-                showConfirm={false}
-                wallClimbName="Moonlight Sonata"
-                commitLabel="putOnWall"
-                onBackToLive={noop}
-                onCommit={noop}
-              />
+              <View style={styles.buttonRow}>
+                <PutOnWallButton commitLabel="putOnWall" onPress={noop} />
+              </View>
             </StorySurface>
           </StoryVariant>
           <StoryVariant label="browsing, no wall">
             <StorySurface>
-              <PlayDrawerCommitBar
-                showBackToLive
-                showPutOnWall
-                showConfirm={false}
-                wallClimbName={null}
-                commitLabel="setActive"
-                onBackToLive={noop}
-                onCommit={noop}
-              />
+              <View style={styles.buttonRow}>
+                <PutOnWallButton commitLabel="setActive" onPress={noop} />
+              </View>
             </StorySurface>
           </StoryVariant>
-          <StoryVariant label="someone else moved the wall">
+          <StoryVariant label="someone else lit the wall">
             <StorySurface>
               <View style={styles.confirmRoom}>
                 <PlayDrawerCommitBar
-                  showBackToLive={false}
-                  showPutOnWall={false}
-                  showConfirm
                   wallClimbName="Moonlight Sonata"
-                  commitLabel="putOnWall"
-                  onBackToLive={noop}
-                  onCommit={noop}
+                  wallClimbUuid={null}
+                  onKeepTheirs={noop}
+                  onConfirm={noop}
                 />
               </View>
             </StorySurface>
@@ -117,11 +109,6 @@ const stories: StoryModule = {
               </View>
             </StoryVariant>
           ))}
-          <StoryVariant label="notice: you're browsing now">
-            <View style={styles.calloutRoom}>
-              <WallStateCallout state="browsing" presentation="notice" top={0} onDismiss={noop} />
-            </View>
-          </StoryVariant>
         </View>
       ),
     },
@@ -130,12 +117,14 @@ const stories: StoryModule = {
       overrides: IN_A_CREW,
       prepare: asCrewClimber,
       route: '/climbs?screenshotOpenFirst=1',
+      overridesDelayMs: CREW_JOINS_AFTER_MS,
     },
     crewFlagOff: {
       name: 'Real drawer, crew of two, flag off (today)',
       overrides: IN_A_CREW_FLAG_OFF,
       prepare: asCrewClimber,
       route: '/climbs?screenshotOpenFirst=1',
+      overridesDelayMs: CREW_JOINS_AFTER_MS,
     },
     crewList: {
       name: 'Climb list, crew of two, flag on',
@@ -157,6 +146,10 @@ const styles = StyleSheet.create({
   },
   confirmRoom: {
     paddingTop: spacing[16],
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   calloutRoom: {
     height: 160,

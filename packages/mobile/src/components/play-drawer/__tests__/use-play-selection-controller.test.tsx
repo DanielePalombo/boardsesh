@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TFunction } from 'i18next';
 import type { Climb } from '@boardsesh/shared-schema';
 import type { PlayDrawerOpenOptions } from '../play-drawer-types';
 import type { ClimbQueueItem, PlaylistSuggestionSource } from '@boardsesh/queue';
@@ -81,12 +80,10 @@ function inputs(): SelectionInputs {
       busyWallConfirmArmed: false,
       browseLatchActive: false,
       wallClimbUuid: 'wall',
-      wallClimbName: 'Wall climb',
       displayedClimbUuid: 'preview',
       wallUuidAtLatchStartRef: { current: 'wall' },
       setBusyWallConfirmArmed: vi.fn(),
       markLatchExit: vi.fn(),
-      t: ((key: string) => key) as TFunction<'session'>,
     },
   };
 }
@@ -241,12 +238,21 @@ describe('explicit wall commitment', () => {
     initialProps.confirmation.wallUuidAtLatchStartRef.current = 'old-wall';
     const { result, rerender } = renderHook(usePlaySelectionController, { initialProps });
     act(() => result.current.handleSetActive());
+    // The first tap only arms the question: nothing is sent, the latch holds,
+    // and the question row says it out loud when it mounts, not this hook.
     expect(initialProps.confirmation.setBusyWallConfirmArmed).toHaveBeenCalledWith(true);
     expect(initialProps.queue.setCurrentClimb).not.toHaveBeenCalled();
-    expect(authority.announce).toHaveBeenCalledOnce();
+    expect(initialProps.confirmation.markLatchExit).not.toHaveBeenCalled();
+    expect(initialProps.preview.setDrawerPreviewItem).not.toHaveBeenCalled();
+    expect(authority.announce).not.toHaveBeenCalled();
     rerender({ ...initialProps, confirmation: { ...initialProps.confirmation, busyWallConfirmArmed: true } });
     act(() => result.current.handleSetActive());
     expect(initialProps.queue.setCurrentClimb).toHaveBeenCalledOnce();
+    expect(initialProps.queue.setCurrentClimb).toHaveBeenCalledWith(
+      expect.objectContaining({ climb: expect.objectContaining({ uuid: 'preview' }) }),
+      expect.objectContaining({ trigger: 'put_on_wall' }),
+    );
+    expect(initialProps.confirmation.setBusyWallConfirmArmed).toHaveBeenLastCalledWith(false);
     expect(initialProps.confirmation.markLatchExit).toHaveBeenCalledWith('commit');
     expect(initialProps.preview.setSharedBrowseLatched).toHaveBeenCalledWith(false);
     expect(initialProps.preview.setDrawerPreviewSuggestionSource).toHaveBeenCalledWith(null);
@@ -254,8 +260,8 @@ describe('explicit wall commitment', () => {
     expect(initialProps.chrome.clearMirror).toHaveBeenCalledOnce();
   });
 
-  it('does not duplicate Android live-region announcements', () => {
-    authority.platform = 'android';
+  it.each(['ios', 'android'] as const)('leaves the busy-wall question to the question row on %s', (platform) => {
+    authority.platform = platform;
     const initialProps = inputs();
     initialProps.preview.drawerPreviewItem = item('preview');
     initialProps.navigation.browseByDefault = true;
@@ -264,7 +270,24 @@ describe('explicit wall commitment', () => {
     const { result } = renderHook(usePlaySelectionController, { initialProps });
     act(() => result.current.handleSetActive());
     expect(initialProps.confirmation.setBusyWallConfirmArmed).toHaveBeenCalledWith(true);
+    expect(initialProps.queue.setCurrentClimb).not.toHaveBeenCalled();
     expect(authority.announce).not.toHaveBeenCalled();
+  });
+
+  it('tells Put on the wall apart from a plain pick, and goes straight up on an unmoved wall', () => {
+    const initialProps = inputs();
+    initialProps.preview.drawerPreviewItem = item('preview');
+    initialProps.navigation.browseByDefault = true;
+    initialProps.confirmation.browseLatchActive = true;
+    // The wall still shows what it showed when browsing began: nothing to ask.
+    const { result } = renderHook(usePlaySelectionController, { initialProps });
+    act(() => result.current.handleSetActive());
+    expect(initialProps.confirmation.setBusyWallConfirmArmed).not.toHaveBeenCalledWith(true);
+    expect(initialProps.queue.setCurrentClimb).toHaveBeenCalledWith(
+      expect.objectContaining({ climb: expect.objectContaining({ uuid: 'preview' }) }),
+      { playlistSuggestionSource: null, trigger: 'put_on_wall' },
+    );
+    expect(initialProps.preview.setSharedBrowseLatched).toHaveBeenCalledWith(false);
   });
 
   it('launders transient suggestions and reanchors the source on the committed climb', () => {
@@ -280,7 +303,7 @@ describe('explicit wall commitment', () => {
         suggested: true,
         climb: expect.objectContaining({ uuid: 'preview' }),
       }),
-      { playlistSuggestionSource: expect.objectContaining({ activatedClimbUuid: 'preview' }) },
+      { playlistSuggestionSource: expect.objectContaining({ activatedClimbUuid: 'preview' }), trigger: 'put_on_wall' },
     );
   });
 

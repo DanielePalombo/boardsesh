@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canLeavePreview,
   resolveCommitBarModel,
+  resolveHeaderPillState,
   resolveWallPillState,
   resolveWallStateAnnouncement,
   shouldAdoptLateWallRead,
@@ -9,6 +11,8 @@ import {
   WALL_READ_PRE_LATCH_TOLERANCE_MS,
   type CommitBarModel,
   type CommitBarModelInput,
+  type HeaderPill,
+  type HeaderPillInput,
   type WallPillState,
   type WallPillStateInput,
   type LateWallReadInput,
@@ -110,15 +114,173 @@ describe('resolveWallPillState', () => {
 
 describe('shouldShowHolderBadge', () => {
   // The same-face-never-twice contract: the pill owns the driver's avatar in the
-  // on-wall state, so the lightbulb's holder pip stands down for exactly that
-  // state and comes back for every other one.
+  // on-wall state and on the back chip that goes to the wall, so the lightbulb's
+  // holder pip stands down for exactly those two and comes back for the rest. A
+  // back chip to the climber's own climb wears no face, so the pip stays.
   it.each([
-    ['onWall', false],
-    ['live', true],
-    ['browsing', true],
-    [null, true],
-  ] as Array<[WallPillState, boolean]>)('pill %j → holder pip shown: %s', (pillState, expected) => {
-    expect(shouldShowHolderBadge(pillState)).toBe(expected);
+    ['on the wall', { state: 'onWall', backTarget: null }, false],
+    ['live', { state: 'live', backTarget: null }, true],
+    ['back chip to the wall', { state: 'browsing', backTarget: 'wall' }, false],
+    ['back chip to the climber’s own climb', { state: 'browsing', backTarget: 'current' }, true],
+    ['no chip', null, true],
+  ] as Array<[string, HeaderPill, boolean]>)('%s → holder pip shown: %s', (_scenario, pill, expected) => {
+    expect(shouldShowHolderBadge(pill)).toBe(expected);
+  });
+});
+
+/** Signed-in climber, a preview pinned over their own head, nothing lit. */
+const headerBase: HeaderPillInput = {
+  wallPillState: null,
+  previewPinned: true,
+  isAnonymous: false,
+  displayedClimbUuid: THEIR_CLIMB,
+  committedHeadUuid: MY_CLIMB,
+  wallClimbUuid: null,
+  isPane: false,
+};
+
+describe('canLeavePreview', () => {
+  const cases: Array<[string, Partial<HeaderPillInput>, boolean]> = [
+    ['a preview pinned over a different committed climb', {}, true],
+    ['no preview pinned', { previewPinned: false }, false],
+    ['anonymous viewer', { isAnonymous: true }, false],
+    ['the preview is the committed climb itself', { displayedClimbUuid: MY_CLIMB }, false],
+    // Going back would empty the sheet; ⌄ closes it instead.
+    ['no committed climb, in the sheet', { committedHeadUuid: null }, false],
+    // The iPad pane has no ⌄, and its empty placeholder is somewhere to land.
+    ['no committed climb, in the iPad pane', { committedHeadUuid: null, isPane: true }, true],
+    [
+      'no committed climb and nothing displayed, in the iPad pane',
+      { committedHeadUuid: null, displayedClimbUuid: null, isPane: true },
+      true,
+    ],
+    [
+      'the iPad pane still needs a preview pinned',
+      { committedHeadUuid: null, isPane: true, previewPinned: false },
+      false,
+    ],
+    ['the iPad pane is no way round anonymity', { committedHeadUuid: null, isPane: true, isAnonymous: true }, false],
+  ];
+
+  it.each(cases)('%s → %s', (_scenario, overrides, expected) => {
+    expect(canLeavePreview({ ...headerBase, ...overrides })).toBe(expected);
+  });
+});
+
+describe('resolveHeaderPillState', () => {
+  const cases: Array<[string, Partial<HeaderPillInput>, HeaderPill]> = [
+    // The read-only viewer never gets wall chrome.
+    [
+      'anonymous viewer on the lit climb',
+      { isAnonymous: true, wallPillState: 'onWall', displayedClimbUuid: WALL_CLIMB, wallClimbUuid: WALL_CLIMB },
+      null,
+    ],
+    ['anonymous viewer mid-preview', { isAnonymous: true, wallPillState: 'browsing' }, null],
+    // On the wall stays: its chip opens the explainer, it isn't a way back.
+    [
+      'on the wall, even with a preview pinned',
+      { wallPillState: 'onWall', displayedClimbUuid: WALL_CLIMB, wallClimbUuid: WALL_CLIMB },
+      { state: 'onWall', backTarget: null },
+    ],
+    [
+      'on the wall, no preview pinned',
+      { wallPillState: 'onWall', previewPinned: false, displayedClimbUuid: WALL_CLIMB, wallClimbUuid: WALL_CLIMB },
+      { state: 'onWall', backTarget: null },
+    ],
+    // A crew latch: back lands on the head, which is what's lit.
+    [
+      'crew latch, wall shows the committed climb',
+      { wallPillState: 'browsing', wallClimbUuid: MY_CLIMB },
+      { state: 'browsing', backTarget: 'wall' },
+    ],
+    // Back lands on the climber's own climb; the wall shows something else.
+    [
+      'crew latch, wall shows a third climb',
+      { wallPillState: 'browsing', wallClimbUuid: WALL_CLIMB },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    [
+      'crew latch, wall dark',
+      { wallPillState: 'browsing', wallClimbUuid: null },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    // Nowhere to go back to: the sheet empties, so no chip and ⌄ closes.
+    ['crew latch with no committed climb, in the sheet', { wallPillState: 'browsing', committedHeadUuid: null }, null],
+    [
+      'crew latch with no committed climb, in the iPad pane',
+      { wallPillState: 'browsing', committedHeadUuid: null, wallClimbUuid: WALL_CLIMB, isPane: true },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    // A two-unknowns wall never reads as "back to the wall".
+    [
+      'iPad pane, no committed climb and a dark wall',
+      { wallPillState: 'browsing', committedHeadUuid: null, wallClimbUuid: null, isPane: true },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    // A solo preview with lighting on: Live used to stand here and the way back
+    // sat in the second row. The back chip takes both jobs now.
+    [
+      'solo preview with lighting on (live) and a committed climb',
+      { wallPillState: 'live', wallClimbUuid: MY_CLIMB },
+      { state: 'browsing', backTarget: 'wall' },
+    ],
+    [
+      'solo preview with lighting on (live), wall elsewhere',
+      { wallPillState: 'live', wallClimbUuid: WALL_CLIMB },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    // A plain preview with no stakes had no chip at all; now back has one.
+    [
+      'solo preview with no stakes (no pill) and a committed climb',
+      { wallPillState: null },
+      { state: 'browsing', backTarget: 'current' },
+    ],
+    // Displayed is the head: back goes nowhere, so the pill underneath stands.
+    ['preview on the committed climb, no pill', { wallPillState: null, displayedClimbUuid: MY_CLIMB }, null],
+    [
+      'preview on the committed climb, live',
+      { wallPillState: 'live', displayedClimbUuid: MY_CLIMB },
+      { state: 'live', backTarget: null },
+    ],
+    ['preview on the committed climb, latched', { wallPillState: 'browsing', displayedClimbUuid: MY_CLIMB }, null],
+    // No preview: Live and nothing pass straight through.
+    [
+      'no preview, live',
+      { wallPillState: 'live', previewPinned: false, displayedClimbUuid: MY_CLIMB },
+      { state: 'live', backTarget: null },
+    ],
+    ['no preview, no pill', { wallPillState: null, previewPinned: false, displayedClimbUuid: MY_CLIMB }, null],
+  ];
+
+  it.each(cases)('%s → %j', (_scenario, overrides, expected) => {
+    expect(resolveHeaderPillState({ ...headerBase, ...overrides })).toEqual(expected);
+  });
+
+  // The chip and the explainer's Back to live share one rule: the chip is a way
+  // back exactly when `canLeavePreview` says back lands somewhere.
+  it('draws the back chip exactly when canLeavePreview holds (outside On the wall)', () => {
+    const pillStates: WallPillState[] = ['live', 'browsing', null];
+    const heads: Array<string | null> = [MY_CLIMB, null];
+    const displayed: Array<string | null> = [MY_CLIMB, THEIR_CLIMB, null];
+    for (const wallPillState of pillStates) {
+      for (const committedHeadUuid of heads) {
+        for (const displayedClimbUuid of displayed) {
+          for (const previewPinned of [true, false]) {
+            for (const isPane of [true, false]) {
+              const input: HeaderPillInput = {
+                ...headerBase,
+                wallPillState,
+                committedHeadUuid,
+                displayedClimbUuid,
+                previewPinned,
+                isPane,
+              };
+              expect(resolveHeaderPillState(input)?.state === 'browsing').toBe(canLeavePreview(input));
+            }
+          }
+        }
+      }
+    }
   });
 });
 
@@ -127,42 +289,42 @@ describe('resolveCommitBarModel', () => {
     [
       'no preview pinned: the row keeps the normal actions',
       {},
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'preview pinned on a climb that is not the head',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: true, showConfirm: false },
+      { mode: 'commit', showPutOnWall: true, showConfirm: false },
     ],
     [
-      'browsed onto the lit climb: nothing to commit, but Back to live still exits the latch',
+      'browsed onto the lit climb: nothing to put up, so no button; the header chip still exits the latch',
       { previewPinned: true, displayedClimbUuid: WALL_CLIMB, wallClimbUuid: WALL_CLIMB },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: false, showConfirm: false },
+      { mode: 'commit', showPutOnWall: false, showConfirm: false },
     ],
     [
       'wrong board: no commit controls under the switch-board overlay',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, boardMismatch: true },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'anonymous viewer never gets the commit row',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, isAnonymous: true },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
       'preview still nominally pinned but the displayed climb is the head again: collapses on its own',
       { previewPinned: true, displayedClimbUuid: MY_CLIMB, committedHeadUuid: MY_CLIMB },
-      { mode: 'actions', showBackToLive: false, showPutOnWall: false, showConfirm: false },
+      { mode: 'actions', showPutOnWall: false, showConfirm: false },
     ],
     [
-      'confirm armed: the browse pair gives way to the confirm pair',
+      'confirm armed: Put on the wall gives way to the busy-wall question',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, wallClimbUuid: MY_CLIMB, confirmArmed: true },
-      { mode: 'commit', showBackToLive: false, showPutOnWall: false, showConfirm: true },
+      { mode: 'commit', showPutOnWall: false, showConfirm: true },
     ],
     [
       'confirm armed but the wall now shows the displayed climb: the conflict resolved itself',
       { previewPinned: true, displayedClimbUuid: THEIR_CLIMB, wallClimbUuid: THEIR_CLIMB, confirmArmed: true },
-      { mode: 'commit', showBackToLive: true, showPutOnWall: false, showConfirm: false },
+      { mode: 'commit', showPutOnWall: false, showConfirm: false },
     ],
   ];
 

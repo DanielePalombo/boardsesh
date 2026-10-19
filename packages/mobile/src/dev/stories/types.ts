@@ -40,6 +40,13 @@ export type ScenarioStory = {
    * persists on the simulator, so pin every setting the story depends on.
    */
   prepare?: () => void | Promise<void>;
+  /**
+   * Open the route as the app really is, then turn the overrides on this many
+   * milliseconds later. For a state the real app reaches in two steps: a crew
+   * session always has a climb up, so the crew scenario opens a climb solo
+   * (which puts it on the wall) and only then becomes a crew.
+   */
+  overridesDelayMs?: number;
 };
 
 export type Story = ComponentStory | ScenarioStory;
