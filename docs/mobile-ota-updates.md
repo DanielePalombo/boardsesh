@@ -958,6 +958,8 @@ Staged promotion unlocks retain each confirmed platform rollback even when a
 later platform, caller lease or final control attestation fails. Their optional
 event archive cannot block an unlock; the verified authorization receipt remains
 mandatory and is emitted only after complete successful attestation.
+Delivered event IDs remain in controller checkpoints across releases so retries
+and repeated candidate preparations stay deduplicated.
 
 `mobile-ota-stable-release.yml` runs dependency-free controller code from `main`. Its admin environment,
 `ota-stable-release`, must use **Selected branches: main only**. The channel still serves `production`;
@@ -3100,10 +3102,9 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   `needs_reset` defaults to true, so anything the gate cannot resolve keeps the old behaviour.
   Because a skipped job would otherwise skip its dependents, `publish` guards with `!cancelled()`
   and blocks only on `needs.reset.result == 'failure'`.
-- **A revision that publishes nothing leaves the last good bundle up.** With no reset, a JS-only PR
-  that falls behind a native change on `main` publishes neither platform and `pr-<number>` keeps
-  serving the last revision that did publish — better for a tester than an empty branch, but the
-  sticky comment says which, so an unchanged picker entry is not read as "this commit is live".
+- **A revision that publishes nothing leaves the last good bundle up.** With no reset, a revision
+  whose candidates all conflict or fail compatibility keeps serving the last published variants.
+  The sticky comment identifies those variants as stale rather than attesting the new head.
 - **One PR entry, two native runtimes.** Every preview prepares against pinned
   latest `origin/main`. When `release/next` has a different marketing version,
   it also prepares against that pinned latest base. Only the PR's commits are

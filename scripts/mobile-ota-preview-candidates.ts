@@ -34,7 +34,12 @@ export interface PreviewCandidate {
   >;
 }
 const git = (directory: string, args: string[]) =>
-  execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  execFileSync('git', args, {
+    cwd: directory,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  }).trim();
 const sha = (input: string) => {
   if (!/^[0-9a-f]{40}$/.test(input)) throw new Error('Expected a pinned full commit SHA.');
   return input;
@@ -90,14 +95,16 @@ export function preparePreviewCandidates(
         '--keep-redundant-commits',
         synthetic,
       ]);
-    } catch {
+    } catch (error) {
       // A conflicting aggregate patch never falls through to publish the old head.
       try {
         git(directory, ['cherry-pick', '--abort']);
       } catch {
         /* no cherry-pick in progress */
       }
-      return { targetRef: ref, targetSha: commit, status: 'conflict', platforms: {} };
+      const timedOut = typeof error === 'object' && error !== null && 'code' in error && error.code === 'ETIMEDOUT';
+      if (timedOut) console.error(`::error::${ref} preview replay timed out after 30 seconds.`);
+      return { targetRef: ref, targetSha: commit, status: timedOut ? 'failed' : 'conflict', platforms: {} };
     }
     return {
       targetRef: ref,
