@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "json"
 require_relative "android_release"
 
 # Pushes the committed Google Play listing (text, images, phone screenshots) in one
@@ -27,6 +28,34 @@ module BoardseshPlayListing
   IMAGE_GLOB = "{png,jpg,jpeg}"
   PARTS = %w[listing images screenshots].freeze
   LOCALE = /\A[a-z]{2,3}(-[A-Za-z0-9]{2,8})*\z/
+  # Same bound as playErrorDetail in scripts/lib/google-play-tracks.ts.
+  ERROR_MESSAGE_LIMIT = 300
+
+  # Google's own error envelope ({"error":{"status","message"}}) from a failed
+  # call, scrubbed the way scripts/lib/google-play-tracks.ts's playErrorDetail
+  # scrubs it: PEM keys, bearer, OAuth and JWT tokens and email addresses are
+  # redacted, whitespace collapsed, and the message cut at 300 characters. Any
+  # other body text is never returned, so a non-JSON body gives nil.
+  def self.error_detail(body)
+    parsed = JSON.parse(body.to_s)
+    envelope = parsed.is_a?(Hash) ? parsed["error"] : nil
+    return nil unless envelope.is_a?(Hash)
+    message = envelope["message"]
+    return nil unless message.is_a?(String) && !message.strip.empty?
+    scrubbed = message
+      .gsub(/-----BEGIN[\s\S]*?(-----END[^-]*-----|\z)/, "[redacted key]")
+      .gsub(/\bBearer\s+\S+/i, "Bearer [redacted]")
+      .gsub(/\bya29\.[\w.-]+/, "[redacted token]")
+      .gsub(/\beyJ[\w-]*\.[\w-]+(\.[\w-]*)?/, "[redacted token]")
+      .gsub(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i, "[redacted email]")
+      .gsub(/\s+/, " ").strip
+    scrubbed = "#{scrubbed[0, ERROR_MESSAGE_LIMIT]}…" if scrubbed.length > ERROR_MESSAGE_LIMIT
+    status = envelope["status"]
+    prefix = status.is_a?(String) && status.match?(/\A[A-Z_]{1,64}\z/) ? "#{status}: " : ""
+    "#{prefix}#{scrubbed}"
+  rescue JSON::ParserError
+    nil
+  end
 
   class Runner
     attr_reader :log
@@ -66,8 +95,9 @@ module BoardseshPlayListing
     rescue StandardError => error
       status = error.respond_to?(:status_code) ? error.status_code.to_i : nil
       suffix = status && status.positive? ? " (HTTP #{status})" : ""
-      raise Error, "Google Play listing commit was not confirmed#{suffix}. If a release is in review, Play refused the " \
-        "commit rather than cancel that review; push the listing again after the review ends."
+      detail = error.respond_to?(:body) ? BoardseshPlayListing.error_detail(error.body) : nil
+      raise Error, "Google Play listing commit was not confirmed#{suffix}#{detail ? ": #{detail}" : ''}. If something is in " \
+        "review, Play refused the commit rather than cancel that review; push the listing again after the review ends."
     end
 
     private

@@ -53,7 +53,8 @@ class StoreSubmissionStatusTest < Minitest::Test
     %w[REJECTED METADATA_REJECTED DEVELOPER_REJECTED INVALID_BINARY].each do |state|
       result = status([version("2.7.0", state)])
       assert_equal "blocked", result.fetch("status"), state
-      assert_includes result.fetch("reason"), "rename it to the train's next version"
+      assert_includes result.fetch("reason"), "Fix and resubmit it in App Store Connect"
+      refute_includes result.fetch("reason"), "rename"
     end
   end
 
@@ -63,10 +64,39 @@ class StoreSubmissionStatusTest < Minitest::Test
       assert_equal "deferred", result.fetch("status"), state
       assert_includes result.fetch("reason"), "2.6.1 (#{state})"
     end
-    %w[PREPARE_FOR_SUBMISSION REJECTED DEVELOPER_REJECTED].each do |state|
+    %w[PREPARE_FOR_SUBMISSION READY_FOR_REVIEW].each do |state|
       result = status([version("2.6.1", state)])
       assert_equal "blocked", result.fetch("status"), state
       assert_includes result.fetch("reason"), "will not rename"
+    end
+    %w[REJECTED DEVELOPER_REJECTED METADATA_REJECTED INVALID_BINARY].each do |state|
+      result = status([version("2.6.1", state)])
+      assert_equal "blocked", result.fetch("status"), state
+      assert_includes result.fetch("reason"), "fixed and resubmitted there"
+    end
+  end
+
+  # An approved, unreleased version holds the next one until it is released; the
+  # draft lane refuses meanwhile, so this waits instead of failing every hour.
+  def test_another_approved_unreleased_version_defers
+    BoardseshAppStoreVersionStates::APPROVED_UNRELEASED.each do |state|
+      %w[appVersionState appStoreState].each do |attribute|
+        result = status([version("2.6.1", state, state_attribute: attribute), version("2.7.0", "PREPARE_FOR_SUBMISSION")])
+        assert_equal "deferred", result.fetch("status"), "#{state} via #{attribute}"
+        assert_includes result.fetch("reason"), "approved and not released yet"
+      end
+    end
+  end
+
+  # The draft lane refuses whenever another version is in any open state, so the
+  # status check must never call such a version's successor pending.
+  def test_no_state_the_draft_lane_refuses_on_is_reported_pending
+    BoardseshAppStoreVersionStates::OPEN.each do |state|
+      [nil, "PREPARE_FOR_SUBMISSION"].each do |target_state|
+        versions = [version("2.6.1", state)]
+        versions << version("2.7.0", target_state) if target_state
+        refute_equal "pending", status(versions).fetch("status"), "other version #{state}, target #{target_state.inspect}"
+      end
     end
   end
 

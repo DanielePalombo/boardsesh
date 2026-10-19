@@ -91,6 +91,16 @@ jobs:
     # App Store Connect credentials (same secrets as the screenshot upload job in
     # mobile-screenshots-ios.yml).
     environment: Production
+    # Inside the store-draft lock, queued like its other members, so a listing
+    # push can never land between the merge-back submission's plan and its submit
+    # (that run's snapshot covers the text). No deadlock: mobile-store-submit.yml
+    # runs the metadata lane in its own job and never starts this workflow, and
+    # mobile-store-draft.yml dispatches it without waiting, so this job simply
+    # queues until that draft run ends.
+    concurrency:
+      group: mobile-store-draft
+      cancel-in-progress: false
+      queue: max
 
     steps:
       - name: Checkout repository

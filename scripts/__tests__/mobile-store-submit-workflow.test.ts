@@ -66,7 +66,7 @@ describe('mobile-store-submit.yml triggers', () => {
 
   it('works only from main', () => {
     expect(flatten(submit.jobs['target']?.if)).toContain("github.ref == 'refs/heads/main'");
-    for (const job of ['status', 'draft', 'submit-ios', 'submit-android']) {
+    for (const job of ['status-ios', 'status-android', 'draft', 'submit-ios', 'submit-android']) {
       expect(submit.jobs[job]?.needs, job).toContain('target');
     }
   });
@@ -106,10 +106,29 @@ describe('the mobile-store-draft lock', () => {
     expect(members.sort()).toEqual([
       'mobile-store-audit.yml',
       'mobile-store-draft.yml',
+      'mobile-store-metadata.yml',
       'mobile-store-release-control.yml',
       'mobile-store-review-submission.yml',
       'mobile-store-submit.yml',
     ]);
+  });
+
+  // The iOS listing push joins at job level: a push between the submission's plan
+  // and its submit would change the reviewed snapshot.
+  it('puts the iOS listing push in the same queued lock, and cannot deadlock on it', () => {
+    const metadata = load('mobile-store-metadata.yml');
+    expect(metadata.jobs['ios']?.concurrency).toEqual({
+      group: 'mobile-store-draft',
+      'cancel-in-progress': false,
+      queue: 'max',
+    });
+    // The submission pushes the text in its own job; it never starts or calls the
+    // metadata workflow, which would wait on the lock this run holds.
+    expect(submitSource).not.toContain('mobile-store-metadata.yml');
+    expect(step('submit-ios', "Push listing text and What's New").run).toContain('bundle exec fastlane ios metadata');
+    // The draft only dispatches it (no wait), so that run just queues behind the draft.
+    expect(draftSource).toContain('gh workflow run mobile-store-metadata.yml');
+    expect(draftSource).not.toMatch(/gh run watch|uses: \.\/\.github\/workflows\/mobile-store-metadata\.yml/);
   });
 
   // A called workflow's own concurrency applies too: in its caller's group it
@@ -174,6 +193,19 @@ describe('mobile-store-draft.yml as a called workflow', () => {
     expect(draftSource.match(/assert_ref "tags\/\$EXPECTED_ANDROID_TAG" "\$EXPECTED_ANDROID_SHA"/g)).toHaveLength(2);
   });
 
+  // A later rebuild of the same version is not part of the merge-back, so it is
+  // never the merge-back's candidate. Other drafts keep considering every tag.
+  it("selects only builds in the merge commit's history when pinned", () => {
+    const selections = draftSource.match(
+      /CHECK_ONLY=true CANDIDATE_ONLY=true UPLOADED_ONLY=true HEAD_VERSION="\$[A-Za-z_]+" \\\n\s+CANDIDATE_ANCESTOR_OF="\$PINNED_RELEASE_SHA" \\\n\s+GITHUB_OUTPUT="\$result" node --import tsx scripts\/mobile-cut-release-tags\.ts/g,
+    );
+    expect(selections).toHaveLength(2);
+    const script = readFileSync('scripts/mobile-cut-release-tags.ts', 'utf8');
+    expect(script).toContain("execFileSync('git', ['merge-base', '--is-ancestor', `${tagName}^{commit}`, ancestorOf]");
+    // Unset (workflow_run and dispatch drafts): no filter.
+    expect(script).toContain("const ancestorOf = process.env['CANDIDATE_ANCESTOR_OF'];\n  if (ancestorOf) {");
+  });
+
   it('leaves listing and screenshot follow-ups to the submit workflow on a called run', () => {
     const iosSteps = draft.jobs['ios']?.steps ?? [];
     for (const name of [
@@ -191,7 +223,7 @@ describe('mobile-store-draft.yml as a called workflow', () => {
   // cannot see that state and would try to create the version again.
   it('writes no Android draft and, in a plan or a resumed review draft, no draft at all', () => {
     expect(submit.jobs['draft']?.with?.['platform']).toBe(
-      "${{ needs.target.outputs.mode == 'submit' && vars.STORE_AUTO_SUBMIT != 'off' && needs.status.outputs.ios_status == 'pending' && needs.status.outputs.ios_needs_draft == 'true' && 'ios' || 'none' }}",
+      "${{ needs.target.outputs.mode == 'submit' && vars.STORE_AUTO_SUBMIT != 'off' && needs.status-ios.outputs.ios_status == 'pending' && needs.status-ios.outputs.ios_needs_draft == 'true' && 'ios' || 'none' }}",
     );
     expect(submit.jobs['draft']?.secrets).toBe('inherit');
   });
@@ -243,20 +275,38 @@ describe('store writes', () => {
   });
 
   it('asks the stores before drafting, and submits only what they call pending', () => {
-    expect(submit.jobs['status']?.environment).toBe('Production');
     expect(submit.jobs['target']?.environment).toBeUndefined();
-    expect(flatten(submit.jobs['status']?.if)).toBe("needs.target.outputs.proceed == 'true'");
-    expect(flatten(submit.jobs['draft']?.if)).toBe(
-      "needs.status.outputs.ios_status == 'pending' || needs.status.outputs.android_status == 'pending'",
-    );
-    expect(flatten(submit.jobs['submit-ios']?.if)).toBe("needs.status.outputs.ios_status == 'pending'");
-    expect(flatten(submit.jobs['submit-android']?.if)).toBe("needs.status.outputs.android_status == 'pending'");
+    for (const job of ['status-ios', 'status-android']) {
+      expect(submit.jobs[job]?.environment, job).toBe('Production');
+      expect(flatten(submit.jobs[job]?.if), job).toBe("needs.target.outputs.proceed == 'true'");
+      expect(submit.jobs[job]?.needs, job).toBe('target');
+    }
+    expect(flatten(submit.jobs['submit-ios']?.if)).toBe("needs.status-ios.outputs.ios_status == 'pending'");
+    expect(flatten(submit.jobs['submit-android']?.if)).toBe("needs.status-android.outputs.android_status == 'pending'");
     for (const job of ['submit-ios', 'submit-android']) {
       expect(submit.jobs[job]?.environment, job).toBe('Production');
       expect(submit.jobs[job]?.steps?.[0]?.name, job).toBe('Require the exact verified candidate');
     }
-    expect(step('status', 'Where the iOS version stands').run).toContain('bundle exec fastlane ios submission_status');
-    expect(step('status', 'Where the Android build stands').run).toContain('mobile-store-submit-android.ts --status');
+    expect(step('status-ios', 'Where the iOS version stands').run).toContain(
+      'bundle exec fastlane ios submission_status',
+    );
+    expect(step('status-android', 'Where the Android build stands').run).toContain(
+      'mobile-store-submit-android.ts --status',
+    );
+  });
+
+  // A store whose status cannot be read stops its own submission (its status job
+  // fails, the run shows red) and nothing else.
+  it('keeps each store independent of the other store failing its status read', () => {
+    expect(submit.jobs['draft']?.needs).toEqual(['target', 'status-ios', 'status-android']);
+    expect(flatten(submit.jobs['draft']?.if)).toBe(
+      "!cancelled() && needs.target.result == 'success' && (needs.status-ios.outputs.ios_status == 'pending' || needs.status-android.outputs.android_status == 'pending')",
+    );
+    expect(submit.jobs['submit-ios']?.needs).toEqual(['target', 'status-ios', 'draft']);
+    expect(submit.jobs['submit-android']?.needs).toEqual(['target', 'status-android', 'draft']);
+    for (const job of ['status-ios', 'status-android']) {
+      expect(JSON.stringify(submit.jobs[job]), job).not.toContain('continue-on-error');
+    }
   });
 
   // The text goes first: it also creates any locale the version lacks.
@@ -309,7 +359,7 @@ describe('cheap runs under the lock', () => {
   )?.[1];
 
   it('installs nothing in the target and status jobs', () => {
-    for (const job of ['target', 'status']) {
+    for (const job of ['target', 'status-ios', 'status-android']) {
       const runs = (submit.jobs[job]?.steps ?? []).map((entry) => entry.run ?? '').join('\n');
       expect(runs, job).not.toContain('vp install');
       expect(runs, job).not.toContain('node --import tsx');

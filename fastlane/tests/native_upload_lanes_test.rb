@@ -4,6 +4,7 @@ require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
 require "json"
+require_relative "../lib/app_store_version_states"
 
 # Execute the actual lane blocks without loading Fastlane or contacting stores.
 module UI
@@ -164,6 +165,8 @@ class NativeUploadLanesTest < Minitest::Test
     FileUtils.mkdir_p(File.join(@fastlane_directory, "lib"))
     File.write(File.join(@fastlane_directory, "lib", "android_release.rb"), "# Stubbed runner above\n")
     File.write(File.join(@fastlane_directory, "lib", "play_listing.rb"), "# Stubbed runner above\n")
+    # Pure constants, required for real at the top of this file.
+    File.write(File.join(@fastlane_directory, "lib", "app_store_version_states.rb"), "# Real constants loaded above\n")
     @dsl = Module.new
     @dsl.extend(LaneDsl)
     @dsl.module_eval(File.read(File.expand_path("../Fastfile", __dir__)), File.join(@fastlane_directory, "Fastfile"))

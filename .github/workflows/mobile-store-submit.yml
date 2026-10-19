@@ -9,8 +9,9 @@ run-name: Mobile Store Submission (${{ github.event_name == 'workflow_dispatch' 
 #
 # State-based, so every run is a retry: nothing is stored between runs. The
 # target job finds the newest merge-back (scripts/mobile-store-submit-target.ts);
-# the status job asks both stores, GET-only, whether that version still needs
-# submitting; only a store that says "pending" goes further. A push submits right
+# one status job per store asks it, GET-only, whether that version still needs
+# submitting; only a store that says "pending" goes further, and a store that
+# cannot be read stops only its own submission. A push submits right
 # after a merge-back, and the hourly run picks up whatever was deferred (a Play or
 # App Review already in progress) or failed. Once both release anchors exist the
 # run stops before asking any store.
@@ -111,8 +112,10 @@ jobs:
           STORE_AUTO_SUBMIT: ${{ vars.STORE_AUTO_SUBMIT }}
         run: vp dlx tsx@4.23.12 scripts/mobile-store-submit-target.ts
 
-  status:
-    name: Read both stores (GET-only)
+  # One GET-only status job per store, so a store that cannot be read fails its
+  # own submission (red run, retried) without holding back the other store's.
+  status-ios:
+    name: Read App Store Connect (GET-only)
     needs: target
     if: needs.target.outputs.proceed == 'true'
     runs-on: ubuntu-latest
@@ -125,7 +128,6 @@ jobs:
       # draft (READY_FOR_REVIEW) is resumed without one: deliver cannot see it.
       ios_state: ${{ steps.ios.outputs.state }}
       ios_needs_draft: ${{ steps.ios.outputs.needs_draft }}
-      android_status: ${{ steps.android.outputs.status }}
     env:
       RELEASE_VERSION: ${{ needs.target.outputs.version }}
       FASTLANE_SKIP_UPDATE_CHECK: '1'
@@ -135,11 +137,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      # No workspace install: the Android status script imports only Node builtins.
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: '22.x'
 
       - uses: ruby/setup-ruby@v1
         with:
@@ -175,6 +172,28 @@ jobs:
           case "$status" in blocked|superseded) echo "::warning::iOS $RELEASE_VERSION: $status. $reason" ;; *) echo "::notice::iOS $RELEASE_VERSION: $status. $reason" ;; esac
           echo "- **iOS $RELEASE_VERSION:** $status. $reason" >> "$GITHUB_STEP_SUMMARY"
 
+  status-android:
+    name: Read Google Play (GET-only)
+    needs: target
+    if: needs.target.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: Production
+    outputs:
+      android_status: ${{ steps.android.outputs.status }}
+    env:
+      RELEASE_VERSION: ${{ needs.target.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # No workspace install: the Android status script imports only Node builtins.
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: '22.x'
+
       - name: Where the Android build stands
         id: android
         env:
@@ -189,8 +208,12 @@ jobs:
 
   draft:
     name: Draft from the merge commit
-    needs: [target, status]
-    if: needs.status.outputs.ios_status == 'pending' || needs.status.outputs.android_status == 'pending'
+    needs: [target, status-ios, status-android]
+    # Runs when either store is pending, even if the other store's status job
+    # failed: that store's own submit job is skipped, and the run shows red.
+    if: >-
+      !cancelled() && needs.target.result == 'success' &&
+      (needs.status-ios.outputs.ios_status == 'pending' || needs.status-android.outputs.android_status == 'pending')
     uses: ./.github/workflows/mobile-store-draft.yml
     with:
       release_sha: ${{ needs.target.outputs.release_sha }}
@@ -198,7 +221,7 @@ jobs:
       # attached) before it can be submitted, and only while the version is missing
       # or in Prepare for Submission. A plan writes nothing: `none` still selects
       # and fingerprint-checks both builds.
-      platform: ${{ needs.target.outputs.mode == 'submit' && vars.STORE_AUTO_SUBMIT != 'off' && needs.status.outputs.ios_status == 'pending' && needs.status.outputs.ios_needs_draft == 'true' && 'ios' || 'none' }}
+      platform: ${{ needs.target.outputs.mode == 'submit' && vars.STORE_AUTO_SUBMIT != 'off' && needs.status-ios.outputs.ios_status == 'pending' && needs.status-ios.outputs.ios_needs_draft == 'true' && 'ios' || 'none' }}
     secrets: inherit
     # A called workflow cannot ask for more than its caller grants, and the draft's
     # iOS job declares actions: write (its metadata dispatch, skipped on this path).
@@ -208,8 +231,8 @@ jobs:
 
   submit-ios:
     name: Submit iOS for review
-    needs: [target, status, draft]
-    if: needs.status.outputs.ios_status == 'pending'
+    needs: [target, status-ios, draft]
+    if: needs.status-ios.outputs.ios_status == 'pending'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: Production
@@ -230,7 +253,7 @@ jobs:
           CANDIDATE_READY: ${{ needs.draft.outputs.candidate_ready }}
           TARGET_VERSION: ${{ needs.target.outputs.version }}
           IOS_DRAFT: ${{ needs.draft.outputs.ios_draft }}
-          NEEDS_DRAFT: ${{ needs.status.outputs.ios_needs_draft }}
+          NEEDS_DRAFT: ${{ needs.status-ios.outputs.ios_needs_draft }}
         run: |
           set -euo pipefail
           [ "$CANDIDATE_READY" = true ] || { echo "::error::No verified build pair for $TARGET_VERSION: the tagged builds are missing or do not match the merge commit's fingerprints. See the draft job."; exit 1; }
@@ -403,8 +426,8 @@ jobs:
 
   submit-android:
     name: Release Android to production
-    needs: [target, status, draft]
-    if: needs.status.outputs.android_status == 'pending'
+    needs: [target, status-android, draft]
+    if: needs.status-android.outputs.android_status == 'pending'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: Production

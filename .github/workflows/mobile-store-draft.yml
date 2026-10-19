@@ -219,7 +219,12 @@ jobs:
           version_pattern="${version//./\\.}"
           result="$RUNNER_TEMP/uploaded-candidates"
           : > "$result"
+          # A merge-back draft (PINNED_RELEASE_SHA) considers only builds in the
+          # merge commit's history: a later rebuild of the same version, with JS or
+          # native state the merge-back does not contain, is never its candidate.
+          # Empty for workflow_run and dispatch drafts, which keep every tag.
           CHECK_ONLY=true CANDIDATE_ONLY=true UPLOADED_ONLY=true HEAD_VERSION="$version" \
+            CANDIDATE_ANCESTOR_OF="$PINNED_RELEASE_SHA" \
             GITHUB_OUTPUT="$result" node --import tsx scripts/mobile-cut-release-tags.ts
           cat "$result" >> "$GITHUB_OUTPUT"
           found="$(sed -n 's/^candidates_found=//p' "$result" | tail -n 1)"
@@ -387,6 +392,7 @@ jobs:
           result="$RUNNER_TEMP/rechecked-uploaded-candidates"
           : > "$result"
           CHECK_ONLY=true CANDIDATE_ONLY=true UPLOADED_ONLY=true HEAD_VERSION="$HEAD_VERSION" \
+            CANDIDATE_ANCESTOR_OF="$PINNED_RELEASE_SHA" \
             GITHUB_OUTPUT="$result" node --import tsx scripts/mobile-cut-release-tags.ts
           found="$(sed -n 's/^candidates_found=//p' "$result" | tail -n 1)"
           ios_tag="$(sed -n 's/^ios_build_tag=//p' "$result" | tail -n 1)"

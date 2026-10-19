@@ -204,11 +204,20 @@ production (`scripts/mobile-store-android-merge-back-hold.ts`). The upload repla
 Play internal, and the merge-back submission (§4) only releases what internal
 still serves. This hold applies only while `STORE_AUTO_SUBMIT` is on, the
 merged-back version has an Android build and no `release/android-v<version>-*`
-anchor, and Play reports that build as not yet submitted or waiting on a review.
-Once production carries it, or it was rejected or superseded, builds go ahead.
-Either way the deferred version still has no `build-android-v<version>-*` tag, so
-the sync's hourly run dispatches the build again until it goes through. Both
-checks fail open: if one errors, the build runs.
+anchor, and Play reports that build as waiting on a review, or as not yet
+submitted within 6 hours of the merge. Once production carries it, or it was
+rejected or superseded, builds go ahead. Either way the deferred version still has
+no `build-android-v<version>-*` tag, so the sync's hourly run dispatches the build
+again until it goes through. Both checks fail open: if one errors, the build runs.
+
+A merge-back whose Android submission is still not in review 6 hours after the
+merge is treated as stuck (a fingerprint mismatch, a missing build tag, a failed
+draft, a commit Play refused). The hold then lets the train build again, with a
+warning naming that merge-back, because the next version is how a fix ships. That
+build replaces Play internal, so the stuck build can then only be released by hand.
+To ship it instead, release it with **Android Production Release** before the
+window ends; to stop the automatic submission altogether, set
+`STORE_AUTO_SUBMIT=off`.
 
 **Queueing.** Both native workflows keep their concurrency group with
 `queue: max`, so a sync push no longer replaces a pending hotfix dispatch or a
@@ -540,15 +549,20 @@ What a run does:
    rebased (the changelog then drops the train's PRs) and when the release notes
    (`fastlane/metadata/*/release_notes.txt` and the Play changelogs) did not
    change since the previous merge-back.
-2. **Status.** GET-only reads of both stores (`fastlane ios submission_status`,
-   `scripts/mobile-store-submit-android.ts --status`). Each store answers
-   `pending` (go ahead), `done` (already submitted, approved or live),
-   `deferred` (a review is already in progress, so wait), `blocked` (a person has
-   to act) or `superseded` (a newer version is already there). Only `pending`
-   goes further.
+2. **Status.** GET-only reads of each store, in a job per store
+   (`fastlane ios submission_status`, `scripts/mobile-store-submit-android.ts
+   --status`). Each store answers `pending` (go ahead), `done` (already
+   submitted, approved or live), `deferred` (a review is already in progress, or
+   for iOS another version is approved and not released yet, so wait), `blocked`
+   (a person has to act) or `superseded` (a newer version is already there). Only
+   `pending` goes further. A store that cannot be read fails its own status job:
+   the run shows red and that store waits for the next run, while the other store
+   carries on.
 3. **Draft.** Calls `mobile-store-draft.yml` with the merge commit as
    `release_sha`. It pins that exact commit, checks it is in `main`'s history,
-   selects the highest iOS and Android build tags for the version and checks both
+   selects the highest iOS and Android build tags for the version among the
+   builds in that commit's history (a later rebuild of the same version is never
+   its candidate), and checks both
    binaries match the commit's fingerprints, then (for iOS only) attaches the
    tagged build to the App Store version, creating the version if needed. It does
    not attach screenshots or push the listing: the submit job pushes the listing
@@ -582,9 +596,16 @@ next run retries.
 **Kill switch.** Set the repository variable `STORE_AUTO_SUBMIT` to `off` to make
 every run a plan: the stores are read and both submissions planned, and nothing
 is written. While it is off the scheduled runs stop, and of the pushes to `main`
-only the merge-back itself plans; a dispatch always does. It has to be a
-repository variable: the job that reads it first has no environment, so a value
-set only on the Production environment is not seen.
+only the merge-back itself plans; a dispatch always does. It also lifts the
+train's Android hold (§2). It has to be a repository variable: the job that reads
+it first has no environment, so a value set only on the Production environment is
+not seen.
+
+**One lock.** The whole run holds the `mobile-store-draft` lock, as do the store
+draft, App Store Review Submission, Apple Manual Release Control, Mobile Store
+Audit and the iOS job of Mobile Store Metadata. All of them queue (`queue: max`),
+so no listing push or other App Store write lands between the submission's plan
+and its submit.
 
 **Rerun by hand.** Dispatch Mobile Store Submission on `main`. `action=plan`
 (the default) reads both stores and plans; `action=submit` submits whatever is
@@ -618,11 +639,25 @@ warns on every run.
 
 - **Android:** fix it on the train and merge back again. The next version's
   higher versionCode replaces the rejected release on production.
-- **iOS:** App Store Connect keeps the rejected version open, and Apple allows
-  one open version, so the next merge-back stays `blocked` until a person resolves
-  it there. Either fix and resubmit that version in App Store Connect, or rename
-  it to the train's next version (the version string is editable while it is
-  rejected); the next merge-back then drafts and submits that version.
+- **iOS:** fix and resubmit that version in App Store Connect. The automation
+  never resubmits a rejected, metadata-rejected or developer-rejected version
+  (`blocked`), whatever its version string, so renaming it does not hand it back.
+  While it is open, the next merge-back is `blocked` too: Apple keeps one open
+  version, and the draft lane will not touch another one. Once the resubmitted
+  version is approved and released, the next merge-back goes through.
+
+**What a person's own changes run into.**
+
+- **A Play release discarded or replaced before review.** The status check sees
+  the build as not submitted (`pending`), so the next run releases it to
+  production at 100% again. The kill switch (`STORE_AUTO_SUBMIT=off`) is the only
+  way to keep it out.
+- **A release type left at AFTER_APPROVAL.** The submission sets AFTER_APPROVAL
+  just before it plans and submits. If the plan or the submit then fails, the
+  version keeps AFTER_APPROVAL: a later hand submission in App Store Connect
+  releases as soon as Apple approves it, and App Store Review Submission refuses
+  to run, because it requires MANUAL. Dispatch **Apple Manual Release Control**
+  with that version and build to set it back to MANUAL.
 
 **Things that need a person.**
 
@@ -636,10 +671,11 @@ warns on every run.
 - Android Production Release only releases what Play's internal track holds,
   and the next train version's tester upload replaces internal. So the train
   holds that build (§2, "The Android gate") until production carries the
-  merge-back's build. The hold fails open: if the check cannot read GitHub or
-  Play, the build goes ahead, and a deferred submission can then find internal
-  moved on. The older build then reads as `blocked`: release it by hand in Play
-  Console, or merge back the next version.
+  merge-back's build. The hold fails open (if the check cannot read GitHub or
+  Play, the build goes ahead), and it lets go of a submission still not in
+  review 6 hours after the merge. Either way a deferred submission can then find
+  internal moved on, and the older build reads as `blocked`: release it by hand
+  in Play Console, or merge back the next version.
 - Play's managed publishing decides whether approval publishes at once. Keep it
   off, or the approved release waits in Play Console.
 

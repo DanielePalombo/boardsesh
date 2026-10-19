@@ -20,8 +20,13 @@
 //   - a merge-back exists, its version has a build-android-v<version>-* tag and no
 //     release/android-v<version>-* anchor, and this build is of another version
 //     (a hand-dispatched main rebuild of the merged-back version itself is not held);
-//   - Play says the merge-back's submission is still `pending` or `deferred`
-//     (mobile-store-submit-android.ts). Done, rejected, superseded, or already
+//   - Play says the merge-back's submission is still `deferred` (a review it is
+//     waiting out, which ends on its own), or still `pending` within
+//     PENDING_HOLD_HOURS of the merge. A merge-back that stays pending longer is
+//     stuck (a fingerprint mismatch, a missing tag, a failed draft, a refused
+//     commit), and the train's next version, whose Android builds this would
+//     hold, is the way out: so the build goes ahead with a warning that names the
+//     stuck submission and the escape. Done, rejected, superseded, or already
 //     stranded (internal moved on): holding cannot help, so the build goes ahead.
 //
 // GET-only, and it fails OPEN like the review check: anything it cannot read means
@@ -43,15 +48,21 @@ import {
 } from './mobile-store-submit-target';
 import { APP_CONFIG_PATH, listMergedBack, readMarketingVersion } from './release-train-sync';
 
+/** How long a merge-back's `pending` Android submission holds the train's next build. */
+export const PENDING_HOLD_HOURS = 6;
+
 export type MergeBack = {
   number: number;
+  /** When the merge-back PR was merged (ISO 8601, from gh). */
+  mergedAt: string;
   version: string;
   /** Every build-android-v<version>-* versionCode, ascending. */
   androidVersionCodes: number[];
   androidAnchored: boolean;
 };
 
-export type HoldDecision = { pending: boolean; reason: string };
+/** `warning`: not holding, but a person should look (a stuck submission). */
+export type HoldDecision = { pending: boolean; reason: string; warning?: boolean };
 
 /**
  * PURE: the decision that needs no Play read, or `null` when Play has to say
@@ -89,12 +100,23 @@ export function holdWithoutPlay(input: {
 }
 
 /** PURE: the decision once Play has classified the merge-back's Android builds. */
-export function holdFromPlay(mergeBack: MergeBack, play: AndroidSubmissionDecision): HoldDecision {
+export function holdFromPlay(mergeBack: MergeBack, play: AndroidSubmissionDecision, nowMs: number): HoldDecision {
   const highest = Math.max(...mergeBack.androidVersionCodes);
-  if (play.status === 'pending' || play.status === 'deferred') {
+  const subject = `Merge-back #${mergeBack.number} (${mergeBack.version}, versionCode ${highest})`;
+  const holding = {
+    pending: true,
+    reason: `${subject} has not reached Play production yet, and this build would replace it on Play internal, which Android Production Release releases from. ${play.reason}`,
+  };
+  if (play.status === 'deferred') return holding;
+  if (play.status === 'pending') {
+    const mergedMs = Date.parse(mergeBack.mergedAt);
+    // An unreadable merge time counts as fresh: fail toward the hold for the window only.
+    const hours = Number.isFinite(mergedMs) ? (nowMs - mergedMs) / 3_600_000 : 0;
+    if (hours <= PENDING_HOLD_HOURS) return holding;
     return {
-      pending: true,
-      reason: `Merge-back #${mergeBack.number} (${mergeBack.version}, versionCode ${highest}) has not reached Play production yet, and this build would replace it on Play internal, which Android Production Release releases from. ${play.reason}`,
+      pending: false,
+      warning: true,
+      reason: `${subject} was merged ${Math.floor(hours)} h ago and its Android submission is still not in review, so it looks stuck (see the Mobile Store Submission runs). Building anyway, so the train can ship a fix; this upload replaces Play internal, after which that build can only be released by hand. To ship it, release it now with Android Production Release, or set STORE_AUTO_SUBMIT=off to stop the automatic submission.`,
     };
   }
   return {
@@ -114,6 +136,7 @@ export function readMergeBack(runtime: TargetRuntime): MergeBack | null {
   ]);
   return {
     number: newest.number,
+    mergedAt: newest.mergedAt,
     version,
     androidVersionCodes: androidVersionCodes(tagNames, version),
     androidAnchored: anchoredPlatforms(tagNames, version).android,
@@ -125,6 +148,7 @@ export async function mergeBackHold(options: {
   killSwitchOff: boolean;
   readMergeBack: () => MergeBack | null;
   readPlay: (versionCodes: readonly number[]) => Promise<AndroidSubmissionDecision>;
+  nowMs?: number;
 }): Promise<HoldDecision> {
   const mergeBack = options.killSwitchOff ? null : options.readMergeBack();
   const early = holdWithoutPlay({
@@ -134,7 +158,7 @@ export async function mergeBackHold(options: {
   });
   if (early) return early;
   if (!mergeBack) throw new Error('holdWithoutPlay decides whenever there is no merge-back');
-  return holdFromPlay(mergeBack, await options.readPlay(mergeBack.androidVersionCodes));
+  return holdFromPlay(mergeBack, await options.readPlay(mergeBack.androidVersionCodes), options.nowMs ?? Date.now());
 }
 
 /** Any failure to read becomes "no hold", with the cause kept in the reason. */
@@ -171,7 +195,7 @@ async function main(): Promise<number> {
         androidSubmissionStatus({ accessToken: await createAuditAccessToken(secret), versionCodes }),
     });
   });
-  console.log(decision.failedOpen ? `::warning::${decision.reason}` : decision.reason);
+  console.log(decision.failedOpen || decision.warning ? `::warning::${decision.reason}` : decision.reason);
   const outputPath = process.env['GITHUB_OUTPUT'];
   if (outputPath) appendFileSync(outputPath, `pending=${decision.pending}\n`);
   return 0;

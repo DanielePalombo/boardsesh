@@ -21,6 +21,11 @@ class PlayListingTest < Minitest::Test
     def status_code
       400
     end
+
+    def body
+      JSON.generate({ "error" => { "status" => "FAILED_PRECONDITION",
+        "message" => "Changes are in review. Contact owner@example.com with Bearer ya29.secret-token" } })
+    end
   end
 
   class FakePlay
@@ -156,13 +161,25 @@ class PlayListingTest < Minitest::Test
 
   # With a release in review, ERROR_IF_IN_REVIEW makes Play refuse the commit. The
   # lane reports that plainly and never retries with relaxed flags.
-  def test_a_refused_commit_fails_once_without_leaking_or_retrying
+  def test_a_refused_commit_fails_once_with_googles_scrubbed_reason_and_no_retry
     @play.fail_at = :commit_edit
     error = assert_raises(BoardseshPlayListing::Error) { runner(["listing"]).run }
-    assert_includes error.message, "HTTP 400"
-    assert_includes error.message, "in review"
+    assert_includes error.message, "(HTTP 400): FAILED_PRECONDITION: Changes are in review."
+    assert_includes error.message, "[redacted email]"
+    assert_includes error.message, "Bearer [redacted]"
     refute_includes error.message, "secret"
+    refute_includes error.message, "owner@example.com"
     assert_equal 1, @play.calls.count { |call| call.first == :commit_edit }
+  end
+
+  def test_error_detail_keeps_only_googles_envelope
+    assert_nil BoardseshPlayListing.error_detail("<html>secret upstream page</html>")
+    assert_nil BoardseshPlayListing.error_detail(JSON.generate({ "error" => { "status" => "INVALID" } }))
+    assert_nil BoardseshPlayListing.error_detail(nil)
+    long = BoardseshPlayListing.error_detail(JSON.generate({ "error" => { "status" => "lower case", "message" => "x" * 400 } }))
+    assert_equal "#{'x' * 300}…", long
+    key = BoardseshPlayListing.error_detail(JSON.generate({ "error" => { "message" => "bad -----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY----- here" } }))
+    assert_equal "bad [redacted key] here", key
   end
 
   def test_a_failure_before_commit_never_commits

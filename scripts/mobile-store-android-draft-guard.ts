@@ -51,7 +51,7 @@ export function productionDraftDecision(
       const codes = release.activeArtifacts.map((artifact) => artifact.versionCode).join(', ');
       return {
         skip: true,
-        reason: `Production has versionCode ${codes} pending (${release.releaseLifecycleState}); drafting ${versionCode} now could cancel that review.`,
+        reason: `Production has versionCode ${codes} pending (${release.releaseLifecycleState}); drafting ${versionCode} now would be refused or would replace it.`,
       };
     }
   }

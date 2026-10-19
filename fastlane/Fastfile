@@ -117,16 +117,11 @@ end
 # editable version to whatever version it is asked to draft, so drafting 2.7.1
 # while 2.7.0 is editable would quietly turn the 2.7.0 someone is about to
 # submit into 2.7.1. An approved 2.7.0 is not editable, but the next version
-# still waits until it is released. The live version (READY_FOR_DISTRIBUTION,
-# legacy READY_FOR_SALE) and replaced or removed versions do not hold a draft.
-# appVersionState names first, then the legacy appStoreState names that differ.
-OPEN_APP_STORE_VERSION_STATES = %w[
-  PREPARE_FOR_SUBMISSION DEVELOPER_REJECTED REJECTED METADATA_REJECTED INVALID_BINARY
-  READY_FOR_REVIEW WAITING_FOR_REVIEW IN_REVIEW
-  ACCEPTED WAITING_FOR_EXPORT_COMPLIANCE PENDING_DEVELOPER_RELEASE PENDING_APPLE_RELEASE
-  PROCESSING_FOR_DISTRIBUTION
-  PROCESSING_FOR_APP_STORE PENDING_CONTRACT
-].freeze
+# still waits until it is released. The list lives in
+# lib/app_store_version_states.rb, shared with the merge-back submission's
+# status check so both agree on what holds the next version.
+require File.join(REPO_ROOT, "fastlane", "lib", "app_store_version_states")
+OPEN_APP_STORE_VERSION_STATES = BoardseshAppStoreVersionStates::OPEN
 
 # The open iOS versions (raw appStoreVersions resources) carrying a version
 # string other than `version`, described as "2.7.0 (PREPARE_FOR_SUBMISSION)".
