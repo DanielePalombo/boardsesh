@@ -33,8 +33,11 @@ import { boardPresenceMutations } from '../graphql/resolvers/board-presence/muta
 import { SYSTEM_BOARD_OWNER_ID } from '../graphql/resolvers/board-presence/shared';
 import { roomManager } from '../services/room-manager';
 import { socialBoardMutations } from '../graphql/resolvers/social/boards';
+import { userMutations } from '../graphql/resolvers/users/mutations';
+import { sessionEditMutations } from '../graphql/resolvers/social/session-mutations';
 import * as boardQueuePreviewService from '../services/board-queue-preview';
 import { createBarrier } from './helpers/concurrency';
+import { notifyResourcePrivacyChanged } from '../services/board-session-privacy';
 
 const TEST_USER_ID = 'board-queue-preview-test-user';
 const TEST_BOARD_PATH = 'queue-preview-test/1/10/1,2/40';
@@ -135,11 +138,13 @@ async function makeSession({
   isPublic,
   status = 'active',
   lastActivity = new Date(),
+  createdByUserId,
 }: {
   boardId: number | null;
   isPublic: boolean;
   status?: string;
   lastActivity?: Date;
+  createdByUserId?: string;
 }): Promise<string> {
   const sessionId = uuidv4();
   await db.insert(dbSchema.boardSessions).values({
@@ -149,6 +154,7 @@ async function makeSession({
     isPublic,
     boardId,
     lastActivity,
+    createdByUserId,
   });
   return sessionId;
 }
@@ -614,14 +620,15 @@ describe('board-queue-preview privacy gates', () => {
     }
   });
 
-  it('sends an empty snapshot on quiet session revocation and ignores buffered public copies', async () => {
+  it('sends an empty snapshot when a session privacy change refreshes the kiosk, and ignores buffered public copies', async () => {
     const { boardId, sessionId } = await makePreviewableSession();
     const iterator = boardQueuePreviewSubscriptions.boardQueuePreview.subscribe(undefined, { boardId }, anonCtx());
     try {
       const initial = await iterator.next();
       expect(initial.value?.boardQueuePreview.queueLength).toBe(2);
       await db.update(dbSchema.boardSessions).set({ isPublic: false }).where(eq(dbSchema.boardSessions.id, sessionId));
-      pubsub.publishPrivacyChanged();
+      // What updateResourcePrivacy and the share-link join run after their commit.
+      await notifyResourcePrivacyChanged('session', sessionId);
       const withdrawn = await iterator.next();
       expect(withdrawn.value?.boardQueuePreview).toMatchObject({ current: null, upNext: [], queueLength: 0 });
 
@@ -1211,6 +1218,147 @@ describe('board-queue-preview tombstone', () => {
       expect(received[0]).toMatchObject({ boardId, ...EMPTY_PREVIEW_SHAPE });
     } finally {
       unsubscribe();
+    }
+  });
+
+  it('moving a policy-backed public board to Unlisted ends the streams of kiosks that hold only its id', async () => {
+    const { boardId, boardUuid } = await makePreviewableSession();
+    await db.insert(dbSchema.resourcePrivacy).values({
+      kind: 'board',
+      resourceId: boardUuid,
+      ownerId: TEST_USER_ID,
+      audience: 'public',
+      locationAudience: 'public',
+    });
+    const received: BoardQueuePreview[] = [];
+    const unsubscribe = await pubsub.subscribeBoardQueuePreview(String(boardId), (preview) => received.push(preview));
+    const kiosk = boardQueuePreviewSubscriptions.boardQueuePreview.subscribe(undefined, { boardId }, anonCtx());
+
+    try {
+      expect((await kiosk.next()).value?.boardQueuePreview.queueLength).toBe(2);
+      // Old edit screens resend every visibility boolean with a rename.
+      await socialBoardMutations.updateBoard(
+        null,
+        { input: { boardUuid, name: 'Policy wall', isPublic: true, isUnlisted: false, hideLocation: false } },
+        authCtx(),
+      );
+      expect(received).toHaveLength(0);
+
+      // `isUnlisted` alone, without `isPublic: false`: the id-only kiosk loses the wall.
+      await socialBoardMutations.updateBoard(null, { input: { boardUuid, isUnlisted: true } }, authCtx());
+      expect(received).toEqual([expect.objectContaining({ boardId, ...EMPTY_PREVIEW_SHAPE })]);
+      const cleared = await kiosk.next();
+      expect(cleared.value?.boardQueuePreview).toMatchObject(EMPTY_PREVIEW_SHAPE);
+      expect((await kiosk.next()).done).toBe(true);
+    } finally {
+      await kiosk.return?.(undefined);
+      unsubscribe();
+      await db.delete(dbSchema.resourcePrivacy).where(eq(dbSchema.resourcePrivacy.resourceId, boardUuid));
+    }
+  });
+
+  it('moving a board with no privacy policy from Public to Unlisted tombstones its kiosks', async () => {
+    const { boardId, boardUuid } = await makePreviewableSession();
+    const received: BoardQueuePreview[] = [];
+    const unsubscribe = await pubsub.subscribeBoardQueuePreview(String(boardId), (preview) => received.push(preview));
+
+    try {
+      // The legacy booleans only: `isUnlisted` wins over the `isPublic` left set.
+      await socialBoardMutations.updateBoard(null, { input: { boardUuid, isUnlisted: true } }, authCtx());
+      expect(received).toEqual([expect.objectContaining({ boardId, ...EMPTY_PREVIEW_SHAPE })]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('making an Unlisted board private tombstones its kiosks', async () => {
+    const { id: boardId, uuid: boardUuid } = await makeBoardRow({ isPublic: false, isUnlisted: true });
+    const received: BoardQueuePreview[] = [];
+    const unsubscribe = await pubsub.subscribeBoardQueuePreview(String(boardId), (preview) => received.push(preview));
+
+    try {
+      await socialBoardMutations.updateBoard(null, { input: { boardUuid, isUnlisted: false } }, authCtx());
+      expect(received).toEqual([expect.objectContaining({ boardId, ...EMPTY_PREVIEW_SHAPE })]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('a visibility edit that read a stale row still refreshes kiosks when its locked write flips the session', async () => {
+    const { id: boardId } = await makeBoardRow({ isPublic: true });
+    const sessionId = await makeSession({ boardId, isPublic: false, createdByUserId: TEST_USER_ID });
+    await seedQueueState(sessionId, [makeQueueItem(1)], null);
+    const received: BoardQueuePreview[] = [];
+    const unsubscribe = await pubsub.subscribeBoardQueuePreview(String(boardId), (preview) => received.push(preview));
+    // A racing request makes the session public after this one read it as
+    // private and before this one takes the row lock.
+    const realTransaction = db.transaction.bind(db);
+    const transaction = vi.spyOn(db, 'transaction').mockImplementationOnce(async (callback, config) => {
+      await realTransaction((tx) =>
+        tx.update(dbSchema.boardSessions).set({ isPublic: true }).where(eq(dbSchema.boardSessions.id, sessionId)),
+      );
+      return realTransaction(callback, config);
+    });
+
+    try {
+      await sessionEditMutations.updateSession(null, { input: { sessionId, isPublic: false } }, authCtx());
+      // The locked row was public, so this write flipped it back: kiosks must
+      // drop the public queue the racing request may already have shown.
+      expect(received).toEqual([expect.objectContaining({ boardId, ...EMPTY_PREVIEW_SHAPE })]);
+    } finally {
+      transaction.mockRestore();
+      unsubscribe();
+    }
+  });
+
+  it('deleting an account tombstones the kiosks of its Public and Unlisted boards, not its private ones', async () => {
+    await seedSystemBoardOwner();
+    const leaver = 'board-queue-preview-leaver';
+    await db.execute(sql`
+      INSERT INTO users (id, email, name, created_at, updated_at)
+      VALUES (${leaver}, 'leaver@board-queue-preview.test', 'Leaver', now(), now())
+      ON CONFLICT DO NOTHING
+    `);
+    const publicBoard = await makeBoard({ isPublic: true, ownerId: leaver });
+    const unlistedBoard = await makeBoard({ isPublic: false, isUnlisted: true, ownerId: leaver });
+    const privateBoard = await makeBoard({ isPublic: false, ownerId: leaver });
+    // Unlisted by its policy row alone: both legacy booleans are false.
+    const policyBoard = await makeBoardRow({ isPublic: false, ownerId: leaver });
+    await db.insert(dbSchema.resourcePrivacy).values({
+      kind: 'board',
+      resourceId: policyBoard.uuid,
+      ownerId: leaver,
+      audience: 'unlisted',
+    });
+    const boardIds = [publicBoard, unlistedBoard, privateBoard, policyBoard.id];
+    const received = new Map<number, BoardQueuePreview[]>(boardIds.map((boardId) => [boardId, []]));
+    const unsubscribes = await Promise.all(
+      boardIds.map((boardId) =>
+        pubsub.subscribeBoardQueuePreview(String(boardId), (preview) => received.get(boardId)!.push(preview)),
+      ),
+    );
+
+    try {
+      await userMutations.deleteAccount(null, { input: { removeSetterName: false } }, authCtx({ userId: leaver }));
+      expect(received.get(publicBoard)).toEqual([
+        expect.objectContaining({ boardId: publicBoard, ...EMPTY_PREVIEW_SHAPE }),
+      ]);
+      expect(received.get(unlistedBoard)).toEqual([
+        expect.objectContaining({ boardId: unlistedBoard, ...EMPTY_PREVIEW_SHAPE }),
+      ]);
+      expect(received.get(policyBoard.id)).toEqual([
+        expect.objectContaining({ boardId: policyBoard.id, ...EMPTY_PREVIEW_SHAPE }),
+      ]);
+      // A private board's channel never carried a snapshot.
+      expect(received.get(privateBoard)).toEqual([]);
+    } finally {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      // Account deletion hands the scrubbed boards to the system owner.
+      for (const boardId of boardIds) {
+        await db.delete(dbSchema.userBoards).where(eq(dbSchema.userBoards.id, boardId));
+      }
+      await db.delete(dbSchema.resourcePrivacy).where(eq(dbSchema.resourcePrivacy.resourceId, policyBoard.uuid));
+      await db.execute(sql`DELETE FROM users WHERE id = ${leaver}`);
     }
   });
 
