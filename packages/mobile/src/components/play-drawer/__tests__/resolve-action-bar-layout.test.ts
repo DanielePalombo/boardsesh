@@ -6,7 +6,7 @@ const MEMBER: ActionBarLayoutInput = {
   supportsMirroring: false,
   isAnonymous: false,
   connectPill: false,
-  inCommitMode: false,
+  commitButton: null,
   showLightbulb: true,
   hasShare: true,
   angleAvailable: true,
@@ -52,7 +52,9 @@ describe('resolveActionBarLayout: the defaults draw today’s bars', () => {
 
   // [ ] [⏮] [✓] [⏭] [ ] / [40°] ··· [⬆]
   it('gives an anonymous reader no queue, heart or bulb, and flags nothing for a ⋯ they do not get', () => {
-    expect(resolveActionBarLayout({ ...MEMBER, isAnonymous: true, connectPill: true, inCommitMode: true })).toEqual({
+    expect(
+      resolveActionBarLayout({ ...MEMBER, isAnonymous: true, connectPill: true, commitButton: 'putOnWall' }),
+    ).toEqual({
       leadingSlot: null,
       trailingSlot: null,
       showPreviousNext: true,
@@ -60,6 +62,12 @@ describe('resolveActionBarLayout: the defaults draw today’s bars', () => {
       showConnectPill: false,
       hidden: NOTHING_HIDDEN,
     });
+    // No wall to take and no queue to commit into: neither latch control reaches them.
+    expect(resolveActionBarLayout({ ...MEMBER, isAnonymous: true, commitButton: 'confirm' }).secondaryRow).toEqual([
+      'angle',
+      'spacer',
+      'share',
+    ]);
     expect(resolveActionBarLayout({ ...MIRROR, isAnonymous: true }).leadingSlot).toBe('mirror');
     expect(resolveActionBarLayout({ ...MIRROR, isAnonymous: true }).secondaryRow).toEqual(['angle', 'spacer', 'share']);
   });
@@ -101,19 +109,76 @@ describe('resolveActionBarLayout: the defaults draw today’s bars', () => {
     expect(layout.hidden).toEqual({ ...NOTHING_HIDDEN, share: true, queue: true });
   });
 
-  it('gives the second row to the commit bar, and hands its buttons to ⋯; the first-slot queue stays', () => {
-    expect(resolveActionBarLayout({ ...MEMBER, inCommitMode: true })).toEqual({
+  // [☰] [⏮] [✓] [⏭] [💡] / [♡] · [Put on the wall] · [⬆]
+  it('keeps one button each side of Put on the wall while browsing, and hands the angle to ⋯', () => {
+    expect(resolveActionBarLayout({ ...MEMBER, commitButton: 'putOnWall' })).toEqual({
       leadingSlot: 'queue',
       trailingSlot: 'lightbulb',
       showPreviousNext: true,
-      secondaryRow: 'commit',
+      secondaryRow: ['favorite', 'spacer', 'putOnWall', 'spacer', 'share'],
+      showConnectPill: false,
+      hidden: { ...NOTHING_HIDDEN, angle: true },
+    });
+  });
+
+  // [⇄] [⏮] [✓] [⏭] [💡] / [♡] · [Put on the wall] · [☰]
+  it('keeps the heart and the rightmost queue beside Put on the wall on a mirror board, angle and share to ⋯', () => {
+    const layout = resolveActionBarLayout({ ...MIRROR, commitButton: 'putOnWall' });
+    expect(layout.leadingSlot).toBe('mirror');
+    expect(layout.secondaryRow).toEqual(['favorite', 'spacer', 'putOnWall', 'spacer', 'queue']);
+    expect(layout.hidden).toEqual({ ...NOTHING_HIDDEN, angle: true, share: true });
+  });
+
+  it('flags only what could have drawn: an undrawable angle or share is not handed to ⋯', () => {
+    const fixedAngle = resolveActionBarLayout({ ...MEMBER, commitButton: 'putOnWall', angleAvailable: false });
+    expect(fixedAngle.secondaryRow).toEqual(['favorite', 'spacer', 'putOnWall', 'spacer', 'share']);
+    expect(fixedAngle.hidden).toEqual(NOTHING_HIDDEN);
+
+    // A draft has no share, so the right side is empty and the angle still steps aside.
+    const draft = resolveActionBarLayout({ ...MEMBER, commitButton: 'putOnWall', hasShare: false });
+    expect(draft.secondaryRow).toEqual(['favorite', 'spacer', 'putOnWall', 'spacer']);
+    expect(draft.hidden).toEqual({ ...NOTHING_HIDDEN, angle: true });
+  });
+
+  // The first DRAWABLE button keeps the left place: an angle this board can't
+  // change doesn't hold it empty.
+  it('keeps the first drawable button on the left when an undrawable one leads', () => {
+    const angleFirst = buttons(['angle', 'favorite', 'share', 'mirror', 'queue']);
+    const layout = resolveActionBarLayout({
+      ...MEMBER,
+      buttons: angleFirst,
+      commitButton: 'putOnWall',
+      angleAvailable: false,
+    });
+    expect(layout.secondaryRow).toEqual(['favorite', 'spacer', 'putOnWall', 'spacer', 'share']);
+    expect(layout.hidden).toEqual(NOTHING_HIDDEN);
+    // Where it can draw, it keeps the place and the heart steps into ⋯.
+    const drawable = resolveActionBarLayout({ ...MEMBER, buttons: angleFirst, commitButton: 'putOnWall' });
+    expect(drawable.secondaryRow).toEqual(['angle', 'spacer', 'putOnWall', 'spacer', 'share']);
+    expect(drawable.hidden).toEqual({ ...NOTHING_HIDDEN, favorite: true });
+  });
+
+  it('gives the buttons back once Put on the wall goes', () => {
+    const browsing = resolveActionBarLayout({ ...MIRROR, commitButton: 'putOnWall' });
+    expect(browsing.hidden.angle).toBe(true);
+    const back = resolveActionBarLayout({ ...MIRROR, commitButton: null });
+    expect(back.secondaryRow).toEqual(['favorite', 'angle', 'spacer', 'share', 'queue']);
+    expect(back.hidden).toEqual(NOTHING_HIDDEN);
+  });
+
+  it('gives the whole second row to the busy-wall question, and hands its buttons to ⋯; the first-slot queue stays', () => {
+    expect(resolveActionBarLayout({ ...MEMBER, commitButton: 'confirm' })).toEqual({
+      leadingSlot: 'queue',
+      trailingSlot: 'lightbulb',
+      showPreviousNext: true,
+      secondaryRow: 'confirm',
       showConnectPill: false,
       hidden: { ...NOTHING_HIDDEN, favorite: true, share: true, angle: true },
     });
   });
 
-  it('hands the queue to ⋯ too in commit mode on a mirror board', () => {
-    expect(resolveActionBarLayout({ ...MIRROR, inCommitMode: true }).hidden).toEqual({
+  it('hands the queue to ⋯ too under the busy-wall question on a mirror board', () => {
+    expect(resolveActionBarLayout({ ...MIRROR, commitButton: 'confirm' }).hidden).toEqual({
       favorite: true,
       share: true,
       queue: true,
@@ -122,11 +187,18 @@ describe('resolveActionBarLayout: the defaults draw today’s bars', () => {
     });
   });
 
-  it('lets commit mode win over the pill, which puts the bulb back in its slot', () => {
-    const layout = resolveActionBarLayout({ ...MEMBER, connectPill: true, inCommitMode: true });
-    expect(layout.showConnectPill).toBe(false);
-    expect(layout.trailingSlot).toBe('lightbulb');
-    expect(layout.secondaryRow).toBe('commit');
+  it('lets either latch control win over the pill, which puts the bulb back in its slot', () => {
+    const browsing = resolveActionBarLayout({ ...MEMBER, connectPill: true, commitButton: 'putOnWall' });
+    expect(browsing.showConnectPill).toBe(false);
+    expect(browsing.trailingSlot).toBe('lightbulb');
+    // Share keeps its place: the pill would have taken it, Put on the wall doesn't.
+    expect(browsing.secondaryRow).toEqual(['favorite', 'spacer', 'putOnWall', 'spacer', 'share']);
+    expect(browsing.hidden.share).toBe(false);
+
+    const confirming = resolveActionBarLayout({ ...MEMBER, connectPill: true, commitButton: 'confirm' });
+    expect(confirming.showConnectPill).toBe(false);
+    expect(confirming.trailingSlot).toBe('lightbulb');
+    expect(confirming.secondaryRow).toBe('confirm');
   });
 
   it('never shows the pill or the bulb without Bluetooth', () => {
@@ -150,7 +222,8 @@ describe('resolveActionBarLayout: the defaults draw today’s bars', () => {
       'spacer',
       'queue',
     ]);
-    expect(resolveActionBarLayout({ ...MEMBER, hasShare: false, inCommitMode: true }).hidden.share).toBe(false);
+    expect(resolveActionBarLayout({ ...MEMBER, hasShare: false, commitButton: 'confirm' }).hidden.share).toBe(false);
+    expect(resolveActionBarLayout({ ...MEMBER, hasShare: false, commitButton: 'putOnWall' }).hidden.share).toBe(false);
     expect(resolveActionBarLayout({ ...MEMBER, hasShare: false, connectPill: true }).hidden.share).toBe(false);
     const shareOff = buttons(PLAYER_ORDER, ['share']);
     expect(resolveActionBarLayout({ ...MEMBER, hasShare: false, buttons: shareOff }).hidden.share).toBe(false);
@@ -177,8 +250,15 @@ describe('resolveActionBarLayout: the climber’s buttons', () => {
     });
   });
 
-  it('brings the row back for commit mode and the connect pill', () => {
-    expect(resolveActionBarLayout({ ...MEMBER, buttons: ALL_OFF, inCommitMode: true }).secondaryRow).toBe('commit');
+  it('brings the row back for Put on the wall, the busy-wall question and the connect pill', () => {
+    // Put on the wall alone, centred between the two gaps; every switched-off
+    // button stays in ⋯ where it already was.
+    const browsing = resolveActionBarLayout({ ...MIRROR, buttons: ALL_OFF, commitButton: 'putOnWall' });
+    expect(browsing.secondaryRow).toEqual(['spacer', 'putOnWall', 'spacer']);
+    expect(browsing.hidden).toEqual({ favorite: true, share: true, queue: true, mirror: true, angle: true });
+    expect(resolveActionBarLayout({ ...MEMBER, buttons: ALL_OFF, commitButton: 'confirm' }).secondaryRow).toBe(
+      'confirm',
+    );
     expect(resolveActionBarLayout({ ...MEMBER, buttons: ALL_OFF, connectPill: true }).secondaryRow).toEqual([
       'spacer',
       'connectPill',

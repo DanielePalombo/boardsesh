@@ -22,7 +22,7 @@ Fixed, and why:
 | ---------------------------------------- | --------------------------------------------------------------------------- |
 | Log                                      | The core loop. Always the centre of the big row.                            |
 | Board light                              | Wall control must not move under a climber's thumb. Always the right slot.  |
-| Commit bar, connect pill                 | Session states, not preferences. They take the small row when they need it. |
+| Put on the wall, busy-wall question, connect pill | Session states, not preferences. They show up in the small row when they need it. |
 | Playback slider                          | Belongs to the board, so it always sits next to it.                         |
 | Top row ⌄ · rest timer · ⋯               | ⋯ is how a hidden button comes back.                                        |
 
@@ -44,11 +44,16 @@ Small row   [first half of the rest] ········ [last half]
   count even where this board or climb can't draw them (a fixed-angle board, a draft): they leave their place
   empty instead, so nothing jumps sides between climbs and today's bars come out exactly as they were.
 - **Previous and next off** leaves both slots empty, so Log stays centred. Swiping the board still moves.
-- **The connect pill** replaces the right-hand group; **commit mode** replaces the whole small row. Whatever they
-  push out, and every button the climber switched off, is flagged in `hidden`, and ⋯ carries a row for each.
-- **Nothing left to draw**, no pill and no commit bar: there is no small row (`secondaryRow: []`). The board gets
-  52 pt back (the 8 pt gap and the 44 pt row; the 12 pt bottom padding moves to the big row). Commit mode and the
-  connect pill bring the row back while they need it. Share switched on keeps the row even on a draft, where it
+- **The connect pill** replaces the right-hand group. **Put on the wall** (`commitButton: 'putOnWall'`) sits in the
+  gap in the middle of the small row. The first button of the start group and the last of the end group keep their
+  places; the rest step into ⋯ while it shows, because the label needs ~140 pt and a mirror board's full row leaves
+  ~120 pt on a 375 pt phone. Only the busy-wall question (`commitButton: 'confirm'`, "Keep Sam's" / "Put mine up")
+  replaces the whole row. Whatever the pill, the button and the question push out, and every button the climber
+  switched off, is flagged in `hidden`, and ⋯ carries a row for each.
+- **Nothing left to draw**, no pill and no commit button: there is no small row (`secondaryRow: []`). The board gets
+  52 pt back (the 8 pt gap and the 44 pt row; the 12 pt bottom padding moves to the big row). Put on the wall, the
+  busy-wall question and the connect pill bring the row back while they need it, so a row with every button
+  switched off still appears with Put on the wall alone in it. Share switched on keeps the row even on a draft, where it
   can't draw (`['spacer']`, held at the row's usual 64 pt): it is the one button that comes and goes climb to
   climb, and the board must not jump mid-swipe. The angle depends on the board, not the climb, so an angle-only
   row on a fixed-angle board does collapse.

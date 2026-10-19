@@ -100,12 +100,18 @@ export type PlaylistSuggestionSource = {
 };
 
 /**
- * Why a climb became the current one, when it was not the climber choosing it.
- * `climb_saved` is the create screen putting a just-saved climb on the queue:
- * nobody picked a climb to climb, so a measure of "made a climb active" has to
- * be able to leave it out.
+ * What made a climb the current one, when it was more than a plain pick.
+ *
+ * - `climb_saved`: the create screen putting a just-saved climb on the queue.
+ *   Nobody picked a climb to climb, so a measure of "made a climb active" has
+ *   to be able to leave it out.
+ * - `put_on_wall`: a pinned preview committed on purpose: the Put on the wall
+ *   (or Set active) button under it, or the lightbulb relaying it to the board
+ *   holder. A real choice, kept apart so the crew browse rollout (#4281) can
+ *   count it; the event's `participantCount` tells a crew's commits from solo
+ *   ones.
  */
-export type SetCurrentClimbTrigger = 'climb_saved';
+export type SetCurrentClimbTrigger = 'climb_saved' | 'put_on_wall';
 
 export type SetCurrentClimbOptions = {
   /**

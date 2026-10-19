@@ -67,7 +67,7 @@ export const PlayerButtonsPreview = memo(function PlayerButtonsPreview({
         supportsMirroring: board.supportsMirroring,
         isAnonymous: false,
         connectPill: false,
-        inCommitMode: false,
+        commitButton: null,
         showLightbulb: board.showLightbulb,
         hasShare: true,
         angleAvailable: board.angleAvailable,
@@ -76,7 +76,7 @@ export const PlayerButtonsPreview = memo(function PlayerButtonsPreview({
       }),
     [board.supportsMirroring, board.showLightbulb, board.angleAvailable, buttons, previousNext],
   );
-  const secondaryItems = layout.secondaryRow === 'commit' ? [] : layout.secondaryRow;
+  const secondaryItems = layout.secondaryRow === 'confirm' ? [] : layout.secondaryRow;
 
   const buttonLabel = (buttonId: PlayerButtonId): string => {
     switch (buttonId) {
@@ -100,7 +100,7 @@ export const PlayerButtonsPreview = memo(function PlayerButtonsPreview({
   if (layout.showPreviousNext) spokenButtons.push(t('mobile.settings.playerButtons.fixed.next'));
   if (layout.trailingSlot) spokenButtons.push(t('mobile.settings.playerButtons.fixed.boardLight'));
   for (const item of secondaryItems) {
-    if (item !== 'spacer' && item !== 'connectPill') spokenButtons.push(buttonLabel(item));
+    if (item !== 'spacer' && item !== 'connectPill' && item !== 'putOnWall') spokenButtons.push(buttonLabel(item));
   }
   const summary = t('mobile.settings.playerButtons.previewLabel', {
     position:
@@ -145,7 +145,9 @@ export const PlayerButtonsPreview = memo(function PlayerButtonsPreview({
                     </Text>
                   </View>
                 );
+              // Neither shows in the preview: it has no browse latch and no connect test.
               case 'connectPill':
+              case 'putOnWall':
                 return null;
               default:
                 return (

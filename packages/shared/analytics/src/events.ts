@@ -132,8 +132,10 @@ export const SHARED_EVENTS = {
   // is the board of the CLIMB made current, as on `Tick Logged`, and falls back
   // to the active board when the climb carries none; `layoutId` is still the
   // active board's. `trigger` (#6027) is 'climb_saved' when the create screen
-  // queued a climb it had just saved, and null when a climber chose the climb.
-  // Before the #6027 OTA a save fired this event with nothing to tell it apart.
+  // queued a climb it had just saved, 'put_on_wall' when a climber committed a
+  // pinned preview on purpose (Put on the wall / Set active, or the bulb relay;
+  // #4281), and null for any other pick. Before the #6027 OTA a save fired this
+  // event with nothing to tell it apart.
   SetActiveClimb: 'Set Active Climb',
   SessionStarted: 'Session Started',
   SessionEnded: 'Session Ended',

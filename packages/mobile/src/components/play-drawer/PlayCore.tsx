@@ -54,12 +54,14 @@ import { useSwipeNavigation, useSwipePager, useSwipePages } from './use-swipe-pa
 import { PlayDrawerActionBar } from './PlayDrawerActionBar';
 import { PlayDrawerActionsMenu } from './PlayDrawerActionsMenu';
 import { resolveQueuedSlotUuid } from './play-drawer-menu-rows';
-import { resolveActionBarLayout } from './action-bar-layout';
+import { resolveActionBarLayout, type ActionBarCommitButton } from './action-bar-layout';
 import { WallStatePill } from './WallStatePill';
 import { WallStateCallout } from './WallStateCallout';
-import { BrowseFrameOverlay } from './BrowseFrameOverlay';
 import {
   resolveWallPillState,
+  resolveHeaderPillState,
+  canLeavePreview,
+  type WallPillState,
   resolveCommitBarModel,
   shouldAdoptLateWallRead,
   shouldArmBusyWallConfirm,
@@ -252,12 +254,7 @@ export function PlayCore({
   // hangs from. Owned here rather than inside the pill because the callout is an
   // absolute sibling of the swipeable header (so it doesn't ride the swipe
   // translate) — it can't be a child of the 32pt pill in the header's flank.
-  //
-  // Three states, not a boolean, because the same card serves two very different
-  // jobs: `'explainer'` is the tapped card (modal, focused, offers actions) and
-  // `'notice'` is the one-shot "you're browsing now" card that appears by itself
-  // when a shared session first latches the drawer (no modal, no focus steal).
-  const [wallCallout, setWallCallout] = useState<'none' | 'explainer' | 'notice'>('none');
+  const [wallCallout, setWallCallout] = useState<'none' | 'explainer'>('none');
   // The mirror toggle, scoped to the climb it was made on. A bare boolean went
   // stale whenever the current climb changed by a route the drawer doesn't own
   // (a party peer advancing the queue, a reorder, the accessory bar) — the
@@ -793,7 +790,7 @@ export function PlayCore({
   // while there was one.
   const browseByDefault = isSharedSession || sharedBrowseLatched;
 
-  // --- Wall state (header pill + commit row + viewfinder) --------------------
+  // --- Wall state (header chip + Put on the wall) ----------------------------
   //
   // Everything keys on DISPLAYED-EQUALS-WALL, never on who holds Bluetooth.
   //
@@ -927,6 +924,13 @@ export function PlayCore({
     confirmArmed: busyWallConfirmArmed,
     wallDriven: lightbulbActive,
   });
+  // What the browse latch puts in the second row: one button in the middle of
+  // the usual row, or the busy-wall question in place of it.
+  const commitButton: ActionBarCommitButton = commitBarModel.showConfirm
+    ? 'confirm'
+    : commitBarModel.showPutOnWall
+      ? 'putOnWall'
+      : null;
   // The connect-step test's pill (#5654, PR 7, treatment only): the bulb with a
   // label, while this phone has never connected, and only where a tap on the
   // bulb would CONNECT this phone (see `deriveFirstConnectPillWouldConnect`).
@@ -952,16 +956,15 @@ export function PlayCore({
     }
     handleLightbulb();
   }, [lightbulbPressAction, connectLightbulb, handleLightbulb]);
-  // The latch as the board overlay sees it. It follows the latch itself, NOT the
-  // commit row: on the wrong board the row stands down (its controls would be
-  // dead under the switch-board scrim) while the climber is still very much
-  // browsing. A signed-out reader is always in a preview — that is what keeps
-  // the queue untouched — so the whole feature is suppressed for them.
-  const showBrowseFrame = browseLatchActive && !isAnonymous;
-  // "Back to live" only clears a pinned preview, so it's offered whenever one is
-  // pinned — including the `live`-pill previews the latch gate above excludes,
-  // where returning to the committed head is still a real (and truthful) action.
-  const canReturnToCommittedClimb = isPreview && !isAnonymous;
+  // Back to live (the explainer's action, and the header's back chip) only
+  // when going back lands somewhere: see `canLeavePreview`.
+  const canReturnToCommittedClimb = canLeavePreview({
+    previewPinned: isPreview,
+    isAnonymous,
+    displayedClimbUuid: displayedClimbUuid ?? null,
+    committedHeadUuid: currentClimbQueueItem?.climb.uuid ?? null,
+    isPane,
+  });
 
   const { markLatchExit, suppressBrowseAnnouncement } = useWallStateAnnouncer({
     pillState: wallPillState,
@@ -978,32 +981,25 @@ export function PlayCore({
     setWallCallout('none');
   }, [wallPillState, displayedClimbUuid]);
 
-  // Something silently changed what a swipe does, so say so — once. Fires the
-  // first time the latch actually engages: joining a crew, or (solo) the first
-  // navigation that stays view-only because board lighting is off for swipes and
-  // taps. Either way it is the moment the new rule becomes visible rather than
-  // merely true.
+  // Something silently changed what a swipe does, so say so to a screen reader,
+  // once. Fires the first time the latch actually engages: joining a crew, or
+  // (solo) the first navigation that stays view-only because board lighting is
+  // off for swipes and taps. Sighted climbers get the Put on the wall button and
+  // the back chip appearing; there's no card on top of the board any more.
   //
   // The solo half is gated on a wall being reachable at all. With no board
   // connected, no session and nothing lit, "the wall stays put" is a sentence
-  // about something the climber hasn't got — and the commit button reads "Set
+  // about something the climber hasn't got, and the commit button reads "Set
   // active" there for the same reason.
-  //
-  // Declared AFTER the dismiss effect above so the same commit can't close the
-  // card it just opened: the latch engaging usually moves the pill state and the
-  // climb at once, and effects run in declaration order.
   const wallReachable = commitBarModel.commitLabel === 'putOnWall';
   useEffect(() => {
     if (isAnonymous || !browseLatchActive) return;
     const claimed = isSharedSession ? claimJoinedBrowseNotice(sessionId) : wallReachable && claimSoloBrowseNotice();
     if (!claimed) return;
-    setWallCallout('notice');
-    // The card is the visual half; this is the spoken one, and it is spoken on
-    // both platforms. A live region on a card that MOUNTS already holding its
-    // text is not a content change, so TalkBack can miss it — and the drawer can
-    // open straight into a browse (a crew climb-list tap), where there is no
-    // state transition for the wall-state announcer to narrate either. Its browse
-    // sentence stands down when this speaks, so one moment gets one sentence.
+    // Spoken on both platforms. The drawer can open straight into a browse (a
+    // crew climb-list tap), where there is no state transition for the
+    // wall-state announcer to narrate. Its browse sentence stands down when this
+    // speaks, so one moment gets one sentence.
     suppressBrowseAnnouncement();
     AccessibilityInfo.announceForAccessibility(t('playView.wallState.joinedBrowseNotice'));
   }, [isAnonymous, isSharedSession, browseLatchActive, sessionId, wallReachable, suppressBrowseAnnouncement, t]);
@@ -1033,6 +1029,29 @@ export function PlayCore({
     // explainer (and its focus trap) open with its action already spent.
     setWallCallout('none');
   }, [markLatchExit, setDrawerPreviewItem, setDrawerPreviewSuggestionSource]);
+  // Browsing, the header chip IS the way back (the face of whoever lit the wall,
+  // with a back glyph). On the wall and Live it opens the explainer.
+  // The header chip as drawn (`resolveHeaderPillState`): during a preview it is
+  // the way back, when back goes anywhere.
+  const committedHeadUuid = currentClimbQueueItem?.climb.uuid ?? null;
+  const headerPill = useMemo(
+    () =>
+      resolveHeaderPillState({
+        wallPillState,
+        previewPinned: isPreview,
+        isAnonymous,
+        displayedClimbUuid: displayedClimbUuid ?? null,
+        committedHeadUuid,
+        wallClimbUuid,
+        isPane,
+      }),
+    [wallPillState, isPreview, isAnonymous, displayedClimbUuid, committedHeadUuid, wallClimbUuid, isPane],
+  );
+  const headerPillState: WallPillState = headerPill?.state ?? null;
+  const headerBackTarget = headerPill?.backTarget ?? null;
+  // Browsing, the chip (a back glyph and the face of whoever lit the wall) IS
+  // the way back. On the wall and Live it opens the explainer.
+  const wallPillPress = headerPillState === 'browsing' ? handleBackToLive : handleOpenWallCallout;
 
   // The SELECTED board's angle moved (the angle pill / sheet — `activeAngle`, not
   // the render board's, which follows the displayed climb).
@@ -1164,12 +1183,10 @@ export function PlayCore({
         busyWallConfirmArmed,
         browseLatchActive,
         wallClimbUuid,
-        wallClimbName: wallClimb.name,
         displayedClimbUuid,
         wallUuidAtLatchStartRef,
         setBusyWallConfirmArmed,
         markLatchExit,
-        t,
       },
     });
 
@@ -1388,7 +1405,14 @@ export function PlayCore({
     boardName: boardName as BoardName,
     layoutId,
     angle,
-    leading: wallPillState ? <WallStatePill state={wallPillState} onPress={handleOpenWallCallout} /> : undefined,
+    leading: headerPillState ? (
+      <WallStatePill
+        state={headerPillState}
+        backTarget={headerBackTarget}
+        latched={browseLatchActive}
+        onPress={wallPillPress}
+      />
+    ) : undefined,
     onLongPressName: handleCopyName,
     onPressSetter: openSetterPlaylist,
   });
@@ -1404,7 +1428,7 @@ export function PlayCore({
         supportsMirroring,
         isAnonymous,
         connectPill: showConnectPill,
-        inCommitMode: commitBarModel.mode === 'commit',
+        commitButton,
         showLightbulb: hasBluetooth,
         hasShare: !displayedClimbIsDraft,
         angleAvailable,
@@ -1415,7 +1439,7 @@ export function PlayCore({
       supportsMirroring,
       isAnonymous,
       showConnectPill,
-      commitBarModel.mode,
+      commitButton,
       hasBluetooth,
       displayedClimbIsDraft,
       angleAvailable,
@@ -1453,13 +1477,13 @@ export function PlayCore({
             currentHeaderModel.layoutFingerprint,
             isAnonymous,
             showBoardMismatch,
-            wallPillState,
+            headerPillState,
           ]),
           controlsFingerprint: JSON.stringify([
             isAngleAdjustable,
             isAuthenticated,
             isTickBarActive,
-            commitBarModel.mode,
+            commitButton,
             showConnectPill,
             bluetooth !== null,
             boardSupportsMirroring(boardName, layoutId),
@@ -1600,21 +1624,17 @@ export function PlayCore({
       // The pill owns the driver's face whenever it renders the
       // avatar; suppress the lightbulb pip so the same face never
       // shows twice in the drawer.
-      showHolderBadge={shouldShowHolderBadge(wallPillState)}
-      // While the browse latch is up the second row carries the
-      // latch's own controls instead of the utilities — same 64pt
-      // row, no added height.
-      secondaryMode={commitBarModel.mode}
-      showBackToLive={commitBarModel.showBackToLive}
-      showPutOnWall={commitBarModel.showPutOnWall}
-      // Someone moved the wall mid-browse: the same two
-      // controls become Keep theirs / Put mine up, so the
-      // second tap on the filled button is the commit and
-      // the text button is still the way out.
-      showConfirm={commitBarModel.showConfirm}
+      showHolderBadge={shouldShowHolderBadge(headerPill)}
+      // While browsing, Put on the wall sits in the middle of the
+      // usual row; going back is the face chip in the header. Only
+      // the busy-wall question (someone else moved the wall) takes
+      // the whole row: Keep theirs / Put mine up, where the second
+      // tap on the filled button is the commit.
+      commitButton={commitButton}
       wallClimbName={wallClimb.name}
+      wallClimbUuid={wallClimbUuid}
       commitLabel={commitBarModel.commitLabel}
-      onBackToLive={handleBackToLive}
+      onKeepTheirs={handleBackToLive}
       onCommit={handleSetActive}
       ascentCount={ascentCount}
       onPrevClick={handlePrev}
@@ -1717,9 +1737,7 @@ export function PlayCore({
                         callout can trap assistive tech the way a modal does: iOS
                         gets `accessibilityViewIsModal` on the callout itself,
                         Android has no such thing, so TalkBack would otherwise
-                        wander the drawer "behind" the open card. Only the TAPPED
-                        explainer traps: the one-shot notice appeared on its own,
-                        so it never takes the drawer away from a screen reader. */}
+                        wander the drawer "behind" the open card. */}
                     <View
                       style={styles.firstScreenContent}
                       accessibilityElementsHidden={wallCallout === 'explainer'}
@@ -1805,8 +1823,13 @@ export function PlayCore({
                                 // entirely when there are no wall stakes, so the plain solo
                                 // header keeps today's mirrored-flank centring.
                                 leading={
-                                  wallPillState ? (
-                                    <WallStatePill state={wallPillState} onPress={handleOpenWallCallout} />
+                                  headerPillState ? (
+                                    <WallStatePill
+                                      state={headerPillState}
+                                      backTarget={headerBackTarget}
+                                      latched={browseLatchActive}
+                                      onPress={wallPillPress}
+                                    />
                                   ) : undefined
                                 }
                                 onLongPressName={handleCopyName}
@@ -1827,7 +1850,9 @@ export function PlayCore({
                                 layoutId={previousHeaderBoard.layoutId}
                                 angle={previousHeaderBoard.angle}
                                 leading={
-                                  wallPillState ? <WallStatePill state={wallPillState} reserveOnly /> : undefined
+                                  headerPillState ? (
+                                    <WallStatePill state={headerPillState} backTarget={headerBackTarget} reserveOnly />
+                                  ) : undefined
                                 }
                               />
                             ) : null
@@ -1840,7 +1865,9 @@ export function PlayCore({
                                 layoutId={nextHeaderBoard.layoutId}
                                 angle={nextHeaderBoard.angle}
                                 leading={
-                                  wallPillState ? <WallStatePill state={wallPillState} reserveOnly /> : undefined
+                                  headerPillState ? (
+                                    <WallStatePill state={headerPillState} backTarget={headerBackTarget} reserveOnly />
+                                  ) : undefined
                                 }
                               />
                             ) : null
@@ -1858,10 +1885,6 @@ export function PlayCore({
                       <LostHoldsBanner count={lostHoldCount} onRemix={handleRemixLostHolds ?? undefined} />
 
                       <View style={styles.boardSection} onLayout={handleBoardContainerLayout}>
-                        {/* Viewfinder brackets while browsing: you're looking through a
-                            lens, not driving the wall. Absolute + pointerEvents none, so
-                            the board keeps every pixel and every gesture. */}
-                        {showBrowseFrame ? <BrowseFrameOverlay /> : null}
                         {boardRenderData ? (
                           <DeferredBoard
                             capturePaintedTestID={screenshotPaintedClimbTestId(
@@ -1938,27 +1961,18 @@ export function PlayCore({
                         controls above the board it hangs from their bottom edge
                         instead (measured in the same wrapper), so it never covers
                         Log. */}
-                    {wallCallout !== 'none' && wallPillState ? (
+                    {wallCallout !== 'none' && headerPillState ? (
                       <WallStateCallout
-                        state={wallPillState}
-                        presentation={wallCallout}
+                        state={headerPillState}
                         top={
                           firstScreenPaddingTop +
                           (controlsAbove ? Math.max(headerBottomY, controlsBottomY) : headerBottomY) +
                           spacing[1]
                         }
-                        // Offered whenever a preview is pinned, NOT only under the
-                        // browse latch: on the wrong board the commit row stands down
-                        // (its controls would be dead under the switch-board scrim),
-                        // and this callout — in the header, outside that scrim — is
-                        // then the only way back to the committed climb short of
-                        // dismissing the drawer.
-                        //
-                        // "Browse from here" is still withheld. A crew already
-                        // browses by default, so the action only means anything to a
-                        // SOLO climber — and there it needs a latch that isn't keyed
-                        // on the session. Offering it before that exists would
-                        // promise a browse the very next swipe would commit.
+                        // Offered whenever going back from a pinned preview lands
+                        // somewhere (`canLeavePreview`). The callout only opens from
+                        // On the wall and Live now (the browsing chip goes back
+                        // itself), so this covers previewing the lit climb.
                         onBackToLive={canReturnToCommittedClimb ? handleBackToLive : undefined}
                         onDismiss={handleCloseWallCallout}
                       />

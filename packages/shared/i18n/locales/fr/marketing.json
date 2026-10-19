@@ -556,7 +556,7 @@
       },
       "crowd": {
         "title": "Explorer sans bouger le mur",
-        "p1": "Avec quelqu'un d'autre dans ta session, faire défiler n'allume plus la board et une étiquette Exploration apparaît. Touche Allumer au mur quand tu le veux.",
+        "p1": "Avec quelqu'un d'autre dans ta session, faire défiler n'allume plus la board. Touche Allumer au mur quand tu veux le tien, ou touche l'avatar en haut pour revenir au bloc au mur.",
         "p2": "Tu grimpes seul ? Garde l'ampoule appuyée et désactive Allumer en faisant défiler les blocs et Allumer en sélectionnant dans la liste.",
         "previewLink": "Voir un bloc depuis n'importe quelle liste"
       },
