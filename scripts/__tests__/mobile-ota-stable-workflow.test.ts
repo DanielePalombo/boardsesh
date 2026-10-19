@@ -18,6 +18,7 @@ interface Step {
   with?: Record<string, unknown>;
 }
 interface Job {
+  'continue-on-error'?: boolean;
   permissions?: Record<string, string>;
   needs?: string | string[];
   uses?: string;
@@ -114,7 +115,7 @@ describe('daily stable workflow boundaries', () => {
     for (const jobName of ['prepare', 'tick']) {
       const job = workflow.jobs[jobName];
       expect(job.environment).toBe('ota-stable-release');
-      expect(job.needs).toBe('resolve');
+      expect(job.needs).toEqual(['resolve', 'live-store-runtimes']);
       const checkout = job.steps?.find((entry) => entry.uses?.startsWith('actions/checkout@'));
       expect(checkout?.with?.ref).toBe('${{ github.sha }}');
       const commands = job.steps?.map((entry) => entry.run ?? '').join('\n');
@@ -135,6 +136,53 @@ describe('daily stable workflow boundaries', () => {
       'cancel-in-progress': false,
       queue: 'max',
     });
+  });
+  it('holds safely on store lookup failures and allows explicit abort without store access', () => {
+    expect(workflow.jobs['live-store-runtimes'].uses).toBe('./.github/workflows/mobile-live-store-runtimes.yml');
+    expect(workflow.jobs['live-store-runtimes'].if).toContain("command != 'abort'");
+    for (const job of ['prepare', 'tick']) {
+      expect(workflow.jobs[job].if).toContain('always()');
+      expect(workflow.jobs[job].steps?.find((entry) => entry.env?.LIVE_STORE_RUNTIMES)?.env?.LIVE_STORE_RUNTIMES).toBe(
+        '${{ needs.live-store-runtimes.outputs.live_runtimes }}',
+      );
+    }
+    expect(workflow.jobs.smokes.if).toBe("needs.prepare.outputs.sha != ''");
+    expect(workflow.jobs.boot.if).toBe("needs.prepare.outputs.sha != ''");
+  });
+  it('keeps webhook credentials in an independent trusted main job and retains delivery failures', () => {
+    const notify = workflow.jobs.notify;
+    // Candidate discovery requires a successful prepare run. Discord cannot
+    // turn passed blocking QA into an unrecoverable failed preparation.
+    expect(notify['continue-on-error']).toBe(true);
+    for (const jobName of ['prepare', 'qualify', 'tick'])
+      expect(workflow.jobs[jobName]['continue-on-error']).toBeUndefined();
+    expect(notify.environment).toBe('Production');
+    expect(notify.if).toContain("command != 'plan'");
+    expect(notify.steps?.find((entry) => entry.uses?.startsWith('actions/checkout@'))?.with?.ref).toBe(
+      '${{ github.sha }}',
+    );
+    expect(step('notify', 'Deliver pending deployment events').env?.DISCORD_DEPLOY_WEBHOOK).toBe(
+      '${{ secrets.DISCORD_DEPLOY_WEBHOOK }}',
+    );
+    expect(step('notify', 'Retain delivery receipts even when Discord fails').if).toContain('always()');
+    expect(step('notify', 'Surface notification delivery failure')).toMatchObject({
+      if: 'failure()',
+      run: expect.stringContaining('::warning::'),
+    });
+    for (const job of ['prepare', 'tick', 'qualify'])
+      expect(workflow.jobs[job].steps?.some((entry) => entry.env?.DISCORD_DEPLOY_WEBHOOK)).toBe(false);
+  });
+  it('keeps Discord failures visible without changing the successful unlock handshake', () => {
+    const unlock = parse(
+      readFileSync(resolve(import.meta.dirname, '../../.github/workflows/mobile-ota-unlock.yml'), 'utf8'),
+    ) as { jobs: Record<string, Job & { 'continue-on-error'?: boolean }> };
+    expect(unlock.jobs.revert['continue-on-error']).toBeUndefined();
+    expect(unlock.jobs.notify['continue-on-error']).toBe(true);
+    expect(unlock.jobs.notify.environment).toBe('Production');
+    expect(
+      unlock.jobs.notify.steps?.find((entry) => entry.name === 'Surface delivery failures without blocking publishers'),
+    ).toMatchObject({ if: 'failure()', run: expect.stringContaining('::warning::') });
+    expect(unlock.jobs.notify.steps?.find((entry) => entry.name === 'Retain delivery receipts')?.if).toBe('always()');
   });
   it('limits extra permissions to reusable boot reads and qualification dispatch', () => {
     const bootWorkflow = parse(
@@ -293,7 +341,7 @@ describe('daily stable workflow boundaries', () => {
     const artifacts = Object.values(workflow.jobs)
       .flatMap((job) => job.steps ?? [])
       .filter((entry) => entry.uses?.startsWith('actions/upload-artifact@'));
-    expect(artifacts).toHaveLength(4);
+    expect(artifacts).toHaveLength(5);
     for (const artifact of artifacts) expect(artifact.with?.['retention-days']).toBe(30);
     expect(step('qualify', 'Retain final checkpoint even when QA fails').if).toBe('always()');
   });

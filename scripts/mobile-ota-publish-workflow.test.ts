@@ -187,8 +187,10 @@ describe('production OTA workflow reliability', () => {
       jobs: Record<string, { if?: string; needs?: string[] }>;
     };
     const publisher = workflow.jobs.publish;
-    expect(publisher.needs).toEqual(['resolve-staging-runtimes', 'capture-staging-baselines']);
-    const expression = publisher.if!.replace(/needs\.([a-z-]+)/g, 'needs["$1"]');
+    expect(publisher.needs).toEqual(['resolve-staging-runtimes', 'capture-staging-baselines', 'live-store-runtimes']);
+    const expression = publisher
+      .if!.replace(/needs\.([a-z-]+)/g, 'needs["$1"]')
+      .replaceAll('github.ref', '"refs/heads/main"');
     // Execute the actual workflow expression so a dependency/always change is caught.
     // oxlint-disable-next-line no-implied-eval
     const permits = new Function('inputs', 'needs', 'always', 'cancelled', `return ${expression};`) as (
@@ -453,7 +455,7 @@ describe('production OTA workflow reliability', () => {
       'scripts/lib/ota-branch-probe.ts',
       'scripts/lib/eoas.ts',
     ]) {
-      expect(production).toContain(`- '${implementationPath}'`);
+      expect(parse(production).on.push.paths).toBeUndefined();
       // Preview intentionally has no trigger paths filter: every synchronize
       // must run so removing the final mobile change tears down the old branch.
       expect(preview).toContain(`path === '${implementationPath}'`);
@@ -504,6 +506,12 @@ describe('backport OTA workflow upload pressure', () => {
 
     for (const implementationPath of [
       'scripts/mobile-publish.ts',
+      'scripts/mobile-release-train-policy.ts',
+      'scripts/lib/mobile-release-policy.ts',
+      'scripts/lib/release-tags.ts',
+      'scripts/lib/ota-preview-boot-receipt.ts',
+      'scripts/lib/ota-publish-protocol.ts',
+      'scripts/lib/ota-boot-check.ts',
       'scripts/lib/eoas.ts',
       'scripts/lib/mobile-publish-retry.ts',
       'scripts/lib/ota-branch-probe.ts',
@@ -517,23 +525,46 @@ describe('backport OTA workflow upload pressure', () => {
 });
 
 describe('preview publish across an OTA server upgrade', () => {
-  it('skips, rather than fails, a preview whose eoas pin is ahead of the live server', () => {
+  it('compares each replayed candidate pin against the pinned main server before publishing', () => {
+    const helper = readFileSync(resolve(import.meta.dirname, 'mobile-ota-preview-candidates.ts'), 'utf8');
+    expect(helper).toContain('`${source.mainSha}:scripts/lib/eoas.ts`');
+    expect(helper).toContain("? 'server-upgrade'");
+    expect(helper).toContain("result?.status !== 'ota-compatible'");
     const publishJob = jobBlock(preview, 'publish');
-    const pinStep = stepBlock(publishJob, 'Skip when this PR moves the eoas pin ahead of the live server');
-    expect(pinStep).toContain('scripts/lib/eoas.ts');
-    expect(pinStep).toContain('$RUNNER_TEMP/main-baseline');
-    for (const stepName of ['Publish iOS OTA', 'Publish Android OTA']) {
-      expect(stepBlock(publishJob, stepName)).toContain("steps.eoas_pin.outputs.moved != 'true'");
-    }
-    // The pin check reads the main baseline, so it must come after that exists.
-    expect(publishJob.indexOf('Materialize origin/main baseline')).toBeLessThan(
-      publishJob.indexOf('Skip when this PR moves the eoas pin'),
+    expect(publishJob.indexOf('Rebase and compare both pinned preview candidates')).toBeLessThan(
+      publishJob.indexOf('Publish compatible preview runtime variants'),
     );
-    expect(stepBlock(publishJob, 'Finalize authoritative deployment state')).toContain('EOAS_PIN_MOVED');
   });
 });
 
 describe('publisher helper preview routing', () => {
+  it('sets up the toolchain from a checked-out lockfile without implicit dependency installation', () => {
+    const workflow = parse(preview) as {
+      jobs: { publish: { steps: Array<{ uses?: string; with?: Record<string, unknown> }> } };
+    };
+    const setup = workflow.jobs.publish.steps.find((step) => step.uses === 'voidzero-dev/setup-vp@v1');
+    expect(setup?.with).toMatchObject({ 'working-directory': 'tooling', 'run-install': false });
+  });
+
+  it.each(['mobile-ota-preview.yml', 'mobile-ota-preview-prompt.yml'])(
+    '%s recognizes every boot-check trigger path',
+    (filename) => {
+      const workflow = readFileSync(resolve(WORKFLOW_DIR, filename), 'utf8');
+      const boot = parse(readFileSync(resolve(WORKFLOW_DIR, 'mobile-ota-boot-check.yml'), 'utf8')) as {
+        on: { pull_request: { paths: string[] } };
+      };
+      const declaration = /const affectsMobilePreview = \(path\) =>[\s\S]*?;\n/.exec(workflow);
+      if (!declaration) throw new Error(`${filename} has no preview predicate`);
+      // Execute the actual workflow classifier so a source-only PR cannot wait
+      // for boot proof while the publication workflow silently skips its path.
+      // oxlint-disable-next-line no-implied-eval
+      const affectsPreview = new Function('path', `${declaration[0]} return affectsMobilePreview(path);`) as (
+        path: string,
+      ) => boolean;
+      for (const path of boot.on.pull_request.paths) expect(affectsPreview(path), `${filename}: ${path}`).toBe(true);
+    },
+  );
+
   it.each(['mobile-ota-preview.yml', 'mobile-ota-preview-prompt.yml', 'pr-test-plan.yml'])(
     '%s treats a probe-only diff as a mobile preview change',
     (filename) => {

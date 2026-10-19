@@ -80,6 +80,9 @@ jobs:
       group: mobile-ota-unlock
       cancel-in-progress: false
       queue: max
+    outputs:
+      events: ${{ steps.events.outputs.artifact-id }}
+
     steps:
       # Before anything reads a secret.
       - name: Refuse any ref but main
@@ -115,6 +118,7 @@ jobs:
           EXPECTED_ANDROID_UPDATE_ID: ${{ inputs.android_baseline_update_id }}
           EXPO_UPDATES_URL: ${{ vars.EXPO_UPDATES_URL || 'https://updates.boardsesh.com/manifest' }}
           NODE_NO_WARNINGS: '1'
+          OTA_DEPLOY_EVENTS_FILE: ota-unlock-events.json
         run: |
           set -euo pipefail
 
@@ -192,3 +196,52 @@ jobs:
           path: ${{ runner.temp }}/ota-unlock-receipt/receipt.json
           if-no-files-found: error
           retention-days: 1
+      - name: Retain confirmed unlock events
+        id: events
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ota-unlock-events
+          path: ota-unlock-events.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+  notify:
+    needs: revert
+    if: always() && github.ref == 'refs/heads/main' && needs.revert.outputs.events != ''
+    # Publishers wait for the unlock workflow conclusion. A Discord outage must
+    # never turn a confirmed successful revert into a failed unlock handshake.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: Production
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.x'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ota-unlock-events
+          path: deployment-events
+      - name: Report confirmed unlocks to deployments
+        env:
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: node --experimental-strip-types scripts/mobile-ota-notify.ts deliver --events deployment-events/ota-unlock-events.json
+      - name: Retain delivery receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ota-unlock-notification-receipts
+          path: deployment-events/
+          retention-days: 30
+          if-no-files-found: ignore
+      - name: Surface delivery failures without blocking publishers
+        if: failure()
+        run: |
+          echo '::warning::Unlock completed independently of Discord. Deployment notification delivery failed; retry the retained events artifact.'
+          echo 'Discord notification failed. Retry the retained ota-unlock-events artifact; confirmed unlock results are unchanged.' >> "$GITHUB_STEP_SUMMARY"

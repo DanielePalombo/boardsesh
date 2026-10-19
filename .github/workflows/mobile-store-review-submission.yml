@@ -53,6 +53,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: '22.x'
@@ -65,6 +67,16 @@ jobs:
         run: |
           vp exec ruby fastlane/tests/store_audit_test.rb
           vp exec ruby fastlane/tests/store_review_submission_test.rb
+      - name: Require the app build to have merged into main
+        if: inputs.action == 'submit'
+        env:
+          SUBMISSION_PLATFORM: ios
+          SUBMISSION_VERSION: ${{ inputs.version }}
+          SUBMISSION_BUILD_NUMBER: ${{ inputs.ios_build }}
+          SUBMISSION_SURFACES: ${{ inputs.surfaces }}
+        run: |
+          git fetch --no-tags origin main
+          node --experimental-strip-types scripts/mobile-store-submission-guard.ts
       - name: Plan or submit reviewed Apple surfaces
         working-directory: fastlane
         env:

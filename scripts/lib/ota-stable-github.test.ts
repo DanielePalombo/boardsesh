@@ -114,7 +114,19 @@ describe('trusted workflow and artifact provenance', () => {
 });
 
 const jobInput = (runId: number, name: string, steps: string[] = [], overrides: Record<string, unknown> = {}) => ({
-  id: runId * 100 + ['resolve', 'prepare', 'qualify', 'tick', 'smokes', 'boot'].indexOf(name),
+  id:
+    runId * 100 +
+    [
+      'resolve',
+      'prepare',
+      'qualify',
+      'tick',
+      'smokes',
+      'boot',
+      'live-store-runtimes',
+      'notify',
+      'live-store-runtimes / resolve',
+    ].indexOf(name),
   run_id: runId,
   run_attempt: 1,
   head_sha: headSha,
@@ -246,6 +258,60 @@ describe('missing checkpoint recovery', () => {
       'runs/13/artifacts': { artifacts: [artifactInput(13, 'mobile-ota-stable-state')] },
     });
     await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 13 });
+  });
+
+  it('recovers after pre-write failure even when read-only notification delivery also fails', async () => {
+    const jobs = [
+      ...failedJobs(14),
+      jobInput(14, 'live-store-runtimes / resolve', ['Resolve exact publicly available store runtimes'], { id: 1490 }),
+      jobInput(
+        14,
+        'notify',
+        ['Run actions/download-artifact@' + 'c'.repeat(40), 'Surface notification delivery failure'],
+        { id: 1491 },
+      ),
+    ];
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [runInput(14, STABLE_WORKFLOW, { conclusion: 'failure' }), runInput(13)],
+      },
+      'runs/14/artifacts': { artifacts: [] },
+      'runs/14/attempts/1/jobs': { total_count: jobs.length, jobs },
+      'runs/13/artifacts': { artifacts: [artifactInput(13, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 13 });
+  });
+
+  it('accepts an explicitly skipped store-query caller during abort recovery', async () => {
+    const jobs = [...failedJobs(14), jobInput(14, 'live-store-runtimes'), jobInput(14, 'notify')];
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [
+          runInput(14, STABLE_WORKFLOW, { conclusion: 'failure', display_title: 'OTA stable abort' }),
+          runInput(13),
+        ],
+      },
+      'runs/14/artifacts': { artifacts: [] },
+      'runs/14/attempts/1/jobs': { total_count: jobs.length, jobs },
+      'runs/13/artifacts': { artifacts: [artifactInput(13, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 13 });
+  });
+
+  it.each([
+    { name: 'live-store-runtimes', steps: ['Resolve exact publicly available store runtimes'] },
+    { name: 'live-store-runtimes / other', steps: ['Resolve exact publicly available store runtimes'] },
+    { name: 'notify', steps: ['New mutation step'] },
+  ])('refuses unknown read-only job evidence $name $steps', async ({ name, steps }) => {
+    const jobs = [...failedJobs(14), jobInput(14, name, steps)];
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [runInput(14, STABLE_WORKFLOW, { conclusion: 'failure' })],
+      },
+      'runs/14/artifacts': { artifacts: [] },
+      'runs/14/attempts/1/jobs': { total_count: jobs.length, jobs },
+    });
+    await expect(client.latestCheckpoint(15)).rejects.toThrow('has no state artifact');
   });
 
   it.each([
@@ -466,6 +532,44 @@ describe('newest eligible artifact selection', () => {
     await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 19 });
   });
 
+  it.each(['queued', 'completed'])(
+    'locked publisher handles %s ticks with exact store and notifier jobs',
+    async (status) => {
+      const jobs = [
+        jobInput(20, 'resolve', ['Resolve command']),
+        jobInput(20, 'live-store-runtimes / resolve', ['Resolve exact publicly available store runtimes']),
+        jobInput(20, 'tick', [], { status, conclusion: status === 'completed' ? 'success' : null }),
+        jobInput(20, 'notify', [], { status: 'in_progress', conclusion: null }),
+      ];
+      const { client } = mockClient({
+        'mobile-ota-stable-release.yml/runs': {
+          workflow_runs: [runInput(20, STABLE_WORKFLOW, { status: 'in_progress', conclusion: null }), runInput(19)],
+        },
+        'runs/20/jobs': { total_count: jobs.length, jobs },
+        'runs/20/artifacts': { artifacts: [artifactInput(20, 'mobile-ota-stable-state')] },
+        'runs/19/artifacts': { artifacts: [artifactInput(19, 'mobile-ota-stable-state')] },
+      });
+      await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({
+        runId: status === 'completed' ? 20 : 19,
+      });
+    },
+  );
+
+  it('locked publisher accepts only a skipped bare reusable store caller', async () => {
+    const jobs = [
+      jobInput(20, 'live-store-runtimes'),
+      jobInput(20, 'tick', [], { status: 'queued', conclusion: null }),
+    ];
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': {
+        workflow_runs: [runInput(20, STABLE_WORKFLOW, { status: 'in_progress', conclusion: null }), runInput(19)],
+      },
+      'runs/20/jobs': { total_count: jobs.length, jobs },
+      'runs/19/artifacts': { artifacts: [artifactInput(19, 'mobile-ota-stable-state')] },
+    });
+    await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 19 });
+  });
+
   it.each([
     { jobs: [jobInput(20, 'tick', [], { status: 'in_progress' })] },
     { jobs: [jobInput(20, 'tick', [], { status: 'queued', head_sha: 'b'.repeat(40) })] },
@@ -481,6 +585,18 @@ describe('newest eligible artifact selection', () => {
     { jobs: [jobInput(20, 'tick', ['Judge and apply at most one timed step'], { status: 'queued' })] },
     { jobs: [jobInput(20, 'tick'), jobInput(20, 'tick', [], { id: 2999 })] },
     { jobs: [jobInput(20, 'unknown', [], { status: 'queued' })] },
+    {
+      jobs: [
+        jobInput(20, 'tick', [], { status: 'queued' }),
+        jobInput(20, 'live-store-runtimes', ['Resolve exact publicly available store runtimes']),
+      ],
+    },
+    {
+      jobs: [
+        jobInput(20, 'tick', [], { status: 'queued' }),
+        jobInput(20, 'live-store-runtimes / other', [], { id: 2099 }),
+      ],
+    },
     { jobs: [] },
   ])('locked publisher refuses unknown, running or contradictory writer evidence %#', async ({ jobs }) => {
     const { client } = mockClient({
@@ -514,6 +630,19 @@ describe('newest eligible artifact selection', () => {
       'runs/20/artifacts': { artifacts: [artifactInput(20, 'mobile-ota-stable-state')] },
     });
     await expect(client.latestCheckpoint(15, true)).resolves.toMatchObject({ runId: 20 });
+  });
+
+  it('prefers delivery receipts while retaining the original operation checkpoint as fallback', async () => {
+    const { client } = mockClient({
+      'mobile-ota-stable-release.yml/runs': { workflow_runs: [runInput(14, STABLE_WORKFLOW)] },
+      'runs/14/artifacts': {
+        artifacts: [
+          artifactInput(14, 'mobile-ota-stable-state'),
+          artifactInput(14, 'mobile-ota-stable-notified-state', { id: 141 }),
+        ],
+      },
+    });
+    await expect(client.latestCheckpoint(15)).resolves.toMatchObject({ runId: 14, artifactId: 141 });
   });
 
   it('pins a successful main deployment and validates its staged artifact provenance', async () => {

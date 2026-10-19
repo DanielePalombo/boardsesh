@@ -6,7 +6,18 @@ export const STABLE_WORKFLOW = '.github/workflows/mobile-ota-stable-release.yml'
 /** Hard ceiling for complete job listings; each caller also bounds its total API work. */
 export const MAX_GITHUB_JOB_PAGES = 100;
 /** Keep in sync with the workflow; unknown jobs cannot prove production ownership. */
-export const STABLE_CONTROLLER_JOBS = ['resolve', 'prepare', 'qualify', 'tick', 'smokes', 'boot'];
+export const STABLE_CONTROLLER_JOBS = [
+  'resolve',
+  'live-store-runtimes',
+  'prepare',
+  'qualify',
+  'tick',
+  'smokes',
+  'boot',
+  'notify',
+];
+/** GitHub expands this exact reusable query job when its caller executes. */
+const LIVE_STORE_RUNTIME_JOB = 'live-store-runtimes / resolve';
 
 export interface TrustedWorkflowRun {
   runId: number;
@@ -161,15 +172,23 @@ export function createStableGithubClient(options: {
     throw new Error('Workflow run search exceeded 100 pages; refusing an incomplete history.');
   }
 
+  const artifactsByRun = new Map<number, unknown[]>();
   async function artifactFor(run: TrustedWorkflowRun, name: string): Promise<TrustedArtifact | null> {
+    const select = (artifacts: unknown[]) => {
+      const matches = artifacts.filter((entry) => object(entry, 'Artifact').name === name);
+      if (matches.length > 1) throw new Error(`Run ${run.runId} has ambiguous artifacts named ${name}.`);
+      return matches.length === 0 ? null : parseTrustedArtifact(matches[0], run, name, nowMs());
+    };
+    const cached = artifactsByRun.get(run.runId);
+    if (cached) return select(cached);
     const matches: unknown[] = [];
     for (let page = 1; page <= 100; page++) {
       const response = object(await api(`/actions/runs/${run.runId}/artifacts?per_page=100&page=${page}`), 'Artifacts');
       if (!Array.isArray(response.artifacts)) throw new Error('GitHub artifacts must be an array.');
-      matches.push(...response.artifacts.filter((entry: unknown) => object(entry, 'Artifact').name === name));
+      matches.push(...response.artifacts);
       if (response.artifacts.length < 100) {
-        if (matches.length > 1) throw new Error(`Run ${run.runId} has ambiguous artifacts named ${name}.`);
-        return matches.length === 0 ? null : parseTrustedArtifact(matches[0], run, name, nowMs());
+        artifactsByRun.set(run.runId, matches);
+        return select(matches);
       }
     }
     throw new Error('Artifact search exceeded 100 pages.');
@@ -221,9 +240,14 @@ export function createStableGithubClient(options: {
       'Check qualified candidate without waiting for cron',
       'Collect durable upload leases',
       'Retain checkpoint and upload leases',
+      'Resolve exact publicly available store runtimes',
+      'Deliver pending deployment events',
+      'Retain delivery receipts even when Discord fails',
+      'Surface notification delivery failure',
     ]);
     const requiredJobs = ['resolve', 'prepare', 'qualify', 'tick'];
-    const optionalSkippedJobs = ['smokes', 'boot'];
+    const optionalSkippedJobs = ['smokes', 'boot', 'live-store-runtimes'];
+    const readOnlyJobs = ['notify', LIVE_STORE_RUNTIME_JOB];
     const jobNames = new Set<string>();
     const jobIds = new Set<number>();
     for (const input of jobs) {
@@ -241,7 +265,9 @@ export function createStableGithubClient(options: {
         return false;
       if (
         typeof job.name !== 'string' ||
-        (!requiredJobs.includes(job.name) && !optionalSkippedJobs.includes(job.name)) ||
+        (!requiredJobs.includes(job.name) &&
+          !optionalSkippedJobs.includes(job.name) &&
+          !readOnlyJobs.includes(job.name)) ||
         jobNames.has(job.name)
       )
         return false;
@@ -348,7 +374,11 @@ export function createStableGithubClient(options: {
               checked.head_sha !== run.headSha ||
               checked.run_attempt !== 1 ||
               checked.run_url !== `${apiBase}/actions/runs/${run.runId}` ||
-              !STABLE_CONTROLLER_JOBS.includes(String(checked.name)) ||
+              (!STABLE_CONTROLLER_JOBS.includes(String(checked.name)) && checked.name !== LIVE_STORE_RUNTIME_JOB) ||
+              (checked.name === 'live-store-runtimes' &&
+                (checked.status !== 'completed' ||
+                  checked.conclusion !== 'skipped' ||
+                  (checked.steps !== undefined && (!Array.isArray(checked.steps) || checked.steps.length !== 0)))) ||
               jobIds.has(id) ||
               jobNames.has(String(checked.name))
             )
@@ -388,7 +418,11 @@ export function createStableGithubClient(options: {
         }
         if (run.status !== 'completed' && !finishedLockedWriter)
           throw new Error(`Stable checkpoint run ${run.runId} is still ${run.status}; hold until it finishes.`);
-        const artifact = await artifactFor(run, 'mobile-ota-stable-state');
+        // Notification jobs persist delivered IDs separately. If delivery never
+        // starts, the original operation checkpoint still owns recovery.
+        const artifact =
+          (await artifactFor(run, 'mobile-ota-stable-notified-state')) ??
+          (await artifactFor(run, 'mobile-ota-stable-state'));
         if (artifact === null) {
           if (await provedNoWrites(run)) {
             console.error(

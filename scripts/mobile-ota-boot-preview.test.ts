@@ -64,7 +64,7 @@ function zip(entries: Record<string, string>): Uint8Array {
   ]);
 }
 
-function fakeGithub(overrides: Record<string, unknown> = {}) {
+function fakeGithub(overrides: Record<string, unknown> = {}, artifactReceipt: unknown = receipt) {
   const answers: Record<string, unknown> = {
     '/pulls/6131': pr,
     '/actions/workflows/mobile-ota-preview.yml/runs': { workflow_runs: [run] },
@@ -77,7 +77,7 @@ function fakeGithub(overrides: Record<string, unknown> = {}) {
     const url = new URL(input instanceof URL ? input.href : typeof input === 'string' ? input : input.url);
     if (url.hostname === 'storage.example') {
       expect(new Headers(init?.headers).has('authorization')).toBe(false);
-      return new Response(new Uint8Array(zip({ 'receipt.json': JSON.stringify(receipt) })).buffer);
+      return new Response(new Uint8Array(zip({ 'receipt.json': JSON.stringify(artifactReceipt) })).buffer);
     }
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer private-github-token');
     const path = url.pathname.replace('/repos/boardsesh/boardsesh', '');
@@ -99,6 +99,103 @@ describe('frozen preview boot receipt discovery', () => {
         (url instanceof URL ? url.href : typeof url === 'string' ? url : url.url).includes('/pulls/6131'),
       ),
     ).toHaveLength(2);
+  });
+
+  it('accepts default-branch dispatch provenance while preserving the original PR deployment SHA', async () => {
+    const dispatched = {
+      ...run,
+      event: 'workflow_dispatch',
+      head_branch: 'main',
+      head_sha: 'f'.repeat(40),
+      pull_requests: [],
+    };
+    const github = fakeGithub({
+      '/actions/workflows/mobile-ota-preview.yml/runs': { workflow_runs: [dispatched] },
+      '/actions/runs/10/artifacts': {
+        artifacts: [{ ...artifact, workflow_run: { id: 10, head_sha: dispatched.head_sha } }],
+      },
+    });
+    expect(await resolvePreviewReceipt(proof, github)).toEqual(receipt);
+    expect(() => validatePreviewRun({ ...dispatched, head_branch: 'release/next' }, proof)).toThrow('trusted');
+    expect(() => validatePreviewArtifact(artifact, dispatched, proof, NOW)).toThrow();
+  });
+
+  it('binds v2 generated source artifacts to the same trusted dispatch run', async () => {
+    const dispatched = {
+      ...run,
+      event: 'workflow_dispatch',
+      head_branch: 'main',
+      head_sha: 'f'.repeat(40),
+      pull_requests: [],
+    };
+    const generated = {
+      candidateCommit: 'e'.repeat(40),
+      candidateTree: 'd'.repeat(40),
+      targetSha: 'f'.repeat(40),
+      targetRef: 'main',
+      sourceBundle: 'main.bundle',
+      sourceBundleSha256: 'c'.repeat(64),
+    };
+    const ios = { ...identity, ...generated };
+    const android = { ...identity, ...generated };
+    const preview = {
+      ...receipt,
+      version: 2,
+      sourceBaseSha: 'b'.repeat(40),
+      sourceBaseRef: 'main',
+      sourceArtifact: 'mobile-ota-preview-source',
+      platforms: { ios, android },
+      candidates: [
+        {
+          targetRef: 'main',
+          targetSha: generated.targetSha,
+          commitHash: generated.candidateCommit,
+          treeHash: generated.candidateTree,
+          sourceBundle: generated.sourceBundle,
+          sourceBundleSha256: generated.sourceBundleSha256,
+          platforms: Object.fromEntries(
+            ['ios', 'android'].map((platform) => [
+              platform,
+              {
+                status: 'published',
+                receipt: { ...identity, commitHash: generated.candidateCommit, branch: receipt.branch },
+              },
+            ]),
+          ),
+        },
+      ],
+    };
+    const source = {
+      ...artifact,
+      id: 21,
+      name: preview.sourceArtifact,
+      workflow_run: { id: 10, head_sha: dispatched.head_sha },
+    };
+    const overrides = {
+      '/actions/workflows/mobile-ota-preview.yml/runs': { workflow_runs: [dispatched] },
+      '/actions/runs/10/artifacts': { artifacts: [{ ...artifact, workflow_run: source.workflow_run }, source] },
+    };
+    expect(await resolvePreviewReceipt(proof, fakeGithub(overrides, preview))).toEqual({
+      ...preview,
+      sourceArtifactId: 21,
+    });
+    await expect(
+      resolvePreviewReceipt(
+        proof,
+        fakeGithub(
+          {
+            ...overrides,
+            '/actions/runs/10/artifacts': {
+              artifacts: [
+                { ...artifact, workflow_run: source.workflow_run },
+                { ...source, workflow_run: { id: 11, head_sha: dispatched.head_sha } },
+              ],
+            },
+          },
+          preview,
+        ),
+      ),
+    ).rejects.toThrow('does not match');
   });
 
   it.each([
@@ -124,6 +221,8 @@ describe('frozen preview boot receipt discovery', () => {
   );
 
   it.each([
+    { version: '1' },
+    { version: '2' },
     { commitHash: 'e'.repeat(40) },
     { branch: 'pr-1' },
     { previewRunId: 11 },

@@ -404,19 +404,23 @@ see `docs/mobile-store-release.md`) serves the testers running the train's
 TestFlight / Play-internal binary, so they get JS as fast as everyone else —
 including after a sync. `release-train-sync.yml` keeps the train level with `main`.
 
-**The train's publish is guarded.** xprem serves whichever update has
-the newest `commitTime` *for a given runtimeVersion*. While the train carries no
-native change of its own, a publish from the train would be handed to the entire
-store fleet, silently replacing main's JS with the train's. So the train workflow
-resolves `origin/main` and the merge-base of `origin/main` and the train in
-sibling worktrees, and skips any platform whose fingerprint matches either one,
-with a `::warning::` saying so. A push run that a later push to the train has
-superseded publishes nothing. It fails closed: an unresolvable or flaky
-comparison publishes nothing. The train therefore starts publishing only once it
-carries a native change, which is also exactly when it has its own fingerprint and
-its own binaries to serve. Everything else in that workflow stays main-only: the
-changelog regeneration and push-back, the Sentry release, the health probe and the
-Discord notification. Because
+**The train's publish is guarded by live store runtimes.** A train is active
+when the marketing versions on `release/next` and `main` differ. Every active-train
+push starts publication without a soak delay. Xprem serves the newest update
+*for a given runtimeVersion*, so a train platform whose fingerprint is already
+offered by a public store is withheld. The guard reads the public store state
+through trusted main tooling and resolves exact immutable build tags to full
+fingerprints. It does not infer production from `main`, which may already have
+merged a new native release awaiting store review. Approved-but-unpublished and
+tester builds do not count as public releases. Missing, stale or ambiguous
+evidence blocks the publish. Native build tags whose source commits already
+belong to `main` also reserve their runtimes for public release; the train cannot
+publish onto those while approval is pending, even if `main` has since advanced
+to a newer runtime. Main and train tips are checked again before publication
+attempts, so a delayed retry cannot reuse authorization after either branch moves.
+A superseded train push publishes nothing.
+Train cuts, publications and failures report to the deployments Discord channel.
+Because
 runtimeVersion is a fingerprint, this is safe to run on every push: a native change publishes an
 OTA whose fingerprint no current binary has yet, so it only lands once the matching store build
 ships. If the server is not wired (no `EXPO_UPDATES_URL` variable or committed cert), main
@@ -932,6 +936,29 @@ unlock blocks the publish. Staging exports do not unlock or replace production.
 
 #### Daily stable runbook
 
+**Only current public runtimes soak.** Preparation and every controller tick
+read the newest live iOS and Android store builds and verify both candidate
+fingerprints. If either differs, a new candidate waits without production
+writes. After a train merges into `main`, staging and early updates continue
+while the stores review the new binaries; production soaks resume once both
+public stores offer the matching runtimes. There are no automatic backports.
+An urgent fix for the older fleet uses the existing explicit backport workflow.
+A public runtime change during a canary stops its progression and reconciles
+only the controller's owned rows, preserving external publications.
+
+The deployments Discord channel receives frozen-candidate QA results, canary
+starts, rollout percentage changes, completion, rollback, abort and failures.
+Messages identify source, platform, runtime, percentage and Actions run. Changed
+hold reasons are announced once, rather than repeated every hourly tick.
+Controller notifications are checkpointed for retry; a trusted Production job
+holds `DISCORD_DEPLOY_WEBHOOK`, separate from PR-author code. Failed delivery
+does not undo an OTA operation, invalidate passed candidate QA or block a
+successful unlock. Notification jobs warn visibly and retain delivery receipts.
+Staged promotion unlocks retain each confirmed platform rollback even when a
+later platform, caller lease or final control attestation fails. Their optional
+event archive cannot block an unlock; the verified authorization receipt remains
+mandatory and is emitted only after complete successful attestation.
+
 `mobile-ota-stable-release.yml` runs dependency-free controller code from `main`. Its admin environment,
 `ota-stable-release`, must use **Selected branches: main only**. The channel still serves `production`;
 `pr-stable-candidate`, `pr-staging` and `pr-beta` are protected branches reached through the existing
@@ -995,7 +1022,9 @@ a later check can start a waiting candidate if that cycle has not already starte
 Each of 5%, 10%, 25% and 50% must soak for at least four hours. Completion additionally needs at
 least 20 hours overall, eight hours at 50%, and healthy evidence on every changed platform.
 Insufficient samples with valid counts may progress through 50%, then hold.
-One exception keeps a store lag from freezing both platforms. A changed platform has **no fleet yet**
+The existing small-cohort health exception still applies after the public-runtime
+eligibility check. Historically, it kept a store lag from freezing both platforms;
+unpublished drafts now fail the runtime check before soaking. A changed platform has **no fleet yet**
 when its store binary has not reached people: Android 2.6.0 sat as a Play draft while iOS 2.6.0 was live,
 its canary had 0 devices and its control 1, and the release held at 50% for days (#6524). Precisely, the
 platform's verdict is `insufficient-evidence`, its canary and control together have fewer than 5 devices
@@ -1109,6 +1138,9 @@ The SHA is optional for `start`; supplying it refuses a different candidate. `st
 interrupted start using the same candidate and leases, but cannot replace an active canary or advance
 its timed steps. When automatic releases are disabled, later automatic progression waits for the
 activation switch; enable automatic checks or explicitly force the qualified release as below.
+Both manual commands require fresh store evidence that the candidate matches the current public
+runtime on each platform. A runtime hold fails the manual command after safely reconciling any owned
+canaries; `abort` remains available without store evidence.
 
 **Release the qualified candidate to stable immediately.** `force-release` requires that same full
 candidate SHA. It selects the active candidate first; only when there is no active canary does it
@@ -3072,11 +3104,22 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   that falls behind a native change on `main` publishes neither platform and `pr-<number>` keeps
   serving the last revision that did publish — better for a tester than an empty branch, but the
   sticky comment says which, so an unchanged picker entry is not read as "this commit is live".
-- **A preview is compared against the PR's base branch.** A PR into `release/next` is diffed against
-  `release/next` — the fingerprint its TestFlight build runs — and every other PR against `main`.
-  The base comes from the API in a trusted step before any PR-author code runs, allowlisted to
-  those two branches. Before this, every train PR read as "behind a native change on `main`" and
-  published nothing, though its bundle matched a shipped build (#5898).
+- **One PR entry, two native runtimes.** Every preview prepares against pinned
+  latest `origin/main`. When `release/next` has a different marketing version,
+  it also prepares against that pinned latest base. Only the PR's commits are
+  replayed in temporary checkouts; no contributor branch is rewritten. A
+  conflict skips that target, and a native fingerprint delta skips that platform.
+  Both variants publish to `pr-<number>`, so the installed app automatically sees
+  its compatible runtime. If both targets resolve the same platform/runtime,
+  the PR's actual base wins and only one variant publishes.
+- **Publication proof includes the replayed source.** Preview receipt v2 records
+  the original head, target base, generated commit/tree, runtime, update UUID and
+  bundle hash. Retained source bundles let native boot checks test that exact
+  generated candidate. GitHub deployment identity still points to the original
+  PR head. Native boot checks select the actual PR-base candidate per platform;
+  all published variants retain their source and verified manifest receipts.
+  Retained v1 receipts remain readable. The receipt resolver allows 60 minutes
+  for two sequential preview exports.
 - **An identical export is skipped, and the publish says so.** Xprem refuses to create an update whose
   bundle matches one already in storage (`There is no change in the update for android, ignored` /
   `No changes found in the update, nothing to deploy`) and `eoas` exits **0** either way. Ordinarily
@@ -3132,22 +3175,14 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   that platform is **skipped** — `vp run check:mobile-ota-compat` (the same engine as
   `mobile-ota-check.yml`) gates each platform, and the PR comment says so. The env is held
   byte-identical to the native builds + production publish by `scripts/mobile-ci-env-parity.test.ts`.
-- **Previews go stale when `main`'s fingerprint moves — and the picker just looks empty.** This is
-  the failure mode to know about, because nothing about it is loud. `/branch_lists` offers a branch
-  only to a binary whose runtimeVersion AND platform match it exactly, and the compat check compares
-  each PR against **current** `origin/main`. So a native change landing on `main` does two things at
-  once: every already-published `pr-<n>` branch keeps the old fingerprint and becomes invisible to
-  the new binaries, and every open PR that has not rebased now resolves `native-change-required`, so
-  its next push publishes nothing. The result is a tester on the newest build seeing "Nothing to test
-  right now" while the branches still exist on the server.
-  **The remedy is a rebase**: rebasing a PR onto `main` moves it to `main`'s fingerprint, the compat
-  check returns `ota-compatible`, and the push republishes the preview where current builds can see
-  it. Auto-republishing without the rebase would be wrong — the PR tree still lacks the new native
-  code, so its JS would be served to a binary it was never built against.
-  This bit us on 2026-09-01: a native change at 11:04 orphaned every live preview, and the two
-  surviving branches only reappeared after their PRs were rebased. The PR comment now names both
-  fingerprints and says "rebase" instead of "needs a TestFlight build" when a PR is merely behind.
-  To confirm from a laptop, with the fingerprint a native build baked:
+- **Base pushes refresh previews.** Changes to `main` or `release/next`, including
+  marketing-version activation changes, dispatch fresh previews for open
+  same-repository mobile PRs. Replays use the newest pinned bases and recheck
+  that the PR is still open at the same head before publication. Fork heads
+  retain the existing explicit maintainer authorization; a base push never
+  silently authorizes new fork code. The sticky comment reports each target
+  and platform independently, including conflicts and native changes.
+  To inspect availability from a laptop, use the fingerprint a native build baked:
   `vp run mobile:ota-surf-doctor -- --platform ios --runtime-version <hash>` (take `<hash>` from that
   build's `EXPO_UPDATES_FINGERPRINT_OVERRIDE`; a locally resolved one is macOS-flavoured and will not
   match).

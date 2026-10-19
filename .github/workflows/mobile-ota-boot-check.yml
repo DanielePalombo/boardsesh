@@ -70,6 +70,8 @@ on:
       - 'scripts/lib/ota-boot-check.ts'
       - 'scripts/mobile-ota-boot-preview.ts'
       - 'scripts/lib/ota-preview-boot-receipt.ts'
+      - 'scripts/mobile-ota-preview-source.ts'
+      - 'scripts/mobile-ota-preview-candidates.ts'
       - 'scripts/lib/ota-publish-protocol.ts'
 
 permissions:
@@ -104,7 +106,7 @@ jobs:
   # evidence needs only this repository's read token.
   resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 70
     permissions:
       actions: read
       contents: read
@@ -115,6 +117,11 @@ jobs:
       receipt: ${{ steps.receipt.outputs.receipt }}
       ios_runtime: ${{ steps.receipt.outputs.ios_runtime }}
       android_runtime: ${{ steps.receipt.outputs.android_runtime }}
+      source_artifact_id: ${{ steps.receipt.outputs.source_artifact_id }}
+      ios_source_bundle: ${{ steps.receipt.outputs.ios_source_bundle }}
+      android_source_bundle: ${{ steps.receipt.outputs.android_source_bundle }}
+      ios_source_tree: ${{ steps.receipt.outputs.ios_source_tree }}
+      android_source_tree: ${{ steps.receipt.outputs.android_source_tree }}
     steps:
       - name: Check out the PR receipt resolver
         if: github.event_name == 'pull_request'
@@ -168,7 +175,7 @@ jobs:
             unzip -p stage.zip receipt.json > receipt.json
           fi
           # Only the fields the check reads leave this job: a commit subject does not belong in an output.
-          receipt="$(jq -c '{commitHash, platforms: (.platforms | map_values({runtimeVersion, bundleSha256, updateId} | with_entries(select(.value != null))))}' receipt.json)"
+          receipt="$(jq -c '{version, commitHash, sourceArtifactId, platforms: (.platforms | map_values({runtimeVersion, bundleSha256, updateId, candidateCommit, candidateTree, targetSha, sourceBundle, sourceBundleSha256} | with_entries(select(.value != null))))}' receipt.json)"
           commit="$(jq -r '.commitHash' <<<"$receipt")"
           if [ -n "$REF" ] && [ "$commit" != "$REF" ]; then
             echo "::error::The receipt is for $commit, not for ref $REF."
@@ -179,12 +186,20 @@ jobs:
             echo "commit=$commit"
             echo "receipt=$receipt"
             echo "ios_runtime=$(jq -r '.platforms.ios.runtimeVersion' <<<"$receipt")"
+            echo "ios_source_tree=$(jq -r '.platforms.ios.candidateTree // empty' <<<"$receipt")"
+            echo "android_source_tree=$(jq -r '.platforms.android.candidateTree // empty' <<<"$receipt")"
+            echo "source_artifact_id=$(jq -r '.sourceArtifactId // empty' <<<"$receipt")"
+            echo "ios_source_bundle=$(jq -r '.platforms.ios.sourceBundle // empty' <<<"$receipt")"
+            echo "android_source_bundle=$(jq -r '.platforms.android.sourceBundle // empty' <<<"$receipt")"
             echo "android_runtime=$(jq -r '.platforms.android.runtimeVersion' <<<"$receipt")"
           } >> "$GITHUB_OUTPUT"
           echo "Boot check for commit \`$commit\` on \`$UPDATE_BRANCH\`." >> "$GITHUB_STEP_SUMMARY"
 
   ios:
     needs: resolve
+    permissions:
+      actions: read
+      contents: read
     runs-on: macos-26
     # Warm: about 6 minutes. Cold adds a Release simulator build.
     timeout-minutes: 90
@@ -201,6 +216,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
 
       # The check itself comes from this workflow's commit, which may be newer.
       - name: Check out the boot check
@@ -209,9 +225,37 @@ jobs:
           path: .boot-check
           sparse-checkout: scripts
 
+      - name: Set up Node for generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.x'
+
+      - name: Download attested generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ needs.resolve.outputs.source_artifact_id }}
+          SOURCE_BUNDLE: ${{ needs.resolve.outputs.ios_source_bundle }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SOURCE_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
+          case "$SOURCE_BUNDLE" in main.bundle|train.bundle) ;; *) exit 1 ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" > "$RUNNER_TEMP/preview-source.zip"
+          unzip -p "$RUNNER_TEMP/preview-source.zip" "$SOURCE_BUNDLE" > "$RUNNER_TEMP/candidate.bundle"
+
+      - name: Restore exact generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        env:
+          RECEIPT: ${{ needs.resolve.outputs.receipt }}
+        run: |
+          printf '%s' "$RECEIPT" > "$RUNNER_TEMP/generated-receipt.json"
+          node --experimental-strip-types .boot-check/scripts/mobile-ota-preview-source.ts \
+            "$GITHUB_WORKSPACE" "$RUNNER_TEMP/generated-receipt.json" ios "$RUNNER_TEMP/candidate.bundle"
+
       - name: Compute the binary cache key
         id: key
-        run: echo "key=${{ runner.os }}-${{ runner.arch }}-boot-check-ios-v1-${{ needs.resolve.outputs.ios_runtime }}-${{ hashFiles('packages/mobile/app.config.ts', 'packages/mobile/plugins/**', 'packages/mobile/modules/**', 'packages/mobile/locales/**', 'packages/mobile/package.json', 'patches/**', 'package.json', 'pnpm-workspace.yaml', 'scripts/mobile-build-sim-app.ts', 'scripts/screenshot-sim.entitlements') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=${{ runner.os }}-${{ runner.arch }}-boot-check-ios-v2-${{ needs.resolve.outputs.ios_runtime }}-${{ needs.resolve.outputs.ios_source_tree }}-${{ hashFiles('packages/mobile/app.config.ts', 'packages/mobile/plugins/**', 'packages/mobile/modules/**', 'packages/mobile/locales/**', 'packages/mobile/package.json', 'patches/**', 'package.json', 'pnpm-workspace.yaml', 'scripts/mobile-build-sim-app.ts', 'scripts/screenshot-sim.entitlements') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore the release simulator app
         id: cache
@@ -308,6 +352,9 @@ jobs:
 
   android:
     needs: resolve
+    permissions:
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     # Warm: about 10 minutes. Cold adds an x86_64 release Gradle build.
     timeout-minutes: 90
@@ -320,6 +367,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
 
       - name: Check out the boot check
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -329,6 +377,34 @@ jobs:
 
       # The branch is part of the key: an APK's manifest is compiled, so the
       # branch header is baked before Gradle runs and cannot be changed after.
+      - name: Set up Node for generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.x'
+
+      - name: Download attested generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_ARTIFACT_ID: ${{ needs.resolve.outputs.source_artifact_id }}
+          SOURCE_BUNDLE: ${{ needs.resolve.outputs.android_source_bundle }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SOURCE_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
+          case "$SOURCE_BUNDLE" in main.bundle|train.bundle) ;; *) exit 1 ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" > "$RUNNER_TEMP/preview-source.zip"
+          unzip -p "$RUNNER_TEMP/preview-source.zip" "$SOURCE_BUNDLE" > "$RUNNER_TEMP/candidate.bundle"
+
+      - name: Restore exact generated source
+        if: needs.resolve.outputs.source_artifact_id != ''
+        env:
+          RECEIPT: ${{ needs.resolve.outputs.receipt }}
+        run: |
+          printf '%s' "$RECEIPT" > "$RUNNER_TEMP/generated-receipt.json"
+          node --experimental-strip-types .boot-check/scripts/mobile-ota-preview-source.ts \
+            "$GITHUB_WORKSPACE" "$RUNNER_TEMP/generated-receipt.json" android "$RUNNER_TEMP/candidate.bundle"
+
       - name: Compute the binary cache key
         id: key
         run: echo "key=${{ runner.os }}-boot-check-android-v2-${{ env.UPDATE_BRANCH }}-${{ needs.resolve.outputs.android_runtime }}-${{ hashFiles('packages/mobile/app.config.ts', 'packages/mobile/plugins/**', 'packages/mobile/modules/**', 'packages/mobile/locales/**', 'packages/mobile/package.json', 'patches/**', 'package.json', 'pnpm-workspace.yaml', '.github/actions/android-rn-setup/**', 'scripts/mobile-ota-boot-fixture.gradle', 'scripts/lib/ota-boot-check.ts') }}" >> "$GITHUB_OUTPUT"

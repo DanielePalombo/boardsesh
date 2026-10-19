@@ -8,6 +8,8 @@ import { isDeepStrictEqual } from 'node:util';
 import type { OtaPlatform } from './ota-publish-protocol.ts';
 import { fleetlessReason } from './ota-rollout.ts';
 import type { RolloutHealth } from './ota-rollout.ts';
+import { parseDeploymentOutbox } from './ota-deployment-events.ts';
+import type { DeploymentOutbox } from './ota-deployment-events.ts';
 
 export const PLATFORMS = ['ios', 'android'] as const;
 export interface StableCandidate {
@@ -30,6 +32,8 @@ export interface StableRelease {
   pendingPercentage: number | null;
   /** Explicit operator intent: finish these exact owned bytes without soak or fleet-health gates. */
   forceRelease?: boolean;
+  /** Persisted recovery intent: store advancement retires our rows alongside foreign rollouts. */
+  runtimeChangeAbort?: true;
 }
 export interface StableState {
   version: 1;
@@ -40,6 +44,8 @@ export interface StableState {
   rejectedCommit: string | null;
   /** Identifies the producer of this checkpoint, not the artifact download run. */
   checkpointRunId: string;
+  /** Optional so existing version-1 checkpoints and callers remain recoverable. */
+  notifications?: DeploymentOutbox;
 }
 export const initialStableState = (): StableState => ({
   version: 1,
@@ -94,6 +100,8 @@ export function parseStableState(input: unknown): StableState {
     const phase = rawActive.phase;
     if (!['starting', 'ramping', 'finishing', 'reverting'].includes(String(phase)))
       throw new Error('Invalid release phase.');
+    if (rawActive.runtimeChangeAbort !== undefined && (rawActive.runtimeChangeAbort !== true || phase !== 'reverting'))
+      throw new Error('Runtime-change abort intent is only valid during a revert.');
     const updateIds: StableRelease['updateIds'] = {};
     const rawIds = object(rawActive.updateIds, 'Owned update IDs');
     const unchangedPlatforms: StableRelease['unchangedPlatforms'] = {};
@@ -143,6 +151,7 @@ export function parseStableState(input: unknown): StableState {
       percentage: percentage as number,
       pendingPercentage: pendingPercentage as number | null,
       ...(rawActive.forceRelease === undefined ? {} : { forceRelease: rawActive.forceRelease as boolean }),
+      ...(rawActive.runtimeChangeAbort === true ? { runtimeChangeAbort: true } : {}),
     };
     if (!active.candidate.qaPassed) throw new Error('An active release must have passed QA.');
     if (
@@ -182,6 +191,7 @@ export function parseStableState(input: unknown): StableState {
     lastCompletedCommit: nullableSha(parsed.lastCompletedCommit),
     rejectedCommit: nullableSha(parsed.rejectedCommit),
     checkpointRunId: runId(parsed.checkpointRunId),
+    ...(parsed.notifications === undefined ? {} : { notifications: parseDeploymentOutbox(parsed.notifications) }),
   };
 }
 
