@@ -680,6 +680,20 @@ jobs:
           node --experimental-strip-types tooling/scripts/mobile-ota-preview-candidates.ts prepare \
             "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/preview-candidates" "$RUNNER_TEMP/preview-artifacts"
 
+      - name: Reject a stale prepared publish
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+        with:
+          script: |
+            const { data: currentPr } = await github.rest.pulls.get({
+              ...context.repo, pull_number: Number(process.env.PR_NUMBER),
+            });
+            if (currentPr.state !== 'open' || currentPr.head.sha !== process.env.HEAD_SHA) {
+              core.setFailed('Prepared preview is stale: the PR closed or its head changed while candidates built.');
+            }
+
       - name: Publish compatible preview runtime variants
         id: candidates
         env:
