@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   captureProductionBaseline,
@@ -14,6 +16,7 @@ import {
 import { parsePromoteArgs } from './mobile-ota-promote';
 import type { EmptyBranchReader, RolloutReader } from './mobile-ota-promote';
 import type { XpremBranch, XpremChannel } from './lib/xprem-admin.mts';
+import { restoredIds, unlockProof, unlockReceipt } from './__tests__/helpers/ota-unlock-fixtures';
 
 const APP_ID = '007e6fd7-f200-448c-9449-8d48ba5d51fc';
 const COMMIT = 'a'.repeat(40);
@@ -160,6 +163,172 @@ function fetchServer(
   }) as unknown as typeof fetch;
   return { fetchImpl, calls };
 }
+
+function restoredControlServer(fixture: ReturnType<typeof stageFixture>, unchangedIos = false) {
+  const server = fetchServer(fixture, {}, unchangedIos ? { ios: 406 } : {});
+  const manifestReads = { ios: 0, android: 0 };
+  const currentIds = { ...restoredIds };
+  const fetchImpl = vi.fn<typeof fetch>(async (input, init = {}) => {
+    const response = await server.fetchImpl(input, init);
+    if (requestUrl(input).pathname !== '/manifest') return response;
+    const platform = new Headers(init.headers).get('expo-platform') as 'ios' | 'android';
+    manifestReads[platform] += 1;
+    return Response.json({ ...((await response.json()) as object), id: currentIds[platform] });
+  });
+  const authorization = {
+    proof: unlockProof,
+    receipt: unlockReceipt({
+      appId: APP_ID,
+      runtimes: { ios: RUNTIME, android: RUNTIME },
+      baselines: BASELINE_IDS,
+    }),
+  };
+  return { ...server, fetchImpl, manifestReads, currentIds, authorization };
+}
+
+describe('attested control replacements for immediate production', () => {
+  it.each([
+    ['GITHUB_REPOSITORY', 'Invalid unlock repository'],
+    ['OTA_UNLOCK_REQUEST_ID', 'Invalid unlock receipt request id'],
+    ['OTA_UNLOCK_RUN_ID', 'Unlock run ID'],
+    ['OTA_UNLOCK_HEAD_SHA', 'Invalid unlock head SHA'],
+  ])('rejects a receipt when proof environment %s is missing or empty', (variable, expectedError) => {
+    const fixture = stageFixture();
+    const unlockPath = join(fixture.root, 'unlock.json');
+    writeFileSync(
+      unlockPath,
+      JSON.stringify(
+        unlockReceipt({ appId: APP_ID, runtimes: { ios: RUNTIME, android: RUNTIME }, baselines: BASELINE_IDS }),
+      ),
+    );
+    for (const missing of [undefined, '']) {
+      const environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_REPOSITORY: unlockProof.repository,
+        OTA_UNLOCK_RECEIPT: unlockPath,
+        OTA_UNLOCK_REQUEST_ID: unlockProof.requestId,
+        OTA_UNLOCK_RUN_ID: String(unlockProof.runId),
+        OTA_UNLOCK_HEAD_SHA: unlockProof.headSha,
+        EXPO_UPDATES_URL: 'http://127.0.0.1:1/manifest',
+        EOO_TOKEN: 'test-token',
+      };
+      if (missing === undefined) delete environment[variable];
+      else environment[variable] = missing;
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          fileURLToPath(new URL('./mobile-ota-promote.ts', import.meta.url)),
+          '--receipt',
+          fixture.receiptPath,
+          '--ios-export',
+          fixture.iosExport,
+          '--android-export',
+          fixture.androidExport,
+        ],
+        { env: environment, encoding: 'utf8', timeout: 10_000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(expectedError);
+    }
+  });
+  it.each([false, true])(
+    'accepts only attested heads, including unchanged iOS=%s, without modifying the stage',
+    async (unchangedIos) => {
+      const fixture = stageFixture();
+      const original = readFileSync(fixture.receiptPath, 'utf8');
+      const server = restoredControlServer(fixture, unchangedIos);
+      await promoteArchivedOta({
+        ...fixture,
+        manifestUrl: 'https://updates.test/manifest',
+        token: 'test-token',
+        fetchImpl: server.fetchImpl,
+        unlockAuthorization: server.authorization,
+        verificationDelaysMs: [],
+      });
+      expect(server.calls.filter((call) => call.init.method === 'PUT')).toHaveLength(unchangedIos ? 1 : 2);
+      expect(readFileSync(fixture.receiptPath, 'utf8')).toBe(original);
+    },
+  );
+  it('keeps refusing restored UUIDs without a trusted receipt', async () => {
+    const fixture = stageFixture();
+    const server = restoredControlServer(fixture);
+    await expect(
+      promoteArchivedOta({
+        ...fixture,
+        manifestUrl: 'https://updates.test/manifest',
+        token: 'test-token',
+        fetchImpl: server.fetchImpl,
+      }),
+    ).rejects.toThrow('refusing stale OTA promotion');
+    expect(server.calls.some((call) => call.init.method === 'PUT')).toBe(false);
+  });
+  it('refuses an unrelated replacement before upload even if its content matches', async () => {
+    const fixture = stageFixture();
+    const server = restoredControlServer(fixture);
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (server.manifestReads.ios >= 1) server.currentIds.ios = '99999999-9999-9999-6999-999999999999';
+      return server.fetchImpl(input, init);
+    });
+    await expect(
+      promoteArchivedOta({
+        ...fixture,
+        manifestUrl: 'https://updates.test/manifest',
+        token: 'test-token',
+        fetchImpl,
+        unlockAuthorization: server.authorization,
+      }),
+    ).rejects.toThrow('refusing stale OTA promotion');
+    expect(server.calls.some((call) => call.init.method === 'PUT')).toBe(false);
+  });
+  it('rechecks an attested 406 side before uploading the other platform', async () => {
+    const fixture = stageFixture();
+    const server = restoredControlServer(fixture, true);
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (server.manifestReads.ios >= 2) server.currentIds.ios = '99999999-9999-9999-6999-999999999999';
+      return server.fetchImpl(input, init);
+    });
+    await expect(
+      promoteArchivedOta({
+        ...fixture,
+        manifestUrl: 'https://updates.test/manifest',
+        token: 'test-token',
+        fetchImpl,
+        unlockAuthorization: server.authorization,
+      }),
+    ).rejects.toThrow('unchanged baseline UUID differs');
+    expect(server.calls.some((call) => call.init.method === 'PUT')).toBe(false);
+  });
+  it('rejects a foreign branch, rollout mode or forged no-op before any publication request', async () => {
+    const fixture = stageFixture();
+    const server = restoredControlServer(fixture);
+    const options = {
+      ...fixture,
+      manifestUrl: 'https://updates.test/manifest',
+      token: 'test-token',
+      fetchImpl: server.fetchImpl,
+      unlockAuthorization: server.authorization,
+    };
+    await expect(promoteArchivedOta({ ...options, branch: 'pr-staging' })).rejects.toThrow('immediate production');
+    await expect(
+      promoteArchivedOta({
+        ...options,
+        rollout: {
+          percentage: 10,
+          receiptPath: 'unused',
+          connect: async () => {
+            throw new Error('must not connect');
+          },
+        },
+      }),
+    ).rejects.toThrow('immediate production');
+    server.authorization.receipt.platforms.ios.mode = 'unchanged';
+    await expect(promoteArchivedOta(options)).rejects.toThrow('no-op');
+    expect(server.fetchImpl).not.toHaveBeenCalled();
+  });
+});
 
 describe('stage receipt and export validation', () => {
   it('requires both platforms and valid fingerprints', () => {
