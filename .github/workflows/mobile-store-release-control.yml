@@ -23,9 +23,12 @@ on:
 permissions:
   contents: read
 
+# A dispatch shares the store-draft lock (queued, never replaced: every member
+# sets queue: max); push validation gets a group of its own.
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && 'mobile-store-draft' || format('mobile-store-release-control-validation-{0}', github.run_id) }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validate:

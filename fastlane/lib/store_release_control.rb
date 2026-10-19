@@ -3,12 +3,21 @@
 require "time"
 require_relative "asc_client"
 
-# Apple documents releaseType: MANUAL in AppStoreVersionUpdateRequest.Data.Attributes.
-# This helper never submits a review or releases an approved app.
+# Apple documents releaseType (MANUAL, AFTER_APPROVAL, SCHEDULED) in
+# AppStoreVersionUpdateRequest.Data.Attributes. This helper sets MANUAL (the
+# hand-run default) or AFTER_APPROVAL (the automatic merge-back submission in
+# mobile-store-submit.yml, so the app releases once Apple approves it). It never
+# submits a review, schedules a release, or releases an approved app.
 module BoardseshStoreReleaseControl
   class Error < StandardError; end
   APP_IDENTIFIER = "com.boardsesh.app"
   EDITABLE = %w[PREPARE_FOR_SUBMISSION READY_FOR_REVIEW].freeze
+  RELEASE_TYPES = %w[MANUAL AFTER_APPROVAL].freeze
+
+  # "AFTER_APPROVAL" -> "after-approval", for receipt actions and messages.
+  def self.release_type_slug(release_type)
+    release_type.downcase.tr("_", "-")
+  end
 
   class Client < BoardseshASC::Client
     def request(method, path, body = nil)
@@ -16,10 +25,13 @@ module BoardseshStoreReleaseControl
       super
     end
 
-    # Construct the only permitted write here. Do not use the shared client's
-    # retrying PATCH implementation, even when the response outcome is ambiguous.
-    def make_manual(version_id)
+    # Construct the only permitted write here: releaseType alone, MANUAL or
+    # AFTER_APPROVAL. Do not use the shared client's retrying PATCH implementation,
+    # even when the response outcome is ambiguous.
+    def set_release_type(version_id, release_type)
       raise Error, "Invalid app version resource ID" unless version_id.match?(/\A[A-Za-z0-9-]+\z/)
+      raise Error, "Release type must be MANUAL or AFTER_APPROVAL" unless RELEASE_TYPES.include?(release_type)
+      label = release_type == "MANUAL" ? "Manual" : "After-approval"
       uri = URI("#{ORIGIN}/v1/appStoreVersions/#{version_id}")
       http = @transport.call(uri)
       http.use_ssl = true
@@ -28,48 +40,54 @@ module BoardseshStoreReleaseControl
       request = Net::HTTP::Patch.new(uri, { "Authorization" => "Bearer #{@token.call}", "Content-Type" => "application/json" })
       request.body = JSON.generate({ "data" => {
         "type" => "appStoreVersions", "id" => version_id,
-        "attributes" => { "releaseType" => "MANUAL" }
+        "attributes" => { "releaseType" => release_type }
       } })
       response = http.request(request)
       unless response.code.to_i.between?(200, 299)
-        raise Error, "Manual release write not confirmed (HTTP #{response.code.to_i}); audit before retrying"
+        raise Error, "#{label} release write not confirmed (HTTP #{response.code.to_i}); audit before retrying"
       end
       # The independent GET readback, not the PATCH body, proves the outcome.
       nil
     rescue Net::OpenTimeout, Net::ReadTimeout, IOError, SystemCallError => error
-      raise Error, "Manual release write outcome is ambiguous (#{error.class}); audit before retrying"
+      raise Error, "#{label} release write outcome is ambiguous (#{error.class}); audit before retrying"
+    end
+
+    def make_manual(version_id)
+      set_release_type(version_id, "MANUAL")
     end
   end
 
   class Runner
     attr_reader :receipt
 
-    def initialize(client:, version:, build_number:)
+    def initialize(client:, version:, build_number:, release_type: "MANUAL")
       raise Error, "Expected iOS version must be semver" unless version.match?(/\A\d+\.\d+\.\d+\z/)
       raise Error, "Expected build must be numeric" unless build_number.match?(/\A[1-9]\d*\z/)
-      @client, @version, @build_number = client, version, build_number
+      raise Error, "Release type must be MANUAL or AFTER_APPROVAL" unless RELEASE_TYPES.include?(release_type)
+      @client, @version, @build_number, @release_type = client, version, build_number, release_type
       @receipt = { "schemaVersion" => 1, "appIdentifier" => APP_IDENTIFIER, "expectedVersion" => version,
-        "expectedBuild" => build_number, "writeAttempted" => false, "status" => "checking" }
+        "expectedBuild" => build_number, "requestedReleaseType" => release_type, "writeAttempted" => false, "status" => "checking" }
     end
 
     def run
+      slug = BoardseshStoreReleaseControl.release_type_slug(@release_type)
       initial = read_snapshot
       @receipt["before"] = initial
       fresh = read_snapshot
       raise Error, "Release identity or settings changed during preflight; no write attempted" unless fresh == initial
       verify_binding(fresh)
-      if fresh.dig("version", "releaseType") == "MANUAL"
-        return verified_receipt("already-manual", fresh)
+      if fresh.dig("version", "releaseType") == @release_type
+        return verified_receipt("already-#{slug}", fresh)
       end
       @receipt["writeAttempted"] = true
-      @client.make_manual(fresh.fetch("version").fetch("id"))
+      @client.set_release_type(fresh.fetch("version").fetch("id"), @release_type)
       expected = Marshal.load(Marshal.dump(fresh))
-      expected.fetch("version")["releaseType"] = "MANUAL"
+      expected.fetch("version")["releaseType"] = @release_type
       readback = read_snapshot
       @receipt["readback"] = readback
-      raise Error, "Manual release readback differs from the exact expected release; audit before retrying" unless readback == expected
+      raise Error, "#{@release_type} release readback differs from the exact expected release; audit before retrying" unless readback == expected
       verify_binding(readback)
-      verified_receipt("set-manual", readback)
+      verified_receipt("set-#{slug}", readback)
     rescue StandardError => error
       @receipt["status"] = @receipt["writeAttempted"] ? "outcome-unconfirmed" : "failed-before-write"
       @receipt["error"] = if error.is_a?(Error) || error.is_a?(BoardseshASC::Error)
@@ -104,7 +122,7 @@ module BoardseshStoreReleaseControl
       attributes = version.fetch("attributes")
       state = attributes["appVersionState"] || attributes["appStoreState"]
       unless attributes["versionString"] == @version && attributes["platform"] == "IOS" && EDITABLE.include?(state)
-        raise Error, "Expected exact editable iOS release before manual release control"
+        raise Error, "Expected exact editable iOS release before release control"
       end
       raise Error, "Unsupported release type; inspect scheduled release settings" unless %w[MANUAL AFTER_APPROVAL].include?(attributes["releaseType"])
       app_link = version.dig("relationships", "app", "data")
@@ -162,9 +180,12 @@ module BoardseshStoreReleaseControl
         filepath: ENV.fetch("ASC_KEY_PATH"), in_house: false
       )
       client = Client.new(token: -> { token.refresh! if token.expired?; token.text })
-      runner = Runner.new(client: client, version: ENV.fetch("RELEASE_VERSION"), build_number: ENV.fetch("IOS_BUILD_NUMBER"))
+      # Unset means MANUAL: the hand-run Apple Manual Release Control workflow sets
+      # nothing. Only mobile-store-submit.yml asks for AFTER_APPROVAL.
+      release_type = ENV.fetch("STORE_RELEASE_TYPE", "MANUAL")
+      runner = Runner.new(client: client, version: ENV.fetch("RELEASE_VERSION"), build_number: ENV.fetch("IOS_BUILD_NUMBER"), release_type: release_type)
       runner.run
-      puts "Apple manual release verified for #{ENV.fetch('RELEASE_VERSION')} build #{ENV.fetch('IOS_BUILD_NUMBER')}"
+      puts "Apple #{release_type_slug(release_type)} release verified for #{ENV.fetch('RELEASE_VERSION')} build #{ENV.fetch('IOS_BUILD_NUMBER')}"
       0
     rescue StandardError => error
       warn(error.is_a?(Error) ? error.message : "Release control failed (#{error.class}); no verified outcome")

@@ -487,9 +487,13 @@ export type MergedBackPullRequest = {
   headRefOid: string;
 };
 
-/** PURE: the most recently merged PR from this repository's release/next into main. */
-export function selectLastMergedBack(pullRequests: readonly unknown[]): MergedBackPullRequest | null {
-  let latest: MergedBackPullRequest | null = null;
+/**
+ * PURE: every merged PR from this repository's release/next into main, newest
+ * first. Cross-repository PRs and entries without a merge commit are dropped.
+ * Shared with scripts/mobile-store-submit-target.ts, which submits the newest one.
+ */
+export function listMergedBack(pullRequests: readonly unknown[]): MergedBackPullRequest[] {
+  const mergedBack: MergedBackPullRequest[] = [];
   for (const raw of pullRequests) {
     if (typeof raw !== 'object' || raw === null) throw new Error('Unexpected gh pr list entry.');
     const record = raw as Record<string, unknown>;
@@ -501,10 +505,15 @@ export function selectLastMergedBack(pullRequests: readonly unknown[]): MergedBa
       throw new Error(`Unexpected gh pr list entry: ${JSON.stringify(record)}`);
     }
     if (mergeCommitOid === null) continue;
-    const candidate = { number, mergedAt, mergeCommitOid, headRefOid };
-    if (latest === null || Date.parse(candidate.mergedAt) > Date.parse(latest.mergedAt)) latest = candidate;
+    mergedBack.push({ number, mergedAt, mergeCommitOid, headRefOid });
   }
-  return latest;
+  // Stable: two PRs merged in the same second keep gh's order.
+  return mergedBack.sort((left, right) => Date.parse(right.mergedAt) - Date.parse(left.mergedAt));
+}
+
+/** PURE: the most recently merged PR from this repository's release/next into main. */
+export function selectLastMergedBack(pullRequests: readonly unknown[]): MergedBackPullRequest | null {
+  return listMergedBack(pullRequests)[0] ?? null;
 }
 
 export type MergeTreeEntry = { mode: string; oid: string; stage: number; path: string };

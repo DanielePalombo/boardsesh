@@ -22,9 +22,11 @@ permissions:
   contents: read
 
 # Serializing with draft preparation keeps the attached build stable while read.
+# Queued, never replaced: every member of the store-draft group sets queue: max.
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && 'mobile-store-draft' || format('mobile-store-audit-validation-{0}', github.run_id) }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   validate:

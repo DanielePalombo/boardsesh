@@ -271,6 +271,13 @@ jobs:
   # and it fails open (the upload keeps its own guard). A deferred version still
   # has no build-android-v<version>-* tag, so release-train-sync.yml's hourly
   # retry dispatches this workflow again once the review clears.
+  #
+  # The second check holds a train build of the next version while the last
+  # merge-back's Android build has not reached Play production yet. This build's
+  # upload replaces Play internal, and the merge-back submission
+  # (mobile-store-submit.yml) can only release what internal still serves
+  # (scripts/mobile-store-android-merge-back-hold.ts). Same deferral, same retry,
+  # same fail-open policy.
   play-review:
     needs: gate
     if: needs.gate.outputs.should_build == 'true'
@@ -284,8 +291,11 @@ jobs:
     environment: Production
     permissions:
       contents: read
+      pull-requests: read # gh pr list: the last merge-back
     outputs:
-      pending: ${{ steps.review.outputs.pending }}
+      # Either check holds the build. Each fails open: one that errored leaves its
+      # output empty or false, which never holds.
+      pending: ${{ steps.review.outputs.pending == 'true' && 'true' || steps.merge_back.outputs.pending }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -310,6 +320,20 @@ jobs:
         if: steps.review.outputs.pending == 'true'
         run: |
           echo "::notice::Android build deferred: Play is reviewing another release, and the upload cannot commit until that review finishes. release-train-sync.yml's hourly retry dispatches this workflow again once the review clears, or dispatch it by hand with force_native off."
+
+      - name: Check whether the last merge-back still needs Play internal
+        id: merge_back
+        if: steps.review.outputs.pending != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          STORE_AUTO_SUBMIT: ${{ vars.STORE_AUTO_SUBMIT }}
+        run: vp exec node --import tsx scripts/mobile-store-android-merge-back-hold.ts
+
+      - name: Defer the build while the last merge-back waits for Play production
+        if: steps.merge_back.outputs.pending == 'true'
+        run: |
+          echo "::notice::Android build deferred: the last merge-back's Android build has not reached Play production yet, and this upload would replace it on Play internal, which the merge-back submission releases from. release-train-sync.yml's hourly retry dispatches this workflow again once production carries it, or dispatch it by hand with force_native off."
 
   build-and-release:
     needs: [gate, play-review]

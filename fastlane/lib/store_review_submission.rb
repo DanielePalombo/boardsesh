@@ -13,6 +13,10 @@ module BoardseshStoreReview
   CPP_CONTEXT_APPROVED = %w[READY_FOR_DISTRIBUTION PENDING_DEVELOPER_RELEASE PENDING_APPLE_RELEASE].freeze
   CPP_CONTEXT_NOT_APPROVED = %w[PREPARE_FOR_SUBMISSION READY_FOR_REVIEW WAITING_FOR_REVIEW IN_REVIEW REJECTED METADATA_REJECTED DEVELOPER_REJECTED INVALID_BINARY REPLACED_WITH_NEW_VERSION NOT_APPLICABLE].freeze
   METADATA_FILES = { "description" => "description.txt", "keywords" => "keywords.txt", "marketingUrl" => "marketing_url.txt", "promotionalText" => "promotional_text.txt", "supportUrl" => "support_url.txt", "whatsNew" => "release_notes.txt" }.freeze
+  # The release type a submission of the default app version must carry. MANUAL is
+  # the hand-run default; only the automatic merge-back submission
+  # (mobile-store-submit.yml) passes AFTER_APPROVAL, after setting it itself.
+  RELEASE_TYPES = %w[MANUAL AFTER_APPROVAL].freeze
 
   # POST and the final submission PATCH must never be retried automatically.
   # An ambiguous response requires a new plan/readback, not a second write.
@@ -69,11 +73,16 @@ module BoardseshStoreReview
       true
     end
 
-    def initialize(client:, audit:, manifest:, metadata_root:, selected:, cpp_review_context_version_id: nil)
+    def initialize(client:, audit:, manifest:, metadata_root:, selected:, cpp_review_context_version_id: nil, release_type: "MANUAL")
       self.class.validate_selection!(selected: selected, manifest: manifest, cpp_review_context_version_id: cpp_review_context_version_id)
+      raise Error, "Release type policy must be MANUAL or AFTER_APPROVAL" unless RELEASE_TYPES.include?(release_type)
+      if release_type != "MANUAL" && !selected.include?("default")
+        raise Error, "A release type policy other than MANUAL applies only to the default app version"
+      end
       @client, @audit, @manifest, @metadata_root = client, audit, manifest, metadata_root
       @selected = selected.sort
       @cpp_context_id = cpp_review_context_version_id.to_s
+      @release_type = release_type
     end
 
     def run(action:, expected_sha256: nil)
@@ -154,7 +163,9 @@ module BoardseshStoreReview
       states = {}
       @selected.each do |target|
         if target == "default"
-          raise Error, "App release must already be set to MANUAL; no rollout settings were changed" unless version["releaseType"] == "MANUAL"
+          unless version["releaseType"] == @release_type
+            raise Error, "App release must already be set to #{@release_type}; no rollout settings were changed"
+          end
           state = version["appVersionState"] || version["appStoreState"]
           item = { "relationship" => "appStoreVersion", "type" => "appStoreVersions", "id" => version.fetch("id") }
           surface = { "target" => target, "item" => item, "localizations" => normalized_localizations(report.fetch("localizations"), target, DEFAULT_COUNTS) }
