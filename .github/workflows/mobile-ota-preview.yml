@@ -172,7 +172,7 @@ jobs:
     steps:
       - name: Decide action + resolve PR
         id: decide
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const repoFull = `${context.repo.owner}/${context.repo.repo}`;
@@ -357,7 +357,7 @@ jobs:
       - name: Pin both preview bases
         id: pin
         if: steps.decide.outputs.action == 'publish'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ steps.decide.outputs.pr_number }}
           HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
@@ -392,7 +392,7 @@ jobs:
       issues: write
     steps:
       - name: Note that the preview branch is rebuilding
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BRANCH: ${{ needs.gate.outputs.branch }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
@@ -463,7 +463,7 @@ jobs:
     environment: ota-preview-unattended
     steps:
       - name: Reset preview branch before publish
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BRANCH: ${{ needs.gate.outputs.branch }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
@@ -583,7 +583,7 @@ jobs:
       # gate's pinned SHA before any deployment or PR-code execution so a queued
       # stale request cannot republish an older commit.
       - name: Reject a stale queued publish
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
@@ -608,7 +608,7 @@ jobs:
 
       - name: Start deployment (preview building)
         id: deploy
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BRANCH: ${{ needs.gate.outputs.branch }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
@@ -640,7 +640,7 @@ jobs:
             });
 
       - name: Check out trusted preview tooling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Same-repository PRs already run author code with the publish key;
           # their pinned tooling also lets changes to this pipeline test themselves.
@@ -650,7 +650,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout PR head (pinned to the gate-captured SHA)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
           path: source
@@ -658,7 +658,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version: '22.x'
           cache: true
@@ -681,7 +681,7 @@ jobs:
             "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/preview-candidates" "$RUNNER_TEMP/preview-artifacts"
 
       - name: Reject a stale prepared publish
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
@@ -729,7 +729,7 @@ jobs:
 
       - name: Finalize authoritative deployment state
         if: always() && steps.deploy.outputs.deployment_id != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
           PUBLISHED: ${{ steps.candidates.outputs.published }}
@@ -767,7 +767,7 @@ jobs:
       deployments: write
     steps:
       - name: Announce preview on the PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BRANCH: ${{ needs.publish.outputs.branch }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
@@ -871,7 +871,7 @@ jobs:
     steps:
       - name: Reject a stale cleanup decision
         id: fresh
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
@@ -897,11 +897,11 @@ jobs:
           fi
 
       - name: Checkout base (trusted main — NOT PR head)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version: '22.x'
           cache: true
@@ -925,7 +925,7 @@ jobs:
 
       - name: Mark preview removed (deployment + comment)
         if: always() && steps.fresh.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BRANCH: ${{ needs.gate.outputs.branch }}
           PR_NUMBER: ${{ needs.gate.outputs.pr_number }}

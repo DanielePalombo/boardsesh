@@ -538,11 +538,25 @@ describe('preview publish across an OTA server upgrade', () => {
 });
 
 describe('publisher helper preview routing', () => {
+  it.each(['mobile-ota-preview.yml', 'mobile-ota-preview-refresh.yml'])(
+    '%s pins every third-party action to an immutable commit',
+    (filename) => {
+      const workflow = parse(readFileSync(resolve(WORKFLOW_DIR, filename), 'utf8')) as {
+        jobs: Record<string, { steps: Array<{ uses?: string }> }>;
+      };
+      const actions = Object.values(workflow.jobs).flatMap((job) =>
+        job.steps.flatMap((step) => (step.uses ? [step.uses] : [])),
+      );
+      expect(actions.length).toBeGreaterThan(0);
+      for (const action of actions) expect(action).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
+    },
+  );
+
   it('sets up the toolchain from a checked-out lockfile without implicit dependency installation', () => {
     const workflow = parse(preview) as {
       jobs: { publish: { steps: Array<{ uses?: string; with?: Record<string, unknown> }> } };
     };
-    const setup = workflow.jobs.publish.steps.find((step) => step.uses === 'voidzero-dev/setup-vp@v1');
+    const setup = workflow.jobs.publish.steps.find((step) => step.uses?.startsWith('voidzero-dev/setup-vp@'));
     expect(setup?.with).toMatchObject({ 'working-directory': 'tooling', 'run-install': false });
   });
 

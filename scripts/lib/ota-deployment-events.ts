@@ -142,6 +142,7 @@ export async function deliverDeploymentEvents(options: {
         throw new Error(`Discord delivery returned HTTP ${response.status}; event ${event.id} remains pending.`);
       options.outbox.sent.push(event.id);
     }
+    // A sent receipt wins over a stale pending copy, which needs no second post.
     options.outbox.pending = options.outbox.pending.filter((pending) => pending.id !== event.id);
     // Commit each receipt before the next post so a later failure cannot replay it.
     options.save();
