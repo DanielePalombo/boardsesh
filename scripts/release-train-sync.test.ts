@@ -49,6 +49,7 @@ import {
   renderConflictReport,
   resolveVersionOnlyConflict,
   runReleaseTrainSync,
+  listMergedBack,
   selectLastMergedBack,
   versionBumpMessage,
   type ClassifyTrainInput,
@@ -539,6 +540,25 @@ describe('git and gh output parsing', () => {
     });
     expect(selectLastMergedBack([])).toBeNull();
     expect(() => selectLastMergedBack([{ number: '1' }])).toThrow();
+  });
+
+  // scripts/mobile-store-submit-target.ts submits the newest and compares notes with the next one.
+  it('lists same-repository merge-backs newest first, skipping ones without a merge commit', () => {
+    const entry = (number: number, mergedAt: string, oid: string | null, isCrossRepository = false) => ({
+      number,
+      mergedAt,
+      mergeCommit: oid === null ? null : { oid },
+      headRefOid: SHA_C,
+      isCrossRepository,
+    });
+    expect(
+      listMergedBack([
+        entry(4845, '2026-09-01T01:07:43Z', SHA_A),
+        entry(9999, '2026-10-09T00:00:00Z', SHA_C, true),
+        entry(6193, '2026-10-07T08:51:03Z', SHA_B),
+        entry(7000, '2026-10-08T00:00:00Z', null),
+      ]).map((pullRequest) => pullRequest.number),
+    ).toEqual([6193, 4845]);
   });
 
   it('parses merge-tree output and spots a version-only conflict', () => {

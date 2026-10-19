@@ -374,9 +374,15 @@ describe('native release workflow contracts', () => {
     expect(fastfile).toContain('build_version: build_number,');
     expect(fastfile).toContain('select_latest: false');
     expect(fastfile).toContain('edit_version.select_build(build_id: build.id)');
-    // supply with every upload skipped never touches a track; promotion does.
-    expect(fastfile).toContain('track_promote_to: "production",');
-    expect(fastfile).toContain('track_promote_release_status: "draft",');
+    // The Android draft is the exact internal release copied to production as a
+    // draft, in one edit committed with ERROR_IF_IN_REVIEW (supply's promote
+    // committed with the API default, which cancels a release in review).
+    const androidDraftLane = fastfile.slice(fastfile.lastIndexOf('lane :draft_submission do'));
+    expect(androidDraftLane).toContain('scripts", "mobile-store-android-draft.ts"');
+    expect(androidDraftLane).not.toContain('upload_to_play_store');
+    const androidDraft = readFileSync('scripts/mobile-store-android-draft.ts', 'utf8');
+    expect(androidDraft).toContain("status: 'draft'");
+    expect(androidDraft).toContain('await validateAndCommit(request, editPath);');
     expect(fastfile).not.toMatch(/track: "production",\n\s+version_code:/);
     // deliver renames the editable version to the one it drafts, so the lane
     // refuses before deliver runs when a different version is still open.
@@ -390,8 +396,9 @@ describe('native release workflow contracts', () => {
   it('pushes listing text automatically, and again once the draft has a version to write onto', () => {
     const metadata = workflow('mobile-store-metadata.yml');
     const metadataTriggers = parse(metadata)['on'] as { push?: { branches: string[]; paths: string[] } };
-    // Both lines: from main it writes main's version, from the train the train's.
-    expect(metadataTriggers.push?.branches).toEqual(['main', releaseBranch]);
+    // main only: release-train-sync.yml carries the notes to the train, and two
+    // refs pushing listings could disturb a review the merge-back started.
+    expect(metadataTriggers.push?.branches).toEqual(['main']);
     expect(metadataTriggers.push?.paths).toContain('fastlane/metadata/**');
     // deliver skips iOS when no version is editable, so the draft workflow re-runs it for iOS
     // right after creating the version — and only when that draft step actually succeeded.
@@ -399,8 +406,9 @@ describe('native release workflow contracts', () => {
     // app.config.ts on whatever it checks out, and it must land on the drafted
     // version, which is the train's.
     expect(draft).toContain('gh workflow run mobile-store-metadata.yml --ref "${RELEASE_BRANCH}" -f platform=ios');
+    // A merge-back submission (release_sha) pushes the text itself, synchronously.
     expect(draft).toMatch(
-      /if: steps\.draft\.outcome == 'success'\n\s+env:\n\s+GH_TOKEN: \$\{\{ github\.token \}\}\n\s+run: gh workflow run mobile-store-metadata\.yml/,
+      /if: steps\.draft\.outcome == 'success' && !inputs\.release_sha\n\s+env:\n\s+GH_TOKEN: \$\{\{ github\.token \}\}\n\s+run: gh workflow run mobile-store-metadata\.yml/,
     );
     // GITHUB_TOKEN can only dispatch a workflow with actions: write on the job.
     expect(draft).toMatch(/^  ios:\n(?:.*\n){1,20}?\s+permissions:\n\s+contents: read\n\s+actions: write$/m);
@@ -778,16 +786,24 @@ describe('native release workflow contracts', () => {
     // A checkout that predates the guard fails closed instead of drafting blind.
     expect(steps[guard]?.run).toContain('echo "skip=true" >> "$GITHUB_OUTPUT"');
     expect(steps[guard]?.run).not.toContain('skip=false');
+    // So does one whose draft lane still commits through supply, which cancels a review.
+    expect(steps[guard]?.run).toContain('if [ ! -f scripts/mobile-store-android-draft.ts ]; then');
   });
 
   // On 2026-10-18 a store-draft run read 2.6.0 as a draft four seconds before a
   // production release committed it, then wrote a second draft on top (#6524).
-  it('serializes the production draft with the production release on one Play lock', () => {
+  // Every Play production writer holds the lock, queued so a pending release is
+  // never replaced by the next member's run.
+  it('serializes every Play production writer on one queued lock', () => {
     type Jobs = { jobs: Record<string, { concurrency?: { group?: string; 'cancel-in-progress'?: boolean } }> };
-    const releaseJob = (parse(workflow('mobile-store-android-production.yml')) as Jobs).jobs['release'];
-    const draftJob = (parse(draft) as Jobs).jobs['android'];
-    for (const job of [releaseJob, draftJob]) {
-      expect(job?.concurrency).toEqual({ group: 'play-production-track', 'cancel-in-progress': false });
+    const members = [
+      (parse(workflow('mobile-store-android-production.yml')) as Jobs).jobs['release'],
+      (parse(draft) as Jobs).jobs['android'],
+      (parse(workflow('mobile-store-submit.yml')) as Jobs).jobs['submit-android'],
+      (parse(workflow('mobile-store-metadata.yml')) as Jobs).jobs['android'],
+    ];
+    for (const job of members) {
+      expect(job?.concurrency).toEqual({ group: 'play-production-track', 'cancel-in-progress': false, queue: 'max' });
     }
   });
 });
@@ -1103,7 +1119,10 @@ describe('Play review pre-check before the Android build', () => {
     expect(job?.needs).toBe('gate');
     expect(job?.if).toBe("needs.gate.outputs.should_build == 'true'");
     expect(job?.environment).toBe('Production');
-    expect(job?.outputs?.['pending']).toBe('${{ steps.review.outputs.pending }}');
+    // Either check holds the build; a check that errored leaves its output empty or false.
+    expect(job?.outputs?.['pending']).toBe(
+      "${{ steps.review.outputs.pending == 'true' && 'true' || steps.merge_back.outputs.pending }}",
+    );
     const check = job?.steps?.find((step) => step.id === 'review');
     expect(check?.run).toBe('vp exec node --import tsx scripts/mobile-store-android-review-pending.ts');
     expect(check?.env).toEqual({ GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: '${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}' });
@@ -1129,6 +1148,36 @@ describe('Play review pre-check before the Android build', () => {
       const condition = String(job.if).replace(/\s+/g, ' ').trim();
       expect(condition, name).toMatch(/^\$\{\{ !cancelled\(\) && needs\.build-and-release\.result == 'success'/);
     }
+  });
+
+  // The next train version's upload replaces Play internal, and the merge-back
+  // submission releases only what internal still serves. So the build waits, the
+  // same way and with the same retry, until production carries the merge-back.
+  it('holds the next version while the last merge-back has not reached Play production', () => {
+    const job = android.jobs['play-review'] as { permissions?: Record<string, string>; steps?: ExecutedStep[] };
+    expect(job.permissions).toEqual({ contents: 'read', 'pull-requests': 'read' });
+    const steps = job.steps ?? [];
+    const review = steps.findIndex((step) => step.id === 'review');
+    const hold = steps.findIndex((step) => step.id === 'merge_back');
+    expect(hold).toBeGreaterThan(review);
+    const holdStep = steps[hold] as ExecutedStep & { if?: string };
+    expect(holdStep.run).toBe('vp exec node --import tsx scripts/mobile-store-android-merge-back-hold.ts');
+    // No second Play read while the review check already holds the build.
+    expect(holdStep.if).toBe("steps.review.outputs.pending != 'true'");
+    expect(holdStep.env).toEqual({
+      GH_TOKEN: '${{ github.token }}',
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: '${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}',
+      STORE_AUTO_SUBMIT: '${{ vars.STORE_AUTO_SUBMIT }}',
+    });
+    const notice = steps.find((step) =>
+      String(step.run).includes("merge-back's Android build has not reached Play production"),
+    );
+    expect((notice as ExecutedStep & { if?: string })?.if).toBe("steps.merge_back.outputs.pending == 'true'");
+    expect(notice?.run).toContain("release-train-sync.yml's hourly retry");
+    // A held run reads to the sync as deferred (play-review green, build skipped), so it is retried.
+    const script = readFileSync('scripts/mobile-store-android-merge-back-hold.ts', 'utf8');
+    expect(script).toContain('pending=${decision.pending}');
+    expect(script).toContain('holdOrFailOpen');
   });
 
   it('holds the build only on an explicit pending review', () => {

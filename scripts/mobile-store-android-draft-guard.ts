@@ -1,11 +1,12 @@
 /// <reference types="node" />
 
 // Decides whether the store-draft workflow may (re)draft an Android build on the
-// production track. fastlane's promote replaces the production track's releases
-// with the build as a draft, so once that build has been released (in review,
-// rolling out or live) a later store-draft run must leave production alone. The
-// same holds while any other build is pending review: the promote's commit does
-// not refuse a pending review, so it could cancel it.
+// production track. The draft (scripts/mobile-store-android-draft.ts) writes the
+// build to production as a draft, so once that build has been released (in review,
+// rolling out or live) a later store-draft run must leave production alone. It also
+// waits while any other build is pending on production: the draft commits with
+// ERROR_IF_IN_REVIEW, so Play would refuse it, and drafting over a release that is
+// on its way (a merge-back submission, say) would replace it.
 // GET-only: reads the non-edit release summaries and never opens an edit.
 
 import { appendFileSync } from 'node:fs';
@@ -15,8 +16,8 @@ import { createPlayRequest, trackSummaries } from './lib/google-play-tracks';
 import { createAuditAccessToken, parseExpectedVersionCode } from './mobile-store-android-audit';
 
 const DRAFT = 'RELEASE_LIFECYCLE_STATE_DRAFT';
-// A release on its way to production. fastlane's promote commits without
-// ERROR_IF_IN_REVIEW, so drafting another build now could cancel that review.
+// A release on its way to production. Drafting another build now would be refused
+// (ERROR_IF_IN_REVIEW) or would replace it.
 const PENDING = new Set([
   'RELEASE_LIFECYCLE_STATE_NOT_SENT_FOR_REVIEW',
   'RELEASE_LIFECYCLE_STATE_IN_REVIEW',
@@ -50,7 +51,7 @@ export function productionDraftDecision(
       const codes = release.activeArtifacts.map((artifact) => artifact.versionCode).join(', ');
       return {
         skip: true,
-        reason: `Production has versionCode ${codes} pending (${release.releaseLifecycleState}); drafting ${versionCode} now could cancel that review.`,
+        reason: `Production has versionCode ${codes} pending (${release.releaseLifecycleState}); drafting ${versionCode} now would be refused or would replace it.`,
       };
     }
   }

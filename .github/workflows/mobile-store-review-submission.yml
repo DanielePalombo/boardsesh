@@ -35,9 +35,12 @@ on:
 permissions:
   contents: read
 
+# Shares the store-draft lock with drafting, the merge-back submission, release
+# control and the audit. Queued, never replaced: every member sets queue: max.
 concurrency:
   group: mobile-store-draft
   cancel-in-progress: false
+  queue: max
 
 jobs:
   review:

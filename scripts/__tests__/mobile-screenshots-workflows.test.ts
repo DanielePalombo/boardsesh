@@ -1059,12 +1059,14 @@ describe('mobile-store-draft.yml screenshot attach', () => {
     expect(attachIndex).toBeGreaterThan(fetchIndex);
     expect(steps[fetchIndex].run).toContain('vp run screenshot:baseline -- fetch --platform ios --all');
     expect(steps[attachIndex].run).toContain('bundle exec fastlane ios screenshots');
-    expect(flatten(steps[fetchIndex].if)).toBe("steps.draft.outcome == 'success'");
+    // A merge-back submission (release_sha) skips the attach: by then the
+    // baseline may already be the next train version's.
+    expect(flatten(steps[fetchIndex].if)).toBe("steps.draft.outcome == 'success' && !inputs.release_sha");
     // Gates on the fetch script's own `found` output, not just its exit code —
     // `screenshot-baseline.ts` fetch exits 0 with found=false whenever no
     // baseline has been published yet, and this must not attach an empty tree.
     expect(flatten(steps[attachIndex].if)).toBe(
-      "steps.draft.outcome == 'success' && steps.baseline.outputs.found == 'true'",
+      "steps.draft.outcome == 'success' && !inputs.release_sha && steps.baseline.outputs.found == 'true'",
     );
   });
 
@@ -1091,7 +1093,7 @@ describe('mobile-store-draft.yml screenshot attach', () => {
     const attachFailedStep = steps.find((step) => step.name === 'Warn if attaching screenshots failed');
 
     expect(flatten(noBaselineStep?.if)).toBe(
-      "steps.draft.outcome == 'success' && steps.baseline.outputs.found != 'true'",
+      "steps.draft.outcome == 'success' && !inputs.release_sha && steps.baseline.outputs.found != 'true'",
     );
     expect(noBaselineStep?.run).toContain('publish_baseline: true');
     expect(flatten(attachFailedStep?.if)).toBe("steps.attach_screenshots.outcome == 'failure'");

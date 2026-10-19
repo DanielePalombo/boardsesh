@@ -24,7 +24,11 @@
  * A conservative data-only caller may supply RELEASE_HEAD_SHA + HEAD_VERSION to
  * compare canonical native inputs without executing the release tree. Explicit
  * HEAD_IOS_FINGERPRINT + HEAD_ANDROID_FINGERPRINT remain available to trusted
- * local callers. Readiness mode emits `release_ready`; candidate mode emits
+ * local callers. A CANDIDATE_ONLY caller may set CANDIDATE_ANCESTOR_OF=<sha> to
+ * consider only build tags whose commit is in that commit's history: the store
+ * draft for a merge-back (mobile-store-draft.yml, release_sha) uses it so a later
+ * rebuild of the same version, which the merge-back does not contain, is never
+ * submitted for it. Readiness mode emits `release_ready`; candidate mode emits
  * `candidates_found`. Both emit selected build tags and commits on success.
  *
  * Usage: tsx scripts/mobile-cut-release-tags.ts
@@ -127,6 +131,14 @@ export function parseAcceptedBuilds(raw: string | undefined): AcceptedBuildRefer
     }
     return { platform, versionString, buildNumber: buildNumber as number, state };
   });
+}
+
+/**
+ * PURE: drop build tags whose commit is not in `ancestorOf`'s history. Every other
+ * tag passes through untouched, so only candidate selection is affected.
+ */
+export function buildTagsInHistory(tags: readonly string[], isAncestor: (tagName: string) => boolean): string[] {
+  return tags.filter((tagName) => parseBuildTag(tagName) === null || isAncestor(tagName));
 }
 
 export function buildTagsAsUploadedBuilds(tags: readonly string[], version: string): AcceptedBuildReference[] {
@@ -287,7 +299,23 @@ function main(): number {
 
   // Refresh tags so the build-* lookups and existence checks see the latest state.
   git(['fetch', 'origin', '--tags', '--force'], { allowFail: true });
-  const allTags = git(['tag', '--list']).split('\n').filter(Boolean);
+  let allTags = git(['tag', '--list']).split('\n').filter(Boolean);
+  const ancestorOf = process.env['CANDIDATE_ANCESTOR_OF'];
+  if (ancestorOf) {
+    if (!executionMode.candidateOnly) throw new Error('CANDIDATE_ANCESTOR_OF requires CANDIDATE_ONLY=true');
+    if (!/^[0-9a-f]{40}$/.test(ancestorOf)) throw new Error('CANDIDATE_ANCESTOR_OF must be a full commit SHA');
+    allTags = buildTagsInHistory(allTags, (tagName) => {
+      try {
+        execFileSync('git', ['merge-base', '--is-ancestor', `${tagName}^{commit}`, ancestorOf], {
+          cwd: ROOT_DIR,
+          stdio: 'ignore',
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
   const accepted = uploadedOnly
     ? buildTagsAsUploadedBuilds(allTags, readCurrentMarketingVersion())
     : parseAcceptedBuilds(process.env['ACCEPTED_BUILDS']);

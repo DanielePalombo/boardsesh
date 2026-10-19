@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertAnchorTarget,
   buildTagsAsUploadedBuilds,
+  buildTagsInHistory,
   NATIVE_FINGERPRINT_INPUT_PATHS,
   parseAcceptedBuilds,
   parseMarketingVersion,
@@ -26,6 +27,32 @@ describe('buildTagsAsUploadedBuilds', () => {
     ).toEqual([
       { platform: 'ios', versionString: '2.1.0', buildNumber: 42, state: 'UPLOADED_BUILD_TAG' },
       { platform: 'android', versionString: null, buildNumber: 2_000_042, state: 'UPLOADED_BUILD_TAG' },
+    ]);
+  });
+});
+
+describe('buildTagsInHistory', () => {
+  // A merge-back submits the builds its merge commit contains, never a later
+  // rebuild of the same version.
+  it('keeps only build tags in the given history, and every other tag', () => {
+    const inHistory = new Set(['build-ios-v2.7.0-12-aaaaaaaaaaaa', 'build-android-v2.7.0-2001310-bbbbbbbbbbbb']);
+    expect(
+      buildTagsInHistory(
+        [
+          'build-ios-v2.7.0-12-aaaaaaaaaaaa',
+          'build-ios-v2.7.0-13-cccccccccccc',
+          'build-android-v2.7.0-2001310-bbbbbbbbbbbb',
+          'build-android-v2.7.0-2001320-dddddddddddd',
+          'fingerprint-ios-aaaaaaaaaaaaaaaa',
+          'release/ios-v2.6.0-eeeeeeeeeeee',
+        ],
+        (tagName) => inHistory.has(tagName),
+      ),
+    ).toEqual([
+      'build-ios-v2.7.0-12-aaaaaaaaaaaa',
+      'build-android-v2.7.0-2001310-bbbbbbbbbbbb',
+      'fingerprint-ios-aaaaaaaaaaaaaaaa',
+      'release/ios-v2.6.0-eeeeeeeeeeee',
     ]);
   });
 });

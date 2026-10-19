@@ -8,13 +8,13 @@ class StoreReleaseControlTest < Minitest::Test
     attr_accessor :bundle_id, :build_number, :prerelease_version, :processing_state, :expired,
       :state, :release_type, :app_id, :build_id, :version_id, :version_number, :platform,
       :duplicate_apps, :duplicate_versions, :before_binding, :after_write, :write_error
-    attr_reader :writes, :binding_reads
+    attr_reader :writes, :written_release_types, :binding_reads
 
     def initialize
       @bundle_id, @build_number, @prerelease_version = "com.boardsesh.app", "17", "2.6.0"
       @processing_state, @expired, @state, @release_type = "VALID", false, "PREPARE_FOR_SUBMISSION", "AFTER_APPROVAL"
       @app_id, @build_id, @version_id, @version_number, @platform = "app", "build", "version", "2.6.0", "IOS"
-      @writes, @binding_reads = [], 0
+      @writes, @written_release_types, @binding_reads = [], [], 0
     end
 
     def app
@@ -56,10 +56,11 @@ class StoreReleaseControlTest < Minitest::Test
       end
     end
 
-    def make_manual(version_id)
+    def set_release_type(version_id, release_type)
       @writes << version_id
+      @written_release_types << release_type
       raise @write_error if @write_error
-      @release_type = "MANUAL"
+      @release_type = release_type
       @after_write&.call
     end
   end
@@ -69,9 +70,17 @@ class StoreReleaseControlTest < Minitest::Test
     @runner = BoardseshStoreReleaseControl::Runner.new(client: @client, version: "2.6.0", build_number: "17")
   end
 
+  # The automatic merge-back submission asks for release on approval instead.
+  def after_approval_runner
+    @client.release_type = "MANUAL"
+    BoardseshStoreReleaseControl::Runner.new(client: @client, version: "2.6.0", build_number: "17", release_type: "AFTER_APPROVAL")
+  end
+
   def test_sets_manual_once_and_independently_reads_back_exact_identity
     receipt = @runner.run
     assert_equal ["version"], @client.writes
+    assert_equal ["MANUAL"], @client.written_release_types
+    assert_equal "MANUAL", receipt.fetch("requestedReleaseType")
     assert_equal "verified", receipt.fetch("status")
     assert_equal "set-manual", receipt.fetch("action")
     assert_equal "AFTER_APPROVAL", receipt.dig("before", "version", "releaseType")
@@ -167,6 +176,65 @@ class StoreReleaseControlTest < Minitest::Test
     assert_equal "outcome-unconfirmed", @runner.receipt.fetch("status")
   end
 
+  def test_after_approval_mode_sets_release_on_approval_once_and_reads_it_back
+    runner = after_approval_runner
+    receipt = runner.run
+    assert_equal ["version"], @client.writes
+    assert_equal ["AFTER_APPROVAL"], @client.written_release_types
+    assert_equal "verified", receipt.fetch("status")
+    assert_equal "set-after-approval", receipt.fetch("action")
+    assert_equal "AFTER_APPROVAL", receipt.fetch("requestedReleaseType")
+    assert_equal "MANUAL", receipt.dig("before", "version", "releaseType")
+    assert_equal "AFTER_APPROVAL", receipt.dig("readback", "version", "releaseType")
+    assert_equal 5, @client.binding_reads
+  end
+
+  def test_existing_after_approval_is_a_checked_noop
+    runner = after_approval_runner
+    @client.release_type = "AFTER_APPROVAL"
+    receipt = runner.run
+    assert_equal "already-after-approval", receipt.fetch("action")
+    assert_equal false, receipt.fetch("writeAttempted")
+    assert_empty @client.writes
+  end
+
+  def test_after_approval_mode_never_writes_a_scheduled_noneditable_or_wrong_release
+    { release_type: "SCHEDULED", state: "WAITING_FOR_REVIEW", build_number: "16", version_number: "2.5.0" }.each do |attribute, invalid|
+      setup
+      runner = after_approval_runner
+      @client.public_send("#{attribute}=", invalid)
+      assert_raises(BoardseshStoreReleaseControl::Error, attribute.to_s) { runner.run }
+      assert_empty @client.writes
+      assert_equal "failed-before-write", runner.receipt.fetch("status")
+    end
+  end
+
+  def test_after_approval_readback_mismatch_or_ambiguous_write_is_unconfirmed_without_retry
+    [-> { @client.release_type = "MANUAL" }, -> { @client.build_id = "changed-build" }].each do |mutation|
+      setup
+      runner = after_approval_runner
+      @client.after_write = mutation
+      assert_raises(BoardseshStoreReleaseControl::Error) { runner.run }
+      assert_equal ["version"], @client.writes
+      assert_equal "outcome-unconfirmed", runner.receipt.fetch("status")
+    end
+    setup
+    runner = after_approval_runner
+    @client.write_error = BoardseshStoreReleaseControl::Error.new("Ambiguous transport outcome")
+    assert_raises(BoardseshStoreReleaseControl::Error) { runner.run }
+    assert_equal ["version"], @client.writes
+    assert_equal "outcome-unconfirmed", runner.receipt.fetch("status")
+  end
+
+  def test_release_type_outside_manual_and_after_approval_is_rejected_before_any_read
+    %w[SCHEDULED manual AFTER_APPROVAL\n].each do |release_type|
+      assert_raises(BoardseshStoreReleaseControl::Error) do
+        BoardseshStoreReleaseControl::Runner.new(client: @client, version: "2.6.0", build_number: "17", release_type: release_type)
+      end
+    end
+    assert_equal 0, @client.binding_reads
+  end
+
   class Transport
     attr_accessor :use_ssl, :open_timeout, :read_timeout, :max_retries
     attr_reader :requests
@@ -191,6 +259,20 @@ class StoreReleaseControlTest < Minitest::Test
     assert_equal 0, transport.max_retries
     assert_raises(BoardseshStoreReleaseControl::Error) { client.request("PATCH", "/v1/apps/app", {}) }
     assert_raises(BoardseshStoreReleaseControl::Error) { client.make_manual("version-1/relationships/build") }
+    assert_equal 1, transport.requests.length
+  end
+
+  def test_transport_payload_sets_only_release_on_approval_and_nothing_else
+    transport = Transport.new
+    client = BoardseshStoreReleaseControl::Client.new(token: -> { "secret-token" }, transport: ->(_uri) { transport })
+    client.set_release_type("version-1", "AFTER_APPROVAL")
+    request = transport.requests.fetch(0)
+    assert_equal "PATCH", request.method
+    assert_equal({ "data" => { "type" => "appStoreVersions", "id" => "version-1", "attributes" => { "releaseType" => "AFTER_APPROVAL" } } }, JSON.parse(request.body))
+    assert_equal 0, transport.max_retries
+    %w[SCHEDULED RELEASE].each do |release_type|
+      assert_raises(BoardseshStoreReleaseControl::Error) { client.set_release_type("version-1", release_type) }
+    end
     assert_equal 1, transport.requests.length
   end
 

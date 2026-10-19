@@ -4,6 +4,7 @@ require "minitest/autorun"
 require "tmpdir"
 require "fileutils"
 require "json"
+require_relative "../lib/app_store_version_states"
 
 # Execute the actual lane blocks without loading Fastlane or contacting stores.
 module UI
@@ -77,12 +78,37 @@ FakeEditVersion = Struct.new(:version_string, :selected_build_id) do
 end
 
 FakeApp = Struct.new(:id, :edit_version) do
-  def get_edit_app_store_version(platform:)
+  # Spaceship defaults the platform to iOS; the metadata lane relies on that.
+  def get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
     edit_version if platform == Spaceship::ConnectAPI::Platform::IOS
   end
 end
 
 FakeBuild = Struct.new(:id, :app_version, :version)
+
+# What the metadata lane's editable-version check reads from Spaceship.
+FakeEditableVersion = Struct.new(:version_string, :app_version_state, :app_store_state)
+
+module BoardseshPlayListing
+  class Error < StandardError; end
+
+  class Runner
+    class << self
+      attr_accessor :received, :staged_files
+    end
+
+    def initialize(**options)
+      self.class.received = options
+      # The screenshots lane removes its staging folder afterwards; record it now.
+      root = options.fetch(:metadata_path)
+      self.class.staged_files = Dir.glob(File.join(root, "**", "*.png")).map { |path| path.delete_prefix("#{root}/") }.sort
+    end
+
+    def run
+      { "action" => "committed", "parts" => self.class.received.fetch(:parts), "languages" => ["en-US"], "changes" => [] }
+    end
+  end
+end
 
 module BoardseshAndroidRelease
   class Error < StandardError; end
@@ -138,10 +164,17 @@ class NativeUploadLanesTest < Minitest::Test
     @fastlane_directory = File.join(@root, "fastlane")
     FileUtils.mkdir_p(File.join(@fastlane_directory, "lib"))
     File.write(File.join(@fastlane_directory, "lib", "android_release.rb"), "# Stubbed runner above\n")
+    File.write(File.join(@fastlane_directory, "lib", "play_listing.rb"), "# Stubbed runner above\n")
+    # Pure constants, required for real at the top of this file.
+    File.write(File.join(@fastlane_directory, "lib", "app_store_version_states.rb"), "# Real constants loaded above\n")
     @dsl = Module.new
     @dsl.extend(LaneDsl)
     @dsl.module_eval(File.read(File.expand_path("../Fastfile", __dir__)), File.join(@fastlane_directory, "Fastfile"))
     BoardseshAndroidRelease::Runner.received = nil
+    BoardseshPlayListing::Runner.received = nil
+    BoardseshPlayListing::Runner.staged_files = nil
+    # Lanes append to the run summary when one exists; keep test runs out of it.
+    ENV.delete("GITHUB_STEP_SUMMARY")
   end
 
   def teardown
@@ -263,6 +296,110 @@ class NativeUploadLanesTest < Minitest::Test
     assert_equal File.join(@root, "fastlane/metadata/android"), received.fetch(:metadata_path)
     assert_respond_to received.fetch(:service), :call
     assert_nil @dsl.commands
+  end
+
+  def run_ios_metadata(edit_version, options = {})
+    @dsl.extend(@dsl)
+    ENV["APP_STORE_CONNECT_API_KEY_ID"] = "FAKEKEY123"
+    ENV["APP_STORE_CONNECT_ISSUER_ID"] = "fake-issuer"
+    ENV["ASC_KEY_PATH"] = "/nonexistent/AuthKey_FAKEKEY123.p8"
+    Spaceship::ConnectAPI::App.current = FakeApp.new("app-1", edit_version)
+    Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:ios, :metadata]).call(options) }
+  end
+
+  def test_ios_metadata_pushes_onto_the_editable_version
+    run_ios_metadata(FakeEditableVersion.new("2.7.0", "PREPARE_FOR_SUBMISSION", nil))
+    assert_equal 1, @dsl.app_store_uploads.length
+    assert_equal true, @dsl.app_store_uploads.first.fetch(:skip_app_version_update)
+    assert_equal false, @dsl.app_store_uploads.first.fetch(:submit_for_review)
+  end
+
+  # Spaceship's editable-version lookup also returns a version waiting for review.
+  # After a merge-back submits one, a listing push must leave it alone.
+  def test_ios_listing_pushes_skip_a_version_waiting_for_review
+    run_ios_metadata(FakeEditableVersion.new("2.7.0", "WAITING_FOR_REVIEW", nil))
+    run_ios_metadata(FakeEditableVersion.new("2.7.0", nil, "WAITING_FOR_REVIEW"))
+    assert_nil @dsl.app_store_uploads
+  end
+
+  # The merge-back submission names the version it is about to submit.
+  def test_ios_metadata_with_an_expected_version_pushes_only_onto_that_version
+    error = assert_raises(RuntimeError) do
+      run_ios_metadata(FakeEditableVersion.new("2.7.1", "PREPARE_FOR_SUBMISSION", nil), { expected_version: "2.7.0" })
+    end
+    assert_includes error.message, "is 2.7.1, expected 2.7.0"
+    assert_raises(RuntimeError) { run_ios_metadata(FakeEditableVersion.new("2.7.0", "PREPARE_FOR_SUBMISSION", nil), { expected_version: "2.7" }) }
+    # Already submitted (waiting for review) or nothing editable: a skip, so a rerun stays green.
+    run_ios_metadata(FakeEditableVersion.new("2.7.0", "WAITING_FOR_REVIEW", nil), { expected_version: "2.7.0" })
+    run_ios_metadata(nil, { expected_version: "2.7.0" })
+    assert_nil @dsl.app_store_uploads
+    run_ios_metadata(FakeEditableVersion.new("2.7.0", "PREPARE_FOR_SUBMISSION", nil), { expected_version: "2.7.0" })
+    assert_equal 1, @dsl.app_store_uploads.length
+  end
+
+  # A check that cannot read App Store Connect must not let deliver run blind:
+  # deliver's own lookup includes a version waiting for review.
+  def test_ios_listing_pushes_skip_when_the_editable_version_cannot_be_read
+    broken_app = Object.new
+    def broken_app.get_edit_app_store_version(platform: nil)
+      raise "App Store Connect is down"
+    end
+    @dsl.extend(@dsl)
+    ENV["APP_STORE_CONNECT_API_KEY_ID"] = "FAKEKEY123"
+    ENV["APP_STORE_CONNECT_ISSUER_ID"] = "fake-issuer"
+    ENV["ASC_KEY_PATH"] = "/nonexistent/AuthKey_FAKEKEY123.p8"
+    Spaceship::ConnectAPI::App.current = broken_app
+    Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:ios, :metadata]).call({}) }
+    assert_nil @dsl.app_store_uploads
+    error = assert_raises(RuntimeError) do
+      Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:ios, :metadata]).call({ expected_version: "2.7.0" }) }
+    end
+    assert_includes error.message, "Could not read the editable App Store version"
+    assert_nil @dsl.app_store_uploads
+  end
+
+  # supply's commit used the API default, which cancels a release in review. The
+  # listing lanes now commit through BoardseshPlayListing (ERROR_IF_IN_REVIEW).
+  def test_play_listing_lanes_commit_through_the_review_protected_runner
+    @dsl.extend(@dsl)
+    ENV["GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"] = "unused fake credential"
+    { metadata: ["listing"], images: ["images"] }.each do |lane, parts|
+      Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:android, lane]).call }
+      received = BoardseshPlayListing::Runner.received
+      assert_equal parts, received.fetch(:parts), lane.to_s
+      assert_equal File.join(@root, "fastlane/metadata/android"), received.fetch(:metadata_path)
+      assert_respond_to received.fetch(:service), :call
+    end
+    refute_includes File.read(File.expand_path("../Fastfile", __dir__)), "upload_to_play_store"
+    assert_nil @dsl.commands
+  end
+
+  def test_play_screenshots_lane_stages_the_phone_set_for_the_runner
+    shots = File.join(@root, "app-stores", "google", "screenshots", "pixel-2")
+    FileUtils.mkdir_p(shots)
+    %w[01-home.png 02-board.png].each { |name| File.write(File.join(shots, name), name) }
+    @dsl.extend(@dsl)
+    ENV["GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"] = "unused fake credential"
+    Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:android, :screenshots]).call }
+    received = BoardseshPlayListing::Runner.received
+    assert_equal ["screenshots"], received.fetch(:parts)
+    assert_equal %w[en-US/images/phoneScreenshots/01-home.png en-US/images/phoneScreenshots/02-board.png],
+      BoardseshPlayListing::Runner.staged_files
+    refute Dir.exist?(received.fetch(:metadata_path)), "the staging folder is removed afterwards"
+  end
+
+  def test_android_draft_lane_runs_the_review_protected_draft_script
+    ENV["RELEASE_VERSION"] = "2.7.0"
+    ENV["ANDROID_VERSION_CODE"] = "2001310"
+    ENV["GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"] = "unused fake credential"
+    Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:android, :draft_submission]).call }
+    assert_equal [["vp", "exec", "node", "--import", "tsx", File.join(@root, "scripts", "mobile-store-android-draft.ts")]], @dsl.commands
+    { "RELEASE_VERSION" => "2.7", "ANDROID_VERSION_CODE" => "0" }.each do |name, invalid|
+      ENV["RELEASE_VERSION"], ENV["ANDROID_VERSION_CODE"] = "2.7.0", "2001310"
+      ENV[name] = invalid
+      assert_raises(RuntimeError, name) { Dir.chdir(@fastlane_directory) { @dsl.lanes.fetch([:android, :draft_submission]).call } }
+    end
+    assert_equal 1, @dsl.commands.length
   end
 
   def test_ios_upload_resolves_repo_relative_workflow_paths_from_fastlane_directory
