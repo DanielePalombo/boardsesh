@@ -3089,17 +3089,21 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   baked in app config and no same-named channel or map job is created. Xprem exposes the branch
   through `/branch_lists` when it matches the production channel's `pr-*` surfing pattern and the
   running binary's exact runtimeVersion/platform.
-- **The branch is reset only for a native change.** The reset exists to stop an older compatible
-  update staying surfable when a newer commit turns native-only on one or both platforms. Only a
-  revision that can move the native fingerprint can do that, so the gate scans the PR diff for
+- **Reset when the served runtimes may change.** The reset stops an older compatible update staying
+  surfable when a newer commit turns native-only, a base changes, or a train appears or disappears.
+  The gate scans the PR diff for
   fingerprint paths (`packages/mobile/app.config.ts`, `fingerprint.config.js`, `plugins/`, `modules/`,
   `locales/`, `targets/`, `ios/`, `android/`, `packages/mobile/package.json`, `patches/`, the root
   manifest and lockfile — every extra source `packages/mobile/fingerprint.config.js` declares) and emits
-  `needs_reset`. A JS-only revision — a test-only commit, a copy fix — skips the reset entirely and
-  its new update supersedes the old one in place, so the preview never leaves the picker. A native
-  revision still resets, and the `notify` job says so on the PR before the branch goes away: the
-  publish takes roughly 12 minutes, and re-running the workflow by hand only starts that wait over.
-  `needs_reset` defaults to true, so anything the gate cannot resolve keeps the old behaviour.
+  a native-change signal. Every run also compares the pinned main/train SHAs and the PR's base
+  ref/SHA against the latest per-PR deployment's versioned `otaPreviewBases` payload. That deployment
+  must have completed successfully. A JS-only revision with identical bases skips the reset and
+  supersedes the old update in place, keeping the preview available. Changed bases, missing or
+  malformed metadata, and incomplete or failed attempts reset conservatively. The first run after
+  this metadata is introduced also resets. Full SHA comparison means a JS-only base advance can
+  reset too. History API failures stop publication rather than assume the branch is safe to reuse.
+  The `notify` job posts before the branch goes away; both bases usually take 20–30 minutes to build.
+  Re-running the workflow by hand only starts that wait over.
   Because a skipped job would otherwise skip its dependents, `publish` guards with `!cancelled()`
   and blocks only on `needs.reset.result == 'failure'`.
 - **A revision that publishes nothing leaves the last good bundle up.** With no reset, a revision
@@ -3184,7 +3188,9 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   silently authorizes new fork code. The sticky comment reports each target
   and platform independently, including conflicts and native changes.
   Refresh dispatches one run per matching PR. Per-PR lanes coalesce pending
-  refreshes, but there is no global preview runner cap. An active train can
+  refreshes. Because every gate compares durable deployment context, a PR push that replaces a
+  queued refresh still detects changed bases and resets stale variants. There is no global preview
+  runner cap. An active train can
   double the export work, so account for open PR count when sizing runners.
   To inspect availability from a laptop, use the fingerprint a native build baked:
   `vp run mobile:ota-surf-doctor -- --platform ios --runtime-version <hash>` (take `<hash>` from that

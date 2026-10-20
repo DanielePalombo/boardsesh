@@ -642,7 +642,7 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(preview).toMatch(
       /^  reset:\n\s+needs: gate\n\s+if: needs\.gate\.outputs\.action == 'publish' && needs\.gate\.outputs\.needs_reset == 'true'$/m,
     );
-    expect(preview).toContain('needs_reset: ${{ steps.decide.outputs.needs_reset }}');
+    expect(preview).toContain('needs_reset: ${{ steps.pin.outputs.needs_reset }}');
     expect(preview).toContain("core.setOutput('needs_reset', String(needsReset));");
 
     // An unresolved file list must keep the old unconditional reset: the declaration
@@ -745,9 +745,9 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
   it('pins both preview bases before executing candidate code and reports per-base runtimes', () => {
     const preview = readWorkflow(OTA_PREVIEW);
     expect(preview).toContain('Pin both preview bases');
-    expect(preview).toContain("core.setOutput('source_base_sha', pr.base.sha)");
-    expect(preview).toContain("core.setOutput('main_sha', main.commit.sha)");
-    expect(preview).toContain("core.setOutput('train_sha', trainSha)");
+    expect(preview).toContain("core.setOutput('source_base_sha', bases.sourceBaseSha)");
+    expect(preview).toContain("core.setOutput('main_sha', bases.mainSha)");
+    expect(preview).toContain("core.setOutput('train_sha', bases.trainSha)");
     expect(preview).toContain('Rebase and compare both pinned preview candidates');
     expect(preview).toContain('SUMMARY: ${{ needs.publish.outputs.summary }}');
     expect(preview).toContain('| Base | Platform | Status | Runtime |');

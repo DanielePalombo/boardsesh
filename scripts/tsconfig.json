@@ -29,6 +29,7 @@
     "lib/ota-deployment-events.test.ts",
     "mobile-ota-preview-candidates.ts",
     "mobile-ota-preview-candidates.test.ts",
+    "mobile-ota-preview-base-context.test.ts",
     "__tests__/mobile-ota-preview*.test.ts",
     "mobile-store-android-audit.ts",
     "mobile-store-android-beta.ts",

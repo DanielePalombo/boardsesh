@@ -144,11 +144,12 @@ jobs:
        github.event.comment.body == '/ota-preview')
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Reads PR metadata and can dispatch this same trusted default-branch
+    # Reads PR/deployment metadata and can dispatch this same trusted default-branch
     # workflow after a comment passes the live repository-permission check.
     permissions:
       actions: write
       contents: read
+      deployments: read
       pull-requests: read
     outputs:
       action: ${{ steps.decide.outputs.action }}
@@ -156,10 +157,9 @@ jobs:
       branch: ${{ steps.decide.outputs.branch }}
       fork_skip: ${{ steps.decide.outputs.fork_skip }}
       cleanup_reason: ${{ steps.decide.outputs.cleanup_reason }}
-      # Whether this revision can shrink the set of platforms the preview branch
-      # serves — the only thing the pre-publish reset exists to reconcile. See the
-      # native-fingerprint predicate below.
-      needs_reset: ${{ steps.decide.outputs.needs_reset }}
+      # Native inputs, changed preview bases, or an incomplete/unverifiable prior
+      # deployment can leave stale runtime variants on the mutable preview branch.
+      needs_reset: ${{ steps.pin.outputs.needs_reset }}
       # The head SHA captured HERE, in the secret-free gate, is the exact commit the
       # publish job checks out — pinning it closes the TOCTOU where a fork could push
       # after the maintainer gate but before the publish checkout of the moving
@@ -235,14 +235,10 @@ jobs:
               path === 'pnpm-lock.yaml' ||
               path === 'pnpm-workspace.yaml';
 
-            // Also decides whether the preview branch has to be reset before this
-            // revision publishes. The reset exists for ONE case: a revision that turns
-            // native-only stops publishing a platform, leaving that platform's previous
-            // update surfable and stale. A revision that cannot move the fingerprint
-            // always republishes every platform the last one did, so its new update
-            // simply supersedes the old — deleting the branch first would only take a
-            // live preview away from whoever is testing it for the length of a publish
-            // (~13 minutes). Anything unresolved keeps the old unconditional reset.
+            // Native changes can stop a platform from publishing and leave its old
+            // update surfable. The pin step combines this conservative PR-file signal
+            // with durable deployment context: changed bases or an incomplete previous
+            // attempt also reset before publishing the next set of runtime variants.
             const hasMobileChanges = async (number) => {
               const files = await github.paginate(github.rest.pulls.listFiles, {
                 owner: context.repo.owner,
@@ -361,6 +357,7 @@ jobs:
         env:
           PR_NUMBER: ${{ steps.decide.outputs.pr_number }}
           HEAD_SHA: ${{ steps.decide.outputs.head_sha }}
+          PR_NATIVE_RESET: ${{ steps.decide.outputs.needs_reset }}
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(process.env.PR_NUMBER) });
@@ -371,13 +368,59 @@ jobs:
               const { data: train } = await github.rest.repos.getBranch({ ...context.repo, branch: 'release/next' });
               trainSha = train.commit.sha;
             } catch (error) { if (error.status !== 404) throw error; }
-            core.setOutput('source_base_sha', pr.base.sha);
-            core.setOutput('source_base_ref', pr.base.ref);
-            core.setOutput('main_sha', main.commit.sha);
-            core.setOutput('train_sha', trainSha);
+            const bases = {
+              version: 1,
+              mainSha: main.commit.sha,
+              trainSha,
+              sourceBaseRef: pr.base.ref,
+              sourceBaseSha: pr.base.sha,
+            };
+            const task = `ota-preview-pr-${process.env.PR_NUMBER}`;
+            // Inspect every publish, including coalesced PR events. Refresh dispatch
+            // flags are not durable and cannot prove which runtimes remain surfable.
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              ...context.repo, environment: 'pr-preview', task, per_page: 1,
+            });
+            if (!Array.isArray(deployments)) throw new Error('Preview deployment history is unreadable.');
+            const previous = deployments[0];
+            let previousStatus = '';
+            if (previous && Number.isSafeInteger(previous.id) && previous.id > 0) {
+              const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                ...context.repo, deployment_id: previous.id, per_page: 1,
+              });
+              if (!Array.isArray(statuses)) throw new Error('Preview deployment status is unreadable.');
+              previousStatus = statuses[0]?.state ?? '';
+            }
+            let previousPayload = previous?.payload;
+            if (typeof previousPayload === 'string') {
+              try { previousPayload = JSON.parse(previousPayload); } catch { previousPayload = null; }
+            }
+            const previousBases = previousPayload && typeof previousPayload === 'object' && !Array.isArray(previousPayload)
+              ? previousPayload.otaPreviewBases : null;
+            const baseKeys = ['version', 'mainSha', 'trainSha', 'sourceBaseRef', 'sourceBaseSha'];
+            const validBases = previousBases && typeof previousBases === 'object' && !Array.isArray(previousBases) &&
+              Object.keys(previousBases).length === baseKeys.length &&
+              baseKeys.every((key) => Object.hasOwn(previousBases, key)) &&
+              previousBases.version === 1 &&
+              typeof previousBases.mainSha === 'string' && /^[0-9a-f]{40}$/.test(previousBases.mainSha) &&
+              typeof previousBases.trainSha === 'string' && /^(?:[0-9a-f]{40})?$/.test(previousBases.trainSha) &&
+              typeof previousBases.sourceBaseRef === 'string' && previousBases.sourceBaseRef.length > 0 &&
+              typeof previousBases.sourceBaseSha === 'string' && /^[0-9a-f]{40}$/.test(previousBases.sourceBaseSha);
+            const sameBases = validBases && baseKeys.every((key) => previousBases[key] === bases[key]);
+            const sameDeployment = previous?.environment === 'pr-preview' && previous.task === task &&
+              previous.description === `OTA preview pr-${process.env.PR_NUMBER}` &&
+              previous.transient_environment === true && previous.production_environment === false;
+            const nativeReset = process.env.PR_NATIVE_RESET !== 'false';
+            const needsReset = nativeReset || !sameDeployment || !sameBases || previousStatus !== 'success';
+            core.info(`needs_reset=${needsReset} native_reset=${nativeReset} same_deployment=${sameDeployment} same_bases=${Boolean(sameBases)} previous_status=${previousStatus || '(none)'}`);
+            core.setOutput('needs_reset', String(needsReset));
+            core.setOutput('source_base_sha', bases.sourceBaseSha);
+            core.setOutput('source_base_ref', bases.sourceBaseRef);
+            core.setOutput('main_sha', bases.mainSha);
+            core.setOutput('train_sha', bases.trainSha);
 
   # ── Say so BEFORE the branch disappears. A reset takes the preview offline for the
-  # length of a publish (~13 min); with no notice that reads as "the preview is gone",
+  # length of both builds (usually 20–30 min); without notice that reads as "the preview is gone",
   # and the usual reaction — re-dispatching the workflow by hand — only opens a second
   # hole. Trusted job: no OTA secrets, no checkout, no PR-author code. It writes the
   # same sticky marker `announce` owns, so the final result overwrites this notice.
@@ -424,9 +467,9 @@ jobs:
               marker,
               `### 📱 OTA preview — \`${branch}\``,
               '',
-              `🔄 Rebuilding **\`${branch}\`** from commit \`${sha}\`. This commit changes native ` +
-                `configuration, so the branch is reset once before all runtime variants and is **unavailable while both ` +
-                `bases build (usually 20–30 minutes)**.`,
+              `🔄 Rebuilding **\`${branch}\`** from commit \`${sha}\`. Native inputs, preview bases, or the previous ` +
+                `build state need a fresh compatibility check, so the branch is reset once before all runtime variants ` +
+                `and is **unavailable while both bases build (usually 20–30 minutes)**.`,
               '',
               `It comes back on its own — don't re-run this workflow, which would start the wait over. ` +
                 `This comment is replaced with the result.`,
@@ -439,14 +482,11 @@ jobs:
   # ── Reconcile the mutable pr-N branch before publishing this revision. The
   # management delete runs without a checkout, install, or PR-authored code and
   # completes before the token-bearing publisher starts. This removes stale
-  # platform updates when a newer revision becomes native-only.
+  # runtime variants when native inputs or pinned bases change.
   #
-  # It runs ONLY when the gate saw a path that can move the native fingerprint. A
-  # JS-only revision republishes every platform the previous one did, so the new
-  # update supersedes the old one in place and the branch never goes away — the
-  # delete would otherwise strand whoever is testing the preview for the length of
-  # a publish. The gate defaults needs_reset to true, so anything it could not
-  # resolve still resets.
+  # A JS-only revision keeps the branch only when the latest successful deployment
+  # records exactly the same base context. Missing, changed, malformed, or incomplete
+  # deployment evidence resets conservatively, including after partial publication.
   reset:
     needs: gate
     if: needs.gate.outputs.action == 'publish' && needs.gate.outputs.needs_reset == 'true'
@@ -534,8 +574,8 @@ jobs:
   # admin credentials are never in scope while PR-author code runs.
   publish:
     needs: [gate, reset]
-    # `reset` is skipped for a JS-only revision, and a skipped `needs` job would
-    # otherwise skip this one too. Keep the edge (publish must still queue behind an
+    # `reset` is skipped for a JS-only revision with matching successful deployment
+    # context, and a skipped `needs` job would otherwise skip this one too. Keep the edge (publish must still queue behind an
     # in-flight reset via the shared mutation lane) but accept 'skipped' alongside
     # 'success'. A reset that FAILED still blocks: the branch state is then unknown.
     if: >-
@@ -615,6 +655,10 @@ jobs:
           # The commit the gate pinned — the SAME one the checkout below uses. No fresh
           # github.rest.pulls.get here: re-resolving could pick up a post-gate push.
           HEAD_SHA: ${{ needs.gate.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.gate.outputs.main_sha }}
+          TRAIN_SHA: ${{ needs.gate.outputs.train_sha }}
+          SOURCE_BASE_REF: ${{ needs.gate.outputs.source_base_ref }}
+          SOURCE_BASE_SHA: ${{ needs.gate.outputs.source_base_sha }}
         with:
           script: |
             const headSha = process.env.HEAD_SHA;
@@ -622,6 +666,16 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               ref: headSha,
               environment: 'pr-preview',
+              task: `ota-preview-pr-${process.env.PR_NUMBER}`,
+              payload: {
+                otaPreviewBases: {
+                  version: 1,
+                  mainSha: process.env.MAIN_SHA,
+                  trainSha: process.env.TRAIN_SHA,
+                  sourceBaseRef: process.env.SOURCE_BASE_REF,
+                  sourceBaseSha: process.env.SOURCE_BASE_SHA,
+                },
+              },
               auto_merge: false,
               required_contexts: [],
               transient_environment: true,
