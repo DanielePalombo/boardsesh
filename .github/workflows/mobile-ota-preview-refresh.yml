@@ -12,6 +12,7 @@ on:
 permissions:
   actions: write
   contents: read
+  deployments: read
   pull-requests: read
 
 concurrency:
@@ -40,13 +41,41 @@ jobs:
               path === 'scripts/mobile-publish.ts' || path === 'scripts/lib/eoas.ts' ||
               path === 'scripts/lib/mobile-publish-retry.ts' || path === 'scripts/lib/mobile-release-policy.ts' ||
               path.startsWith('.github/workflows/mobile-ota-');
+            // A base can absorb the last mobile diff without changing the PR head.
+            // Walk this PR's deployments across old heads/tasks, including failed
+            // attempts that may have uploaded only some variants. Metadata only.
+            const hadPreview = async (number) => {
+              let before = null;
+              const cursors = new Set();
+              for (;;) {
+                const result = await github.graphql(`query($owner: String!, $repo: String!, $number: Int!, $before: String) {
+                  repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
+                    timelineItems(last: 100, before: $before, itemTypes: [DEPLOYED_EVENT]) {
+                      nodes { ... on DeployedEvent { deployment { environment description } } }
+                      pageInfo { hasPreviousPage startCursor }
+                    }
+                  } }
+                }`, { ...context.repo, number, before });
+                const history = result.repository?.pullRequest?.timelineItems;
+                if (!history || !Array.isArray(history.nodes) || typeof history.pageInfo?.hasPreviousPage !== 'boolean')
+                  throw new Error(`Unreadable preview deployment history for PR #${number}.`);
+                if (history.nodes.some((event) => event?.deployment?.environment === 'pr-preview' &&
+                    event.deployment.description === `OTA preview pr-${number}`)) return true;
+                if (!history.pageInfo.hasPreviousPage) return false;
+                const cursor = history.pageInfo.startCursor;
+                if (typeof cursor !== 'string' || !cursor || cursors.has(cursor))
+                  throw new Error(`Invalid preview deployment history cursor for PR #${number}.`);
+                cursors.add(cursor);
+                before = cursor;
+              }
+            };
             for (const pr of pulls) {
               if (pr.head.repo?.full_name !== repository || !['main', 'release/next'].includes(pr.base.ref)) continue;
               // The release train's own mergeback PR is a version/native branch,
               // not a feature preview. It already receives immediate train OTAs.
               if (pr.head.ref === 'release/next') continue;
               const files = await github.paginate(github.rest.pulls.listFiles, { ...context.repo, pull_number: pr.number, per_page: 100 });
-              if (!files.some((file) => affectsMobilePreview(file.filename))) continue;
+              if (!files.some((file) => affectsMobilePreview(file.filename)) && !await hadPreview(pr.number)) continue;
               await github.rest.actions.createWorkflowDispatch({ ...context.repo,
                 workflow_id: 'mobile-ota-preview.yml', ref: context.payload.repository.default_branch,
                 inputs: { pr: String(pr.number) },

@@ -3192,6 +3192,9 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   retain the existing explicit maintainer authorization; a base push never
   silently authorizes new fork code. The sticky comment reports each target
   and platform independently, including conflicts and native changes.
+  PRs whose base absorbed their last mobile change are also dispatched when their deployment
+  history contains a preview, including older heads and legacy deployments. The normal gate then
+  selects cleanup. Unrelated web-only PRs without preview history are skipped.
   Refresh dispatches one run per matching PR. Per-PR lanes coalesce pending
   refreshes. Because every gate compares durable deployment context, a PR push that replaces a
   queued refresh still detects changed bases and resets stale variants. There is no global preview
