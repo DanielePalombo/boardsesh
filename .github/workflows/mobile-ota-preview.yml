@@ -157,7 +157,7 @@ jobs:
       branch: ${{ steps.decide.outputs.branch }}
       fork_skip: ${{ steps.decide.outputs.fork_skip }}
       cleanup_reason: ${{ steps.decide.outputs.cleanup_reason }}
-      # Native inputs, changed preview bases, or an incomplete/unverifiable prior
+      # A new revision, native inputs, changed preview bases, or an incomplete/unverifiable prior
       # deployment can leave stale runtime variants on the mutable preview branch.
       needs_reset: ${{ steps.pin.outputs.needs_reset }}
       # The head SHA captured HERE, in the secret-free gate, is the exact commit the
@@ -237,8 +237,8 @@ jobs:
 
             // Native changes can stop a platform from publishing and leave its old
             // update surfable. The pin step combines this conservative PR-file signal
-            // with durable deployment context: changed bases or an incomplete previous
-            // attempt also reset before publishing the next set of runtime variants.
+            // with durable deployment context: a new revision, changed bases, or an
+            // incomplete previous attempt reset before publishing runtime variants.
             const hasMobileChanges = async (number) => {
               const files = await github.paginate(github.rest.pulls.listFiles, {
                 owner: context.repo.owner,
@@ -410,9 +410,12 @@ jobs:
             const sameDeployment = previous?.environment === 'pr-preview' && previous.task === task &&
               previous.description === `OTA preview pr-${process.env.PR_NUMBER}` &&
               previous.transient_environment === true && previous.production_environment === false;
+            // Even JS-only revisions can conflict on one base or fail one upload.
+            // Clear every older revision first so omitted variants cannot stay surfable.
+            const sameRevision = previous?.sha === pr.head.sha;
             const nativeReset = process.env.PR_NATIVE_RESET !== 'false';
-            const needsReset = nativeReset || !sameDeployment || !sameBases || previousStatus !== 'success';
-            core.info(`needs_reset=${needsReset} native_reset=${nativeReset} same_deployment=${sameDeployment} same_bases=${Boolean(sameBases)} previous_status=${previousStatus || '(none)'}`);
+            const needsReset = nativeReset || !sameDeployment || !sameRevision || !sameBases || previousStatus !== 'success';
+            core.info(`needs_reset=${needsReset} native_reset=${nativeReset} same_deployment=${sameDeployment} same_revision=${sameRevision} same_bases=${Boolean(sameBases)} previous_status=${previousStatus || '(none)'}`);
             core.setOutput('needs_reset', String(needsReset));
             core.setOutput('source_base_sha', bases.sourceBaseSha);
             core.setOutput('source_base_ref', bases.sourceBaseRef);
@@ -467,7 +470,7 @@ jobs:
               marker,
               `### 📱 OTA preview — \`${branch}\``,
               '',
-              `🔄 Rebuilding **\`${branch}\`** from commit \`${sha}\`. Native inputs, preview bases, or the previous ` +
+              `🔄 Rebuilding **\`${branch}\`** from commit \`${sha}\`. The PR revision, native inputs, preview bases, or previous ` +
                 `build state need a fresh compatibility check, so the branch is reset once before all runtime variants ` +
                 `and is **unavailable while both bases build (usually 20–30 minutes)**.`,
               '',
@@ -482,10 +485,10 @@ jobs:
   # ── Reconcile the mutable pr-N branch before publishing this revision. The
   # management delete runs without a checkout, install, or PR-authored code and
   # completes before the token-bearing publisher starts. This removes stale
-  # runtime variants when native inputs or pinned bases change.
+  # runtime variants before a new revision or changed native inputs/bases publish.
   #
-  # A JS-only revision keeps the branch only when the latest successful deployment
-  # records exactly the same base context. Missing, changed, malformed, or incomplete
+  # A retry keeps the branch only when the latest successful deployment records
+  # exactly the same PR revision and base context. Missing, changed, malformed, or incomplete
   # deployment evidence resets conservatively, including after partial publication.
   reset:
     needs: gate
@@ -574,7 +577,7 @@ jobs:
   # admin credentials are never in scope while PR-author code runs.
   publish:
     needs: [gate, reset]
-    # `reset` is skipped for a JS-only revision with matching successful deployment
+    # `reset` is skipped for a same-revision retry with matching successful deployment
     # context, and a skipped `needs` job would otherwise skip this one too. Keep the edge (publish must still queue behind an
     # in-flight reset via the shared mutation lane) but accept 'skipped' alongside
     # 'success'. A reset that FAILED still blocks: the branch state is then unknown.
@@ -858,10 +861,10 @@ jobs:
             }));
             const headline = process.env.PUBLISHED === 'true'
               ? `Preview of \`${sha}\` is ready on **\`${branch}\`**. Each variant includes the latest pinned base plus this PR's commits.`
-              : `No preview of \`${sha}\` was published. ${process.env.NEEDS_RESET === 'true' ? 'The previous branch was cleared before building.' : 'The branch still serves its last successful revision; skipped variants are stale.'}`;
+              : `No preview of \`${sha}\` was published. ${process.env.NEEDS_RESET === 'true' ? 'The previous branch was cleared before building.' : 'The branch retains only variants already published for this same revision and base context.'}`;
             const body = [marker, `### 📱 OTA preview — \`${branch}\``, '', headline,
               ...(process.env.PUBLISH_RESULT !== 'success' ? ['Some candidates failed; see the Actions run for details.'] : []),
-              ...(process.env.NEEDS_RESET === 'false' ? ['Skipped or omitted runtimes may still serve the last successful revision; published rows below attest this head.'] : []),
+              ...(process.env.NEEDS_RESET === 'false' ? ['Skipped or omitted runtimes may retain variants already published for this same revision and base context; published rows below attest this attempt.'] : []),
               '', 'Open **More → Previews → Test a PR preview**, then choose the PR. Your installed runtime selects the matching variant.', '',
               '| Base | Platform | Status | Runtime |', '| --- | --- | --- | --- |', ...rows, '',
               'Conflicting rebases and native changes skip that target. When bases share a runtime, the PR’s actual target wins.',

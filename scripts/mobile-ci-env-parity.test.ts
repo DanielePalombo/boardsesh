@@ -614,12 +614,13 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(preview).toContain("['branch', `/api/apps/${appId}/branches/${encoded}`]");
   });
 
-  it('resets only when a revision can shrink the published platform set', () => {
+  it('resets new revisions and native changes before publishing runtime variants', () => {
     const preview = readWorkflow(OTA_PREVIEW);
 
-    // The reset takes a live preview offline for the length of a publish. It is worth
-    // that only when a platform can go native-only mid-PR, which needs a fingerprint
-    // path. A JS-only revision republishes in place.
+    // New JS-only revisions can conflict or fail on one target. The reset removes
+    // every older variant before publishing, and native changes still reset on retries.
+    expect(preview).toContain('const sameRevision = previous?.sha === pr.head.sha;');
+    expect(preview).toContain('!sameRevision');
     expect(preview).toContain('const affectsNativeFingerprint = (path) =>');
     // Every declared fingerprint input in packages/mobile/fingerprint.config.js must
     // be covered, or a native revision skips the reset and strands a stale platform.

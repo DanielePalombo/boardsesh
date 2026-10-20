@@ -27,6 +27,7 @@ const task = 'ota-preview-pr-7';
 const baseContext = () => ({ version: 1, mainSha, trainSha, sourceBaseRef: 'main', sourceBaseSha: mainSha });
 const previousDeployment = () => ({
   id: 123,
+  sha: headSha,
   task,
   environment: 'pr-preview',
   description: `OTA preview ${branch}`,
@@ -116,7 +117,7 @@ function fixture(
 }
 
 describe('preview base-context reconciliation', () => {
-  it('keeps a JS-only preview available when its last successful bases are identical', async () => {
+  it('keeps a successful same-revision retry available when its bases are identical', async () => {
     const { run, repos } = fixture();
     expect((await run()).get('needs_reset')).toBe('false');
     expect(repos.listDeployments).toHaveBeenCalledWith(
@@ -126,6 +127,14 @@ describe('preview base-context reconciliation', () => {
       expect.objectContaining({ deployment_id: 123, per_page: 1 }),
     );
   });
+
+  it.each(['pull_request', 'workflow_dispatch'])(
+    'resets each new JS-only revision on %s before a conflict or failed upload can retain older variants',
+    async (eventName) => {
+      const previous = { ...previousDeployment(), sha: 'd'.repeat(40) };
+      expect((await fixture({ previous }).run(eventName)).get('needs_reset')).toBe('true');
+    },
+  );
 
   it.each(['pull_request', 'workflow_dispatch'])(
     'resets changed bases on %s, including a JS push replacing a pending refresh',
@@ -165,6 +174,8 @@ describe('preview base-context reconciliation', () => {
     { ...previousDeployment(), task: 'ota-preview-pr-8' },
     { ...previousDeployment(), production_environment: true },
     { ...previousDeployment(), transient_environment: false },
+    { ...previousDeployment(), sha: undefined },
+    { ...previousDeployment(), sha: 'missing' },
   ])('resets missing, legacy or invalid previous metadata: %j', async (previous) => {
     expect((await fixture({ previous }).run()).get('needs_reset')).toBe('true');
   });

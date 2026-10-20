@@ -3089,26 +3089,27 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   baked in app config and no same-named channel or map job is created. Xprem exposes the branch
   through `/branch_lists` when it matches the production channel's `pr-*` surfing pattern and the
   running binary's exact runtimeVersion/platform.
-- **Reset when the served runtimes may change.** The reset stops an older compatible update staying
-  surfable when a newer commit turns native-only, a base changes, or a train appears or disappears.
+- **Reset before every new revision.** A JS-only commit can conflict on one base or fail one upload.
+  Clearing the previous revision first prevents an omitted runtime from keeping old code surfable.
+  Native changes, base advances, and train activation/removal also reset.
   The gate scans the PR diff for
   fingerprint paths (`packages/mobile/app.config.ts`, `fingerprint.config.js`, `plugins/`, `modules/`,
   `locales/`, `targets/`, `ios/`, `android/`, `packages/mobile/package.json`, `patches/`, the root
   manifest and lockfile — every extra source `packages/mobile/fingerprint.config.js` declares) and emits
   a native-change signal. Every run also compares the pinned main/train SHAs and the PR's base
   ref/SHA against the latest per-PR deployment's versioned `otaPreviewBases` payload. That deployment
-  must have completed successfully. A JS-only revision with identical bases skips the reset and
-  supersedes the old update in place, keeping the preview available. Changed bases, missing or
-  malformed metadata, and incomplete or failed attempts reset conservatively. The first run after
+  must have completed successfully, and its SHA must match the current PR head. Only a retry of
+  that same revision with identical bases can skip the reset. New revisions, changed bases, missing
+  or malformed metadata, and incomplete or failed attempts reset conservatively. The first run after
   this metadata is introduced also resets. Full SHA comparison means a JS-only base advance can
   reset too. History API failures stop publication rather than assume the branch is safe to reuse.
   The `notify` job posts before the branch goes away; both bases usually take 20–30 minutes to build.
   Re-running the workflow by hand only starts that wait over.
   Because a skipped job would otherwise skip its dependents, `publish` guards with `!cancelled()`
   and blocks only on `needs.reset.result == 'failure'`.
-- **A revision that publishes nothing leaves the last good bundle up.** With no reset, a revision
-  whose candidates all conflict or fail compatibility keeps serving the last published variants.
-  The sticky comment identifies those variants as stale rather than attesting the new head.
+- **Skipped runtimes do not retain older revisions.** A new revision whose candidates all conflict
+  or fail compatibility leaves no older preview available. Partial successes serve only the current
+  revision. A same-revision retry can retain its already published variants with the same bases.
 - **One PR entry, two native runtimes.** Every preview prepares against pinned
   latest `origin/main`. When `release/next` has a different marketing version,
   it also prepares against that pinned latest base. Only the PR's commits are
@@ -3126,15 +3127,19 @@ above — no per-tester build. Workflow: `.github/workflows/mobile-ota-preview.y
   Retained v1 receipts remain readable. The receipt resolver allows 60 minutes
   for two sequential preview exports.
 - **An identical export is skipped, and the publish says so.** Xprem refuses to create an update whose
-  bundle matches one already in storage (`There is no change in the update for android, ignored` /
+  bundle matches the latest update on that branch/runtime/platform (`There is no change in the update for android, ignored` /
   `No changes found in the update, nothing to deploy`) and `eoas` exits **0** either way. Ordinarily
   that is right — the identical update is still on the branch. It is only dangerous next to a reset,
   which is how #5417 lost its Android preview: a comment-only commit left the Android bundle
   unchanged, the reset had already deleted `pr-5417`, and the skipped publish never recreated it. The
   branch was iOS-only from then on and the row simply was not in the Android picker — not greyed out,
   absent, because `/branch_lists` is filtered per platform. `mobile:publish` now scans for that notice
-  and reports `android=no-change` instead of `android=success`. Since `needs_reset` (above) this pairing
-  can no longer arise from a JS-only push.
+  and reports `android=no-change` instead of `android=success`. In pinned v3.2.6, the
+  [duplicate check](https://github.com/mercuretechnologies/xprem/blob/v3.2.6/internal/services/deployment_service.go#L519)
+  reads the latest branch update directly from the database. A completed
+  [branch deletion](https://github.com/mercuretechnologies/xprem/blob/v3.2.6/internal/services/branch_service.go#L124)
+  removes that head and clears serving caches, so an identical export can be published again.
+  The surfability guard remains defensive against a deduplicated publish that leaves no branch.
 - **The publish verifies its own work.** After every platform reports success, `mobile:publish` asks
   `/branch_lists` — the same unauthenticated question the in-app picker asks — whether `pr-<number>` is
   actually offered to that platform's fingerprint. **Two independent signals are required to fail the
