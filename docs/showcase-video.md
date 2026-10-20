@@ -132,6 +132,59 @@ fallback. It:
    the crew take's live session is ended, Metro, the backend it started and the
    simulators are stopped. Ctrl-C does the same.
 
+The iOS recorder passes `--initialUrl http://localhost:<port>` directly to
+Expo's native launch, before its last/default-server autoload. It waits for a
+fresh home signal for up to four minutes per cold start, matching the screenshot
+runner's allowance for authentication and keychain startup, with three attempts. It
+allows up to 12 minutes of home polling across those attempts, plus native launch
+and tool overhead; this is not a 12-minute wall-clock cap. The previous allowance
+was one minute per attempt, or three minutes of polling across all attempts. It
+does not open a second development-client URL while the first load is pending:
+a late timeout from that request can otherwise cover a working app with Expo's
+error screen. Navigation links still use the primed custom-scheme dialog.
+
+To inspect the profile filter without recording any takes, run
+`vp run video:record -- --kind moonboard --locale en-US --diagnose-profile-filter --app-path <Boardsesh.app>`
+on macOS, or dispatch **Mobile Store Videos** with mode
+`diagnose-profile-filter`. This diagnostic requires the MoonBoard variant. It
+uses one iOS simulator and one locale, primes the
+profile as the progress take does, taps its filter once, and saves a screenshot
+immediately after the tap. It requires the filter sheet's localized All boards
+row within 30 seconds, matching the recording's per-attempt visibility budget,
+before any further scroll. A separate `maestro hierarchy` dump observes
+the later state; its timestamp is retained because attaching the CLI takes time.
+Both successful and failed diagnostic Maestro output stays in the debug artifact.
+No footage, take provenance, rendering, R2 upload, or App Store write occurs.
+
+Screenshot mode logs profile filter presses, whether the sheet ref is available,
+sheet change callbacks, and dismissal callbacks under `[showcase-profile-filter]`.
+A change callback reports the requested detent before native presentation; use
+the screenshot and hierarchy to establish that the sheet is actually visible.
+The dismissal callback can also follow the coordinator's timeout fallback; its
+associated warning distinguishes that from a native dismissal acknowledgment.
+A change with index `-1` followed by a dismissal callback records two stages
+of the same close, not two separate closes.
+
+Progress flows require the localized All boards row before any sheet-row tap or
+scroll. Opening an absent sheet has one retry, with a required 30-second visibility
+check per attempt. A completed tap or an idle animation alone does not establish
+native sheet presentation: CI has observed a tap inside the button without an app
+press event. An already-visible sheet is not tapped again. Selection, close and
+scrolling are not retried; a sheet that never appears fails the take before it can
+scroll the profile behind it. Native marks, anchors and frame checks still apply.
+
+Dispatch mode `record-profile` verifies one real English MoonBoard progress take
+with the existing frame, mark and anchor checks. It hands off that take's frames
+for one day and skips rendering. Mode `record-english` runs all three English
+MoonBoard takes in their full measurement order, including progress after board
+and grade-filter takes, with a 60-minute ceiling and the same one-day frame handoff.
+It skips rendering. Use the default `measure` mode after this sequence passes to
+produce the full four-locale measurement.
+The full measurement has a 180-minute job ceiling; the diagnostic and single-take
+modes retain 45 minutes. Three locale children already took 91 minutes in CI, so a fourth
+at the observed pace plus setup would exceed the old 120-minute ceiling.
+Individual startup and Maestro command limits remain unchanged.
+
 Crew setup uses the existing localized Start, Invite climbers, and Copy link
 accessibility labels across all four locales. The second phone waits for the
 localized Join session button on the join card. The invitation closes through its

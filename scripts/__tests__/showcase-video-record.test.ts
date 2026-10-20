@@ -13,6 +13,7 @@ import {
   BLANK_FRAME_MAX_STDEV,
   REFERENCE_MAX_DIFF_RATIO,
   SHOWCASE_DEFAULT_BOARDS,
+  SHOWCASE_IOS_HOME_READY_TIMEOUT_MS,
   SHOWCASE_DEFAULT_ENV_FILE,
   SHOWCASE_DEVICES,
   showcaseDevice,
@@ -27,6 +28,7 @@ import {
   buildMarksFile,
   checkTake,
   countHomeReady,
+  showcaseIosLaunchArgs,
   waitForShowcaseHome,
   collapseCaptureNotificationShade,
   crewQueueFallbackPoint,
@@ -70,81 +72,49 @@ import { requiredTakeSeconds } from '../lib/showcase-video/timeline';
 const anchorLine = (name: string, x: number): string =>
   ` LOG  [showcase-anchor] {"name":"${name}","x":${x},"y":118,"width":132,"height":32}`;
 
-describe('iOS recorder launcher recovery', () => {
+describe('iOS recorder startup', () => {
+  it.each([8081, 8090, 8082])('selects one native startup URL on the phone port %i', (port) => {
+    expect(showcaseIosLaunchArgs('phone-udid', 'com.boardsesh.app', port)).toEqual([
+      'launch',
+      'phone-udid',
+      'com.boardsesh.app',
+      '--initialUrl',
+      `http://localhost:${port}`,
+    ]);
+  });
+
   function launchState() {
     let elapsed = 0;
-    const recoverLauncher = vi.fn(async () => {});
     return {
-      recoverLauncher,
       now: () => elapsed,
       sleep: async (milliseconds: number) => {
         elapsed += milliseconds;
       },
-      advance: (milliseconds: number) => {
-        elapsed += milliseconds;
-      },
-      timeoutMs: 60_000,
+      timeoutMs: SHOWCASE_IOS_HOME_READY_TIMEOUT_MS,
       hasReachedHome: () => false,
-      hasLoadedBundle: () => false,
     };
   }
 
-  it('accepts home immediately without reopening the client', async () => {
-    const state = launchState();
-    expect(await waitForShowcaseHome({ ...state, hasReachedHome: () => true })).toBe(true);
-    expect(state.recoverLauncher).not.toHaveBeenCalled();
+  it('accepts fresh home immediately', async () => {
+    expect(await waitForShowcaseHome({ ...launchState(), hasReachedHome: () => true })).toBe(true);
   });
 
-  it('recovers once after 20 seconds without a fresh bundle', async () => {
+  it('waits for delayed fresh home without starting another project load', async () => {
     const state = launchState();
-    let home = false;
-    state.recoverLauncher.mockImplementation(async () => {
-      expect(state.now()).toBe(20_000);
-      home = true;
-    });
-    expect(await waitForShowcaseHome({ ...state, hasReachedHome: () => home })).toBe(true);
-    expect(state.recoverLauncher).toHaveBeenCalledTimes(1);
+    expect(await waitForShowcaseHome({ ...state, hasReachedHome: () => state.now() >= 40_000 })).toBe(true);
+    expect(state.now()).toBe(40_000);
   });
 
-  it('keeps waiting for a launched bundle without reloading it', async () => {
-    const state = launchState();
-    expect(
-      await waitForShowcaseHome({ ...state, hasLoadedBundle: () => true, hasReachedHome: () => state.now() >= 40_000 }),
-    ).toBe(true);
-    expect(state.recoverLauncher).not.toHaveBeenCalled();
-  });
-
-  it('honors home arriving during slow Maestro startup beyond the deadline', async () => {
-    const state = launchState();
-    let home = false;
-    state.recoverLauncher.mockImplementation(async () => {
-      state.advance(65_000);
-      home = true;
-    });
-    expect(await waitForShowcaseHome({ ...state, hasReachedHome: () => home })).toBe(true);
-  });
-
-  it('times out after one unsuccessful recovery', async () => {
+  it('times out without home so the caller can cold-start another attempt', async () => {
     const state = launchState();
     expect(await waitForShowcaseHome(state)).toBe(false);
-    expect(state.now()).toBe(60_000);
-    expect(state.recoverLauncher).toHaveBeenCalledTimes(1);
+    expect(state.now()).toBe(240_000);
   });
 
-  it('times out an already loaded bundle without restarting it', async () => {
+  it('allows cold auth startup to finish after the previous one-minute limit', async () => {
     const state = launchState();
-    expect(await waitForShowcaseHome({ ...state, hasLoadedBundle: () => true })).toBe(false);
-    expect(state.now()).toBe(60_000);
-    expect(state.recoverLauncher).not.toHaveBeenCalled();
-  });
-
-  it('propagates a failed recovery instead of hiding it as a readiness timeout', async () => {
-    const state = launchState();
-    const failure = new Error('simctl could not open the dev client');
-    state.recoverLauncher.mockRejectedValue(failure);
-    await expect(waitForShowcaseHome(state)).rejects.toBe(failure);
-    expect(state.now()).toBe(20_000);
-    expect(state.recoverLauncher).toHaveBeenCalledTimes(1);
+    expect(await waitForShowcaseHome({ ...state, hasReachedHome: () => state.now() >= 180_000 })).toBe(true);
+    expect(state.now()).toBe(180_000);
   });
 });
 
@@ -243,6 +213,7 @@ describe('parseRecordArgs', () => {
       nativeLocaleCapture: false,
       locales: ['en-US'],
       hold: false,
+      diagnoseProfileFilter: false,
     });
   });
 
@@ -285,6 +256,7 @@ describe('parseRecordArgs', () => {
       nativeLocaleCapture: false,
       locales: ['en-US'],
       hold: true,
+      diagnoseProfileFilter: false,
     });
   });
 
@@ -299,6 +271,77 @@ describe('parseRecordArgs', () => {
     expect(() => parseRecordArgs(['--end-session', 'abc'])).toThrow(/UUID/);
     expect(() => parseRecordArgs(['--platform', 'windows'])).toThrow(/--platform must be one of ios, android/);
   });
+
+  it('limits the profile diagnostic to one iOS profile interaction', () => {
+    const args = parseRecordArgs(['--kind', 'moonboard', '--diagnose-profile-filter']);
+    expect(args.diagnoseProfileFilter).toBe(true);
+    expect(args.only).toEqual(['log']);
+    expect(recordingTakes(args).map((take) => take.id)).toEqual(['log']);
+    for (const incompatible of [
+      ['--platform', 'android'],
+      ['--locales', 'all'],
+      ['--hold'],
+      ['--only', 'crew'],
+      ['--end-session', '667186b5-f0e5-4f56-92bf-8646f87d3f81'],
+    ]) {
+      expect(() => parseRecordArgs(['--kind', 'moonboard', '--diagnose-profile-filter', ...incompatible])).toThrow(
+        '--diagnose-profile-filter requires',
+      );
+    }
+    expect(() => parseRecordArgs(['--diagnose-profile-filter'])).toThrow('--diagnose-profile-filter requires');
+  });
+
+  it('observes one filter tap before any subsequent scrolling', () => {
+    const documents = parseAllDocuments(readFileSync(showcaseFlowPath('diagnose-profile-filter.yaml'), 'utf8'));
+    expect(documents.flatMap((document) => document.errors)).toEqual([]);
+    const steps = documents[1].toJSON() as (Record<string, unknown> | string)[];
+    const hasCommand = (step: Record<string, unknown> | string, command: string): boolean =>
+      typeof step !== 'string' && command in step;
+    const tapIndex = steps.findIndex((step) => hasCommand(step, 'tapOn'));
+    expect(tapIndex).toBeGreaterThan(0);
+    expect(steps.filter((step) => hasCommand(step, 'tapOn'))).toHaveLength(1);
+    expect(steps[tapIndex + 1]).toEqual({ takeScreenshot: 'profile-filter-immediately-after-tap' });
+    expect(
+      steps.slice(tapIndex + 1).some((step) => hasCommand(step, 'scrollUntilVisible') || hasCommand(step, 'swipe')),
+    ).toBe(false);
+    expect(steps.slice(tapIndex + 1)).toContainEqual({
+      extendedWaitUntil: { visible: '${SHOWCASE_ALL_BOARDS_LABEL}', timeout: 30000 },
+    });
+  });
+
+  it.each(['log.yaml', 'log-kilter.yaml', 'log-tension.yaml', 'log-moonboard.yaml', 'log-spray.yaml'])(
+    '%s waits for the actual filter sheet before interacting with its rows',
+    (filename) => {
+      const documents = parseAllDocuments(readFileSync(showcaseFlowPath(filename), 'utf8'));
+      expect(documents.flatMap((document) => document.errors)).toEqual([]);
+      const steps = documents[1].toJSON() as (Record<string, unknown> | string)[];
+      const opens = steps.flatMap((step, index) => {
+        if (typeof step === 'string') return [];
+        const retry = step.retry as { maxRetries: number; commands: Record<string, unknown>[] } | undefined;
+        return retry ? [{ index, retry }] : [];
+      });
+      expect(opens).toHaveLength(filename === 'log.yaml' ? 2 : 1);
+      for (const { index, retry } of opens) {
+        expect(retry.maxRetries).toBe(1);
+        // Retry only opening an absent sheet, never selection, close or scrolling.
+        expect(retry.commands).toEqual([
+          'waitForAnimationToEnd',
+          {
+            runFlow: {
+              when: { notVisible: '${SHOWCASE_ALL_BOARDS_LABEL}' },
+              commands: [{ tapOn: { id: 'profile-progress-filter' } }],
+            },
+          },
+          { extendedWaitUntil: { visible: '${SHOWCASE_ALL_BOARDS_LABEL}', timeout: 30000 } },
+        ]);
+        const following = steps.slice(index + 1);
+        const nextGesture = following.findIndex(
+          (step) => typeof step !== 'string' && ['tapOn', 'scrollUntilVisible', 'swipe'].some((key) => key in step),
+        );
+        expect(nextGesture).toBeGreaterThanOrEqual(0);
+      }
+    },
+  );
 });
 
 describe('native locale and board recordings', () => {

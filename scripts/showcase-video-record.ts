@@ -51,7 +51,6 @@ import sharp from 'sharp';
 import { formatBoardDisplayName } from '../packages/shared/board-config/src/board-name';
 import { resolveMediaBinary } from './lib/help-clips';
 import { guardSimulatorCommand } from './lib/ios-simulator-lease';
-import { isIosBundledLine, metroDevClientUrl } from './lib/metro-dev-server';
 import { DEFAULT_SCREENSHOT_FIXTURES_DIR } from './lib/screenshot-fixtures';
 import {
   SHOWCASE_STAGE_DIR,
@@ -92,6 +91,7 @@ import {
   FLOW_START_MARK,
   REFERENCE_CHANNEL_TOLERANCE,
   SHOWCASE_DEFAULT_BOARDS,
+  SHOWCASE_IOS_HOME_READY_TIMEOUT_MS,
   showcaseDevice,
   showcaseCalendarPattern,
   showcaseBoardHistoryPattern,
@@ -104,6 +104,7 @@ import {
   buildMarksFile,
   checkTake,
   countHomeReady,
+  showcaseIosLaunchArgs,
   waitForShowcaseHome,
   collapseCaptureNotificationShade,
   crewQueueFallbackPoint,
@@ -344,6 +345,7 @@ async function runMaestro(
     label: string;
     signalUrl: string;
     timeoutMs?: number;
+    retainDebug?: boolean;
     env?: Readonly<Record<string, string>>;
     child?: (process: ChildProcess) => void;
   }>,
@@ -397,7 +399,7 @@ async function runMaestro(
   if (pending.trim()) console.log(`${LOG}   [${options.label}] ${pending}`);
   // Maestro's debug output is a screenshot per step, ~10 MB a run: keep it only
   // for a failure, where it is the evidence.
-  if (code === 0) rmSync(debugDir, { recursive: true, force: true });
+  if (code === 0 && !options.retainDebug) rmSync(debugDir, { recursive: true, force: true });
   return code;
 }
 
@@ -425,25 +427,6 @@ function writeNavigationFlow(
   mkdirSync(FLOW_SCRATCH_DIR, { recursive: true });
   const file = resolve(FLOW_SCRATCH_DIR, `${name}.yaml`);
   writeFileSync(file, steps.join('\n'));
-  return file;
-}
-
-/** Confirm the dev-client link without launching again or navigating away. */
-function writeLauncherConfirmFlow(role: 'primary' | 'secondary'): string {
-  const file = resolve(FLOW_SCRATCH_DIR, `confirm-launcher-${role}.yaml`);
-  mkdirSync(FLOW_SCRATCH_DIR, { recursive: true });
-  writeFileSync(
-    file,
-    [
-      `appId: ${APP_ID}`,
-      '---',
-      '- tapOn:',
-      '    text: "Open"',
-      '    optional: true',
-      '- waitForAnimationToEnd',
-      '',
-    ].join('\n'),
-  );
   return file;
 }
 
@@ -680,8 +663,8 @@ async function relaunch(phone: Phone): Promise<LogWindow> {
   if (phone.platform === 'android') return relaunchAndroid(phone);
   const launchStarted = Date.now();
   const window = new LogWindow(phone.metroLog);
-  // Fresh installs can stay on the Expo launcher despite a baked Metro URL.
-  // Open our port explicitly when this launch never requests a bundle.
+  // Give Expo one explicit startup URL. A second openurl load can time out
+  // later and overlay its error on a successfully started app.
   const attempts = 3;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     simctl(['terminate', phone.device.udid, APP_ID]);
@@ -691,31 +674,17 @@ async function relaunch(phone: Phone): Promise<LogWindow> {
     window.pull();
     const readyBaseline = phone.signal.homeReadyCount(phone.role);
     const logBaseline = countHomeReady(window.text);
-    const bundleOffset = window.text.length;
     // SIMCTL_CHILD_TZ pins the app to UTC, like every screenshot capture.
-    const launch = simctl(['launch', phone.device.udid, APP_ID], { ...process.env, SIMCTL_CHILD_TZ: 'UTC' });
+    const launch = simctl(showcaseIosLaunchArgs(phone.device.udid, APP_ID, phone.metroPort), {
+      ...process.env,
+      SIMCTL_CHILD_TZ: 'UTC',
+    });
     if (launch.status !== 0) throw new Error(`simctl launch on ${phone.device.name} failed: ${launch.stderr.trim()}`);
     const reachedHome = await waitForShowcaseHome({
-      timeoutMs: HOME_READY_TIMEOUT_MS / attempts,
+      timeoutMs: SHOWCASE_IOS_HOME_READY_TIMEOUT_MS,
       hasReachedHome: () => {
         window.pull();
         return phone.signal.homeReadyCount(phone.role) > readyBaseline || countHomeReady(window.text) > logBaseline;
-      },
-      hasLoadedBundle: () => window.text.slice(bundleOffset).split('\n').some(isIosBundledLine),
-      recoverLauncher: async () => {
-        console.log(`${LOG} ${phone.role}: no bundle requested; opening dev-client URL on ${phone.metroPort}.`);
-        const opened = simctl(['openurl', phone.device.udid, metroDevClientUrl(phone.metroPort, APP_SCHEME)]);
-        if (opened.status !== 0)
-          throw new Error(`Opening dev-client on ${phone.device.name} failed: ${opened.stderr.trim()}`);
-        const confirmed = await runMaestro({
-          udid: phone.device.udid,
-          flowFile: writeLauncherConfirmFlow(phone.role),
-          label: `${phone.role}-confirm-launcher`,
-          signalUrl: phone.signal.url,
-          // The CI driver allows five minutes to start; this flow only taps Open.
-          timeoutMs: 6 * 60 * 1000,
-        });
-        if (confirmed !== 0) console.warn(`${LOG} ${phone.role}: launcher confirmation exited ${confirmed}.`);
       },
     });
     if (reachedHome) return window;
@@ -1338,6 +1307,76 @@ async function runFlow(context: RunContext, flow: string, label: string): Promis
   });
 }
 
+/** One observed tap, with no recording, source invalidation, or take provenance. */
+async function diagnoseProfileFilter(context: RunContext, take: ShowcaseTake): Promise<number> {
+  const { primary, signal } = context;
+  await relaunch(primary);
+  const primeStatus = await runMaestro({
+    udid: primary.device.udid,
+    flowFile: writeNavigationFlow('diagnose-profile-prime', take.primeLinks, take.primeSettleMs, primary.platform),
+    label: 'diagnose-profile-prime',
+    signalUrl: signal.url,
+    retainDebug: true,
+  });
+  if (primeStatus !== 0) return primeStatus;
+  const flowStatus = await runMaestro({
+    udid: primary.device.udid,
+    flowFile: showcaseFlowPathFor('diagnose-profile-filter.yaml', primary.platform),
+    label: 'diagnose-profile-filter',
+    signalUrl: signal.url,
+    retainDebug: true,
+    env: { SHOWCASE_ALL_BOARDS_LABEL: showcaseProgressLabels(context.args.locales[0]).allBoards },
+  });
+  // No UI interaction occurs between the tap/visibility check and this dump.
+  // The flow's screenshot captures the immediate state; CLI startup means the
+  // separate hierarchy is a later observation, with its own timestamp.
+  const hierarchyPath = resolve(LOG_DIR, 'profile-filter-hierarchy.txt');
+  const hierarchyErrors = resolve(LOG_DIR, 'profile-filter-hierarchy.stderr.log');
+  const hierarchyOutput = createWriteStream(hierarchyPath);
+  const hierarchyErrorOutput = createWriteStream(hierarchyErrors);
+  const hierarchyStartedAt = new Date().toISOString();
+  let hierarchyChild: ChildProcess | undefined;
+  let hierarchyStatus = 1;
+  try {
+    guardSimulatorCommand('maestro', ['--device', primary.device.udid], ROOT_DIR);
+    hierarchyStatus = await runScreenshotMaestro(
+      ['--device', primary.device.udid, 'hierarchy', '--no-reinstall-driver'],
+      {
+        env: toolEnv(),
+        cwd: LOG_DIR,
+        timeoutMs: 5 * 60 * 1000,
+        onStdout: (chunk) => {
+          hierarchyOutput.write(chunk);
+        },
+        onStderr: (chunk) => {
+          hierarchyErrorOutput.write(chunk);
+        },
+        onSpawn: (child) => {
+          hierarchyChild = child;
+          liveChildren.add(child);
+        },
+      },
+    );
+  } finally {
+    if (hierarchyChild) liveChildren.delete(hierarchyChild);
+    await Promise.all([
+      new Promise<void>((resolveClosed) => hierarchyOutput.end(resolveClosed)),
+      new Promise<void>((resolveClosed) => hierarchyErrorOutput.end(resolveClosed)),
+    ]);
+  }
+  deviceScreenshot(primary, resolve(LOG_DIR, 'profile-filter-after-hierarchy.png'));
+  const report = {
+    flowStatus,
+    hierarchyStatus,
+    hierarchyStartedAt,
+    completedAt: new Date().toISOString(),
+    hierarchyPath: relative(ROOT_DIR, hierarchyPath),
+  };
+  writeFileSync(resolve(LOG_DIR, 'profile-filter-diagnostic.json'), JSON.stringify(report, null, 2));
+  console.log(`${LOG} profile filter diagnostic: ${JSON.stringify(report)}`);
+  return flowStatus !== 0 ? flowStatus : hierarchyStatus;
+}
+
 async function recordTake(context: RunContext, take: ShowcaseTake): Promise<TakeResult> {
   const { primary, signal } = context;
   console.log(`\n${LOG} === ${take.id}: ${take.summary}`);
@@ -1793,6 +1832,10 @@ function printPlan(args: ShowcaseRecordArgs, takes: readonly ShowcaseTake[], env
   console.log(
     `${LOG} devices: ${primaryName}${takes.some((take) => take.secondary) ? `, ${showcaseDevice('secondary', process.env.SHOWCASE_SIMULATOR_NAME_SUFFIX).name} (iOS)` : ''}`,
   );
+  if (args.diagnoseProfileFilter) {
+    console.log(`${LOG} diagnostic: one profile filter tap; screenshots, hierarchy, and logs -> ${LOG_DIR}`);
+    return;
+  }
   for (const take of takes) {
     const flows = [
       ...take.deviceSetupFlows,
@@ -1873,6 +1916,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return 1;
   }
   const takes = wanted.filter((take) => !take.unavailable[args.backend]);
+  const diagnosticTake = args.diagnoseProfileFilter ? takes.find((take) => take.id === 'log') : null;
+  if (args.diagnoseProfileFilter && !diagnosticTake) {
+    console.error(`${LOG} Profile filter diagnostic requires an available log take on ${args.backend}.`);
+    return 1;
+  }
   for (const take of wanted) {
     const reason = take.unavailable[args.backend];
     if (reason) console.warn(`${LOG} skipping ${take.id} on ${args.backend}: ${reason}`);
@@ -1981,6 +2029,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       signal,
       session: { open: false, cleanupRegistered: false },
     };
+    if (diagnosticTake) {
+      const status = await diagnoseProfileFilter(context, diagnosticTake);
+      await teardown();
+      return status;
+    }
     for (const flow of new Set(takes.flatMap((take) => take.deviceSetupFlows))) {
       console.log(`${LOG} device setup: ${flow}`);
       const status = await runFlow(context, flow, 'device-setup');

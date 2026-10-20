@@ -41,13 +41,18 @@ export type { ShowcaseBackend } from './takes';
  * signal server here also accepts consent-independent home readiness pings.
  */
 
-/** Keep HTTP readiness callbacks running while escaping an idle iOS dev launcher. */
+/** Match mobile-ios-shots' home allowance, including cold auth/keychain startup. */
+export const SHOWCASE_IOS_HOME_READY_TIMEOUT_MS = 240_000;
+
+/** Expo consumes this argument before starting its last/default-server autoload. */
+export function showcaseIosLaunchArgs(udid: string, appId: string, metroPort: number): string[] {
+  return ['launch', udid, appId, '--initialUrl', `http://localhost:${metroPort}`];
+}
+
+/** Keep HTTP readiness callbacks running while waiting for this launch's home. */
 export async function waitForShowcaseHome(
   options: Readonly<{
     hasReachedHome: () => boolean;
-    hasLoadedBundle: () => boolean;
-    recoverLauncher: () => Promise<void>;
-    /** Polling budget; recovery may overrun it under its own startup deadline. */
     timeoutMs: number;
     now?: () => number;
     sleep?: (milliseconds: number) => Promise<void>;
@@ -57,17 +62,10 @@ export async function waitForShowcaseHome(
   const sleep =
     options.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
   const started = now();
-  let recovered = false;
   while (true) {
-    // Maestro startup can outlast the deadline. Honor home delivered during it.
     if (options.hasReachedHome()) return true;
     const elapsed = now() - started;
     if (elapsed >= options.timeoutMs) return false;
-    if (!recovered && elapsed >= 20_000 && !options.hasLoadedBundle()) {
-      recovered = true;
-      await options.recoverLauncher();
-      continue;
-    }
     await sleep(Math.min(1000, options.timeoutMs - elapsed));
   }
 }
@@ -179,6 +177,8 @@ export type ShowcaseRecordArgs = Readonly<{
   locales: readonly ShowcaseLocale[];
   /** Set the devices up, then hold them (and Metro) until Ctrl-C, recording nothing: for calibrating flows. */
   hold: boolean;
+  /** Inspect one profile filter tap without recording or writing take provenance. */
+  diagnoseProfileFilter: boolean;
   only: readonly ShowcaseTakeId[] | null;
   dryRun: boolean;
   keepRaw: boolean;
@@ -242,6 +242,7 @@ export function parseRecordArgs(argv: readonly string[]): ShowcaseRecordArgs {
   let localeFlagSeen = false;
   let kindFlagSeen = false;
   let hold = false;
+  let diagnoseProfileFilter = false;
   let dryRun = false;
   let keepRaw = false;
   let appPath: string | null = null;
@@ -295,6 +296,9 @@ export function parseRecordArgs(argv: readonly string[]): ShowcaseRecordArgs {
       case '--hold':
         hold = true;
         break;
+      case '--diagnose-profile-filter':
+        diagnoseProfileFilter = true;
+        break;
       case '--keep-raw':
         keepRaw = true;
         break;
@@ -334,12 +338,28 @@ export function parseRecordArgs(argv: readonly string[]): ShowcaseRecordArgs {
   }
   if (only && only.length === 0) throw new Error('--only needs at least one take');
   if ((hold || endSession) && locales.length > 1) throw new Error('--hold and --end-session require one locale');
+  if (diagnoseProfileFilter) {
+    if (
+      platform !== 'ios' ||
+      kind !== 'moonboard' ||
+      locales.length !== 1 ||
+      hold ||
+      endSession ||
+      (only && (only.length !== 1 || only[0] !== 'log'))
+    ) {
+      throw new Error(
+        '--diagnose-profile-filter requires iOS, --kind moonboard, one locale, and only the log interaction',
+      );
+    }
+    only = ['log'];
+  }
   return {
     platform,
     kind,
     nativeLocaleCapture: kindFlagSeen || localeFlagSeen,
     locales,
     hold,
+    diagnoseProfileFilter,
     only: only ? [...new Set(only)] : null,
     dryRun,
     keepRaw,
