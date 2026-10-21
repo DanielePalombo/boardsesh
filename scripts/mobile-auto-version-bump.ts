@@ -55,7 +55,7 @@ type AppResource = {
   attributes?: { bundleId?: string };
 };
 
-type AppStoreVersionResource = {
+export type AppStoreVersionResource = {
   type: 'appStoreVersions';
   id: string;
   attributes?: {
@@ -91,7 +91,7 @@ type IncludedResource = {
   attributes?: { version?: string };
 };
 
-type JsonApiCollectionResponse<T> = {
+export type JsonApiCollectionResponse<T> = {
   data: T[];
   included?: IncludedResource[];
   links?: { next?: string | null };
@@ -111,7 +111,7 @@ function base64UrlEncode(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url');
 }
 
-function createAppStoreConnectJwt(input: AppStoreJwtInput): string {
+export function createAppStoreConnectJwt(input: AppStoreJwtInput): string {
   const nowSeconds = input.nowSeconds ?? Math.floor(Date.now() / 1000);
   const expiresInSeconds = input.expiresInSeconds ?? 20 * 60;
   const header = { alg: 'ES256', kid: input.keyId, typ: 'JWT' };
@@ -129,7 +129,7 @@ function createAppStoreConnectJwt(input: AppStoreJwtInput): string {
   return `${signingInput}.${signature.toString('base64url')}`;
 }
 
-function decodePrivateKey(secret: string): string {
+export function decodePrivateKey(secret: string): string {
   const trimmed = secret.trim();
   return trimmed.includes('BEGIN PRIVATE KEY') ? trimmed : Buffer.from(trimmed, 'base64').toString('utf8');
 }
@@ -204,6 +204,8 @@ async function ascFetch<T>(path: string, token: string, params?: Record<string, 
   }
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
   });
   const body = await response.text();
   if (!response.ok) {
@@ -212,7 +214,7 @@ async function ascFetch<T>(path: string, token: string, params?: Record<string, 
   return JSON.parse(body) as T;
 }
 
-async function resolveAppId(token: string): Promise<string> {
+export async function resolveAppId(token: string): Promise<string> {
   const data = await ascFetch<JsonApiCollectionResponse<AppResource>>('/v1/apps', token, {
     'filter[bundleId]': BUNDLE_ID,
     'fields[apps]': 'bundleId',
@@ -271,11 +273,15 @@ export function mapAcceptedGoogleProductionReleases(releases: readonly GooglePro
   return [...acceptedByVersionCode.values()].sort((left, right) => left.buildNumber - right.buildNumber);
 }
 
-export async function getAcceptedVersions(token: string, appId: string): Promise<AcceptedBuild[]> {
+export async function getAppStoreVersions(
+  token: string,
+  appId: string,
+  states: readonly string[] = ACCEPTED_APP_STORE_STATES,
+): Promise<JsonApiCollectionResponse<AppStoreVersionResource>> {
   const endpointPath = `/v1/apps/${appId}/appStoreVersions`;
   let nextPage: string | undefined = endpointPath;
   let params: Record<string, string> | undefined = {
-    'filter[appVersionState]': ACCEPTED_APP_STORE_STATES.join(','),
+    'filter[appVersionState]': states.join(','),
     'filter[platform]': 'IOS',
     'fields[appStoreVersions]': 'versionString,appVersionState,build',
     // Pull the attached build inline so we learn its build number without a
@@ -306,7 +312,11 @@ export async function getAcceptedVersions(token: string, appId: string): Promise
     params = undefined;
   }
 
-  return mapAcceptedVersions(combined);
+  return combined;
+}
+
+export async function getAcceptedVersions(token: string, appId: string): Promise<AcceptedBuild[]> {
+  return mapAcceptedVersions(await getAppStoreVersions(token, appId));
 }
 
 function createGoogleServiceAccountJwt(
@@ -332,6 +342,8 @@ export async function createGoogleAccessToken(serviceAccount: GoogleServiceAccou
   const assertion = createGoogleServiceAccountJwt(serviceAccount);
   const response = await fetch(serviceAccount.token_uri, {
     method: 'POST',
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       assertion,
@@ -347,11 +359,17 @@ export async function createGoogleAccessToken(serviceAccount: GoogleServiceAccou
   return parsed.access_token;
 }
 
-async function getAcceptedGoogleProductionBuilds(serviceAccount: GoogleServiceAccount): Promise<AcceptedBuild[]> {
+export async function getAcceptedGoogleProductionBuilds(
+  serviceAccount: GoogleServiceAccount,
+): Promise<AcceptedBuild[]> {
   const accessToken = await createGoogleAccessToken(serviceAccount);
   const path = `/androidpublisher/v3/applications/${encodeURIComponent(ANDROID_PACKAGE_NAME)}/tracks/production/releases`;
   const url = new URL(path, GOOGLE_PLAY_API_BASE);
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
+  });
   const body = await response.text();
   if (!response.ok) throw new Error(`Google Play production releases → ${response.status}: ${body.slice(0, 500)}`);
   const parsed: unknown = JSON.parse(body);

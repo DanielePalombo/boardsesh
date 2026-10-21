@@ -27,7 +27,7 @@ const retiredAndroidPrereleaseName = ['Boardsesh', 'Next'].join(' ');
 const dispatchGate = `github.ref == 'refs/heads/main' || github.ref == 'refs/heads/${releaseBranch}'`;
 const releaseBranchExpression =
   "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}";
-const TRAIN_BASELINE_STEP = 'Materialize origin/main and the merge-base to compare against the train';
+const TRAIN_BASELINE_STEP = 'Resolve active release train against pinned origin/main';
 const TRAIN_GUARD_STEP = 'Skip platforms whose runtimeVersion the train does not own';
 
 describe('native release workflow contracts', () => {
@@ -36,6 +36,25 @@ describe('native release workflow contracts', () => {
   const draft = workflow('mobile-store-draft.yml');
   const otaCheck = workflow('mobile-ota-check.yml');
   const productionOta = workflow('mobile-ota-production.yml');
+
+  it('keeps train notification failures separate from successful OTA publications', () => {
+    const jobs = (
+      parse(productionOta) as {
+        jobs: Record<
+          string,
+          {
+            'continue-on-error'?: boolean;
+            steps: Array<{ name?: string; if?: string; run?: string }>;
+          }
+        >;
+      }
+    ).jobs;
+    expect(jobs.publish['continue-on-error']).toBeUndefined();
+    expect(jobs['notify-train-deployment']['continue-on-error']).toBe(true);
+    expect(
+      jobs['notify-train-deployment'].steps.find((step) => step.name === 'Surface train notification failure'),
+    ).toMatchObject({ if: 'failure()', run: expect.stringContaining('::warning::') });
+  });
 
   it.each([
     ['ios-testflight-rn.yml', ios],
@@ -116,39 +135,33 @@ describe('native release workflow contracts', () => {
     expect(guard, 'the production OTA workflow must carry the train fingerprint guard').toBeDefined();
     expect(String(guard?.if ?? '')).toContain(`github.ref == 'refs/heads/${releaseBranch}'`);
 
-    // Fail closed: both platforms are written un-publishable BEFORE the compare,
-    // so a resolve that errors or flakes to `unknown` cannot publish.
+    // Defaults precede all fingerprint/store evidence. main's native state is
+    // not a proxy for what the public stores are currently offering.
     const run = String(guard?.run ?? '');
     expect(run).toContain("echo 'publish_ios=false'");
     expect(run).toContain("echo 'publish_android=false'");
-    expect(run.indexOf('publish_ios=false')).toBeLessThan(run.indexOf('check:mobile-ota-compat'));
+    expect(run.indexOf('publish_ios=false')).toBeLessThan(run.indexOf('runtimeversion:resolve'));
     expect(run.indexOf('publish_ios=false')).toBeLessThan(run.indexOf('TRAIN_SUPERSEDED'));
-    // Both baselines feed the compare.
-    expect(run).toContain('--base-dir "$RUNNER_TEMP/main-baseline"');
-    expect(run).toContain('--base-dir "$MERGE_BASE_DIR"');
+    expect(run).toContain('scripts/mobile-release-train-policy.ts');
     expect(guard?.env).toMatchObject({
       TRAIN_SUPERSEDED: '${{ steps.train_baselines.outputs.superseded }}',
-      TRAIN_MERGE_BASE: '${{ steps.train_baselines.outputs.merge_base }}',
-      MERGE_BASE_DIR: '${{ steps.train_baselines.outputs.merge_base_dir }}',
+      TRAIN_ACTIVE: '${{ steps.train_baselines.outputs.train_active }}',
+      LIVE_STORE_RUNTIMES: '${{ needs.live-store-runtimes.outputs.live_runtimes }}',
     });
-
-    // The baselines are materialised from origin/main and the merge-base, and a
-    // superseded push run stops before it pays for either install.
     const baselineIndex = steps.findIndex((step) => step.name === TRAIN_BASELINE_STEP);
     const baseline = steps[baselineIndex];
-    expect(baseline, 'the guard needs origin/main and merge-base worktrees').toBeDefined();
     expect(baseline?.id).toBe('train_baselines');
     expect(baselineIndex).toBeLessThan(steps.findIndex((step) => step.name === TRAIN_GUARD_STEP));
-    expect(String(baseline?.if ?? '')).toContain(`github.ref == 'refs/heads/${releaseBranch}'`);
     const baselineRun = String(baseline?.run ?? '');
-    expect(baselineRun).toContain('git merge-base origin/main HEAD');
-    expect(baselineRun).toContain('git worktree add "$RUNNER_TEMP/main-baseline" origin/main');
-    expect(baselineRun).toContain('git worktree add --detach "$RUNNER_TEMP/merge-base-baseline" "$merge_base"');
-    const supersededCheck = baselineRun.indexOf(
+    expect(baselineRun).toContain('git fetch origin main release/next');
+    expect(baselineRun).toContain('--main-sha "$main_sha" --train-sha "$train_sha"');
+    expect(baselineRun).not.toContain('git worktree');
+    expect(baselineRun).toContain(
       'scripts/push-run-superseded.ts --workflow .github/workflows/mobile-ota-production.yml',
     );
-    expect(supersededCheck).toBeGreaterThan(-1);
-    expect(supersededCheck).toBeLessThan(baselineRun.indexOf('vp install'));
+    expect(parse(productionOta).on.push.paths).toBeUndefined();
+    const liveJob = parse(productionOta).jobs['live-store-runtimes'];
+    expect(liveJob.uses).toBe('./.github/workflows/mobile-live-store-runtimes.yml');
 
     // Both publishes consume the verdict.
     for (const [stepName, output] of [
@@ -1192,137 +1205,109 @@ describe('Play review pre-check before the Android build', () => {
 
 // Each case spawns bash, git and node stubs; a busy full-suite run can take seconds.
 describe('train OTA guard, executed', { timeout: 30_000 }, () => {
-  const HEAD = '1'.repeat(40);
-  const MERGE_BASE = '2'.repeat(40);
-  const MAIN = '3'.repeat(40);
-  const RUNNER_TEMP = '/runner-temp';
-
-  // `vp run check:mobile-ota-compat -- --base-dir <dir> ...`: the verdicts against
-  // main's worktree or against the merge-base's, from the stub env.
-  const COMPAT_VP_STUB = `#!/usr/bin/env bash
-printf 'vp %s\\n' "$*" >> "$STUB_CALL_LOG"
-base_dir=''
-previous=''
-for arg in "$@"; do
-  if [ "$previous" = --base-dir ]; then base_dir="$arg"; fi
-  previous="$arg"
-done
-if [ "$base_dir" = "$RUNNER_TEMP/main-baseline" ]; then printf '%s\\n' "$STUB_VS_MAIN"; else printf '%s\\n' "$STUB_VS_MERGE_BASE"; fi
-`;
-
-  const verdicts = (iosVerdict: string, androidVerdict: string) =>
-    [
-      `[mobile-ota-compat] iOS: ${iosVerdict} (pr=aaaaaaaaaaaa main=bbbbbbbbbbbb)`,
-      `[mobile-ota-compat] Android: ${androidVerdict} (pr=aaaaaaaaaaaa main=bbbbbbbbbbbb)`,
-      '[mobile-ota-compat] overall: native-change-required',
-    ].join('\n');
-  const NATIVE = 'native-change-required';
-  const COMPATIBLE = 'ota-compatible';
-
-  type GuardScenario = {
-    superseded?: string;
-    head?: string;
-    mergeBase?: string;
-    main?: string;
-    mergeBaseDir?: string;
-    platform?: string;
-    vsMain?: string;
-    vsMergeBase?: string;
-  };
-
-  function runGuard(scenario: GuardScenario): ScriptRun {
+  const IOS = 'a'.repeat(40);
+  const ANDROID = 'b'.repeat(40);
+  const TRAIN = 'c'.repeat(40);
+  const publicRuntime = (platform: string, fingerprint: string) => ({
+    version: '2.6.0',
+    buildNumber: 41,
+    runtimeVersion: fingerprint,
+    buildTag: `build-${platform}-v2.6.0-41-${fingerprint.slice(0, 12)}`,
+    commit: 'd'.repeat(40),
+    protectedRuntimeVersions: [fingerprint],
+  });
+  const live = () =>
+    JSON.stringify({
+      schemaVersion: 1,
+      checkedAt: new Date().toISOString(),
+      ios: publicRuntime('ios', IOS),
+      android: publicRuntime('android', ANDROID),
+    });
+  function runGuard(
+    scenario: {
+      ios?: string;
+      android?: string;
+      active?: string;
+      superseded?: string;
+      platform?: string;
+      evidence?: string;
+    } = {},
+  ): ScriptRun {
     const step = workflowStep(
       workflow('mobile-ota-production.yml'),
       'publish',
       (candidate) => candidate.name === TRAIN_GUARD_STEP,
     );
     return runStepScript(String(step.run), {
-      stubs: { vp: COMPAT_VP_STUB },
+      stubs: {
+        git: '#!/usr/bin/env bash\nexit 0\n',
+        vp: `#!/usr/bin/env bash
+printf 'vp %s\\n' "$*" >> "$STUB_CALL_LOG"
+if [[ "$*" == *'--platform ios'* ]]; then runtime="$STUB_IOS"; else runtime="$STUB_ANDROID"; fi
+printf '{"runtimeVersion":"%s"}\\n' "$runtime"
+`,
+      },
+      files: {
+        'packages/mobile/.env': '',
+        ...Object.fromEntries(
+          [
+            'scripts/mobile-release-train-policy.ts',
+            'scripts/lib/mobile-release-policy.ts',
+            'scripts/lib/release-tags.ts',
+          ].map((path) => [path, readFileSync(path, 'utf8')]),
+        ),
+      },
       env: {
-        RUNNER_TEMP,
-        GITHUB_SHA: HEAD,
-        GOOGLE_MAPS_API_KEY: '',
         INPUT_PLATFORM: scenario.platform ?? 'all',
         TRAIN_SUPERSEDED: scenario.superseded ?? 'false',
-        TRAIN_HEAD: scenario.head ?? HEAD,
-        TRAIN_MERGE_BASE: scenario.mergeBase ?? MERGE_BASE,
-        TRAIN_MAIN: scenario.main ?? MAIN,
-        MERGE_BASE_DIR: scenario.mergeBaseDir ?? `${RUNNER_TEMP}/merge-base-baseline`,
-        STUB_VS_MAIN: scenario.vsMain ?? verdicts(NATIVE, NATIVE),
-        STUB_VS_MERGE_BASE: scenario.vsMergeBase ?? verdicts(NATIVE, NATIVE),
+        TRAIN_ACTIVE: scenario.active ?? 'true',
+        TRAIN_MAIN_SHA: 'd'.repeat(40),
+        LIVE_STORE_RUNTIMES: scenario.evidence ?? live(),
+        ANDROID_MAPS_KEY: 'test-maps-key',
+        STUB_IOS: scenario.ios ?? TRAIN,
+        STUB_ANDROID: scenario.android ?? TRAIN,
       },
     });
   }
 
-  it('publishes a platform whose fingerprint differs from both main and the merge-base', () => {
-    const run = runGuard({});
+  it('publishes train runtimes without comparing against main or waiting for a soak', () => {
+    const run = runGuard();
     expect(run.status).toBe(0);
     expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'true' });
-    expect(run.calls).toHaveLength(2);
-    expect(run.calls[0]).toContain(`--base-dir ${RUNNER_TEMP}/main-baseline --platform all`);
-    expect(run.calls[1]).toContain(
-      `--base-dir ${RUNNER_TEMP}/merge-base-baseline --base-branch merge-base --platform all`,
-    );
+    expect(run.calls).toHaveLength(4);
   });
 
-  // The race this guard exists for: main has moved to a new native change, and a
-  // late run on an older train commit still carries the store fleet's
-  // fingerprint. It differs from main, but not from its merge-base.
-  it('refuses a train commit whose fingerprint is still its merge-base’s, even though main moved', () => {
-    const run = runGuard({ vsMergeBase: verdicts(COMPATIBLE, COMPATIBLE) });
-    expect(run.status).toBe(0);
-    expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
-    expect(run.stdout).toContain('equals its merge-base with main');
+  it('skips each public runtime independently even if main has moved to new native code', () => {
+    expect(runGuard({ ios: IOS }).outputs).toMatchObject({ publish_ios: 'false', publish_android: 'true' });
+    expect(runGuard({ android: ANDROID }).outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false' });
+    expect(runGuard({ ios: IOS, android: ANDROID }).outputs).toMatchObject({
+      publish_ios: 'false',
+      publish_android: 'false',
+    });
   });
 
-  it('decides each platform on its own', () => {
-    const run = runGuard({ vsMergeBase: verdicts(NATIVE, COMPATIBLE) });
-    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false' });
-  });
-
-  it('refuses a runtimeVersion main still owns', () => {
-    for (const vsMain of [verdicts(COMPATIBLE, COMPATIBLE), verdicts('unknown', 'unknown')]) {
-      const run = runGuard({ vsMain });
-      expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
-    }
-  });
-
-  it('treats an unknown merge-base verdict as not owned', () => {
-    const run = runGuard({ vsMergeBase: verdicts('unknown', 'unknown') });
-    expect(run.outputs).toMatchObject({ publish_ios: 'false', publish_android: 'false' });
-  });
-
-  it('publishes nothing, without resolving, from a superseded or undecided run', () => {
-    for (const superseded of ['true', '']) {
-      const run = runGuard({ superseded });
+  it('publishes nothing from superseded, undecided, or inactive train runs', () => {
+    for (const scenario of [{ superseded: 'true' }, { superseded: '' }, { active: 'false' }, { active: '' }]) {
+      const run = runGuard(scenario);
       expect(run.status).toBe(0);
       expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
       expect(run.calls).toEqual([]);
     }
   });
 
-  it('publishes nothing when main already contains the train', () => {
-    const run = runGuard({ mergeBase: HEAD, mergeBaseDir: '' });
-    expect(run.status).toBe(0);
-    expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
-    expect(run.calls).toEqual([]);
+  it('fails closed on unavailable store evidence or invalid resolved fingerprints', () => {
+    for (const scenario of [{ evidence: 'null' }, { evidence: '{}' }, { ios: 'unknown' }, { ios: 'a'.repeat(12) }]) {
+      const run = runGuard(scenario);
+      expect(run.status).not.toBe(0);
+      expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
+    }
   });
 
-  it('compares once when the merge-base is main itself', () => {
-    const run = runGuard({ mergeBase: MAIN, mergeBaseDir: `${RUNNER_TEMP}/main-baseline`, vsMergeBase: 'never read' });
-    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'true' });
-    expect(run.calls).toHaveLength(1);
-  });
-
-  it('fails closed when the merge-base baseline is missing', () => {
-    const run = runGuard({ mergeBaseDir: '' });
-    expect(run.status).toBe(1);
-    expect(run.outputs).toEqual({ publish_ios: 'false', publish_android: 'false' });
-  });
-
-  it('answers only the platform a republish asked about', () => {
+  it('resolves only the platform a native republish asked for', () => {
     const run = runGuard({ platform: 'ios' });
-    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false' });
-    for (const call of run.calls) expect(call).toContain('--platform ios');
+    expect(run.status).toBe(0);
+    expect(run.outputs).toMatchObject({ publish_ios: 'true', publish_android: 'false', ios_runtime_version: TRAIN });
+    expect(run.calls).toHaveLength(2);
+    expect(run.calls[0]).toContain('--platform ios');
   });
 });

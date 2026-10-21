@@ -49,15 +49,19 @@ describe('superseded push runs', () => {
       triggerPathspecs("on:\n  push:\n    paths:\n      - 'packages/mobile/**'\n      - 'package.json'\n"),
     ).toEqual([':(glob)packages/mobile/**', ':(glob)package.json']);
     expect(() => triggerPathspecs("on:\n  push:\n    paths:\n      - '!docs/**'\n")).toThrow('negated');
-    expect(() => triggerPathspecs('on:\n  push:\n    branches: [main]\n')).toThrow('no on.push.paths');
+    expect(() => triggerPathspecs('on:\n  workflow_dispatch:\n')).toThrow('no on.push trigger');
+    expect(() => triggerPathspecs('on:\n  push:\n    paths-ignore: [docs/**]\n')).toThrow('paths-ignore');
   });
 
-  it.each(['ios-testflight-rn.yml', 'android-apk-rn.yml', 'mobile-ota-production.yml'])(
-    'understands the push paths of %s',
-    (name) => {
-      const pathspecs = triggerPathspecs(readFileSync(`.github/workflows/${name}`, 'utf8'));
-      expect(pathspecs).toContain(':(glob)packages/mobile/**');
-      expect(pathspecs).toContain(`:(glob).github/workflows/${name}`);
-    },
-  );
+  it('compares every file for an unfiltered push, including every train OTA push', () => {
+    expect(triggerPathspecs('on:\n  push:\n    branches: [main]\n')).toEqual([]);
+    expect(triggerPathspecs('on:\n  push:\n')).toEqual([]);
+    expect(triggerPathspecs(readFileSync('.github/workflows/mobile-ota-production.yml', 'utf8'))).toEqual([]);
+  });
+
+  it.each(['ios-testflight-rn.yml', 'android-apk-rn.yml'])('understands the push paths of %s', (name) => {
+    const pathspecs = triggerPathspecs(readFileSync(`.github/workflows/${name}`, 'utf8'));
+    expect(pathspecs).toContain(':(glob)packages/mobile/**');
+    expect(pathspecs).toContain(`:(glob).github/workflows/${name}`);
+  });
 });

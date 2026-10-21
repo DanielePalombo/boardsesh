@@ -1,18 +1,9 @@
 name: Mobile OTA Production (Self-Hosted)
 
-# Publishes a production OTA (JS bundle + manifest) to the self-hosted
-# expo-open-ota server on release/next pushes and manual dispatch. Main pushes
-# call it in staging mode from production-deploy.yml. main serves the store fleet;
-# release/next serves the testers on the train's TestFlight / Play-internal
-# binary, and only once the train carries a native change of its own: its
-# fingerprint differs from main's and from its merge-base with main (the train
-# guard below). Changelog push-back, the Sentry release, the health probe
-# and the Discord notification stay main-only. Safe to auto-run because runtimeVersion uses the `fingerprint`
-# policy: the update only reaches a binary whose native fingerprint matches, so a
-# native change yields a new fingerprint and the OTA simply isn't delivered to old
-# installs (they keep their embedded bundle until a store build with the new
-# fingerprint ships). The matching native builds run in parallel via
-# ios-testflight-rn.yml / android-apk-rn.yml.
+# Publishes train JS immediately when release/next has a different marketing
+# version from main. Public store builds, resolved from the stores' exact build
+# numbers and immutable tags, own their runtimes: train JS never publishes there.
+# Main's staged candidates soak only on the current public store runtimes.
 #
 # Fingerprint identity is necessary but NOT sufficient: expo-updates launches
 # whichever update has the newest commitTime, and a binary stamps its embedded
@@ -38,24 +29,6 @@ on:
     # publish is guarded so it can never take over the store fleet's runtimeVersion — see the
     # "Skip platforms whose runtimeVersion the train does not own" step below.
     branches: [release/next]
-    # Matches the native build workflows' trigger set (ios-testflight-rn.yml /
-    # android-apk-rn.yml) so a native build and its OTA fire on the same changes.
-    # packages/shared/** already covers queue / board-config / ble-protocol, which
-    # live under it.
-    paths:
-      - 'packages/mobile/**'
-      - 'packages/shared/**'
-      - 'packages/board-constants/**'
-      - 'packages/shared-schema/**'
-      - 'package.json' # root patchedDependencies and linker inputs affect the mobile native graph
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'patches/**' # pnpm patches to mobile deps live in root patches/, not under packages/mobile/**
-      - 'scripts/mobile-publish.ts'
-      - 'scripts/lib/mobile-publish-retry.ts'
-      - 'scripts/lib/ota-branch-probe.ts'
-      - 'scripts/lib/eoas.ts'
-      - '.github/workflows/mobile-ota-production.yml'
   workflow_dispatch:
     inputs:
       message:
@@ -147,6 +120,11 @@ env:
   EXPO_PUBLIC_USE_RN_FETCH: '1'
 
 jobs:
+  live-store-runtimes:
+    if: github.ref == 'refs/heads/release/next'
+    uses: ./.github/workflows/mobile-live-store-runtimes.yml
+    secrets: inherit
+
   # Resolve native inputs with Production's build environment, without admin
   # credentials. The next job only consumes validated fingerprints and built-ins.
   resolve-staging-runtimes:
@@ -255,11 +233,18 @@ jobs:
           echo "early_baseline=$(jq -c . early-baseline.json)" >> "$GITHUB_OUTPUT"
 
   publish:
-    needs: [resolve-staging-runtimes, capture-staging-baselines]
+    needs: [resolve-staging-runtimes, capture-staging-baselines, live-store-runtimes]
     # Skipped staging prerequisites must not suppress direct/train/manual runs.
     if: >-
       always() && !cancelled()
+      && (github.ref != 'refs/heads/release/next' || needs.live-store-runtimes.result == 'success')
       && (!inputs.stage_for_production_deploy || (needs.resolve-staging-runtimes.result == 'success' && needs.capture-staging-baselines.result == 'success'))
+    outputs:
+      ios_outcome: ${{ steps.publish_ios.outcome }}
+      android_outcome: ${{ steps.publish_android.outcome }}
+      ios_runtime: ${{ steps.train_guard.outputs.ios_runtime_version }}
+      android_runtime: ${{ steps.train_guard.outputs.android_runtime_version }}
+      train_version: ${{ steps.train_baselines.outputs.train_version }}
     # Only this publisher needs dispatch permission. No admin login is exposed.
     permissions:
       contents: read
@@ -380,137 +365,81 @@ jobs:
           EXPO_PUBLIC_USE_RN_FETCH=$EXPO_PUBLIC_USE_RN_FETCH
           EOF
 
-      # ── Train guard (release/next only) ──────────────────────────────────────
-      # release/next publishes its own production OTA so the testers running the
-      # train's TestFlight / Play-internal binary get JS as quickly as main's fleet
-      # does. But xprem serves whichever update has the newest commitTime FOR A
-      # GIVEN runtimeVersion, so an OTA published here onto a runtimeVersion the
-      # store fleet runs would be handed to the entire fleet — main's JS silently
-      # replaced by the train's, past main's staging, promotion and unlock canary.
-      # The train therefore publishes a platform only when it carries a native
-      # change OF ITS OWN: its fingerprint differs from origin/main's AND from the
-      # merge-base of origin/main and the train. Until then the train's testers sit
-      # on a runtimeVersion main's publisher already serves.
-      #
-      # "Differs from main" alone is not enough. release-train-sync.yml moves the
-      # train after every main merge and these runs queue (queue: max), so a late
-      # run can still be on an older train commit whose fingerprint is the store
-      # fleet's after main has moved to a new native change. That commit differs
-      # from main, but it matches its merge-base, so it is refused. A push run the
-      # branch has moved past (scripts/push-run-superseded.ts) publishes nothing
-      # either: the run for the newer commit decides.
-      #
-      # Each baseline is a sibling worktree with its OWN install (the same shape
-      # mobile-ota-check.yml uses), carrying a byte-identical copy of the .env
-      # written above — the .env is hashed into the fingerprint, so anything else
-      # would make every comparison read "different".
-      - name: Materialize origin/main and the merge-base to compare against the train
+      # Static version reads pin both branch heads without running their config.
+      # Preserve the superseded-push guard before resolving native fingerprints.
+      - name: Resolve active release train against pinned origin/main
         id: train_baselines
         if: steps.gate.outputs.configured == 'true' && github.ref == 'refs/heads/release/next'
         run: |
           set -euo pipefail
-          # Before any install: a superseded run will not publish, so it needs no baseline.
+          echo 'superseded=true' >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             superseded="$(node --experimental-strip-types scripts/push-run-superseded.ts --workflow .github/workflows/mobile-ota-production.yml)"
-            echo "superseded=$superseded" >> "$GITHUB_OUTPUT"
-            if [ "$superseded" = true ]; then
-              echo "::notice::release/next has moved past $GITHUB_SHA; the run for the newer commit decides what the train publishes."
+            if [ "$superseded" != false ]; then
+              echo "::notice::release/next advanced; the newer run decides what to publish."
               exit 0
             fi
-          else
-            echo 'superseded=false' >> "$GITHUB_OUTPUT"
           fi
-          # No --depth: the job checks out with fetch-depth: 0, and a shallow
-          # fetch on top of a complete clone only confuses later history reads.
-          git fetch origin main
-          head_sha="$(git rev-parse HEAD)"
+          git fetch origin main release/next
           main_sha="$(git rev-parse origin/main)"
-          merge_base="$(git merge-base origin/main HEAD)"
-          {
-            echo "head=$head_sha"
-            echo "main=$main_sha"
-            echo "merge_base=$merge_base"
-          } >> "$GITHUB_OUTPUT"
-          if [ "$merge_base" = "$head_sha" ]; then
-            # main already contains this commit: the train has nothing of its own.
+          train_sha="$(git rev-parse origin/release/next)"
+          if [ "$(git rev-parse HEAD)" != "$train_sha" ]; then
+            echo '::notice::The current train moved past this source commit.'
             exit 0
           fi
-          git worktree add "$RUNNER_TEMP/main-baseline" origin/main
-          (cd "$RUNNER_TEMP/main-baseline" && vp install --frozen-lockfile)
-          cp packages/mobile/.env "$RUNNER_TEMP/main-baseline/packages/mobile/.env"
-          if [ "$merge_base" = "$main_sha" ]; then
-            # The train already contains main's tip (main + the version bump, or a
-            # fresh sync merge), so the merge-base IS the main baseline.
-            echo "merge_base_dir=$RUNNER_TEMP/main-baseline" >> "$GITHUB_OUTPUT"
-          else
-            git worktree add --detach "$RUNNER_TEMP/merge-base-baseline" "$merge_base"
-            (cd "$RUNNER_TEMP/merge-base-baseline" && vp install --frozen-lockfile)
-            cp packages/mobile/.env "$RUNNER_TEMP/merge-base-baseline/packages/mobile/.env"
-            echo "merge_base_dir=$RUNNER_TEMP/merge-base-baseline" >> "$GITHUB_OUTPUT"
-          fi
+          node --experimental-strip-types scripts/mobile-release-train-policy.ts \
+            --main-sha "$main_sha" --train-sha "$train_sha" >> "$GITHUB_OUTPUT"
+          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
+          echo "train_sha=$train_sha" >> "$GITHUB_OUTPUT"
+          echo 'superseded=false' >> "$GITHUB_OUTPUT"
 
-      # Resolves the trees per platform under the same per-platform env the publish
-      # steps use (iOS without GOOGLE_MAPS_API_KEY, Android with it — the key enters
-      # the resolved config and moves the hash). Fails CLOSED: the two `false`s are
-      # written first, so a superseded run, a resolve that errors or flakes to
-      # `unknown`, or a step that dies mid-way leaves both platforms un-publishable
-      # rather than letting the train publish onto a runtimeVersion it does not own.
+      # The live stores are the source of truth. main can already carry native
+      # code awaiting review while production still runs the previous runtime.
       - name: Skip platforms whose runtimeVersion the train does not own
         id: train_guard
         if: steps.gate.outputs.configured == 'true' && github.ref == 'refs/heads/release/next'
         env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          ANDROID_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           TRAIN_SUPERSEDED: ${{ steps.train_baselines.outputs.superseded }}
-          TRAIN_HEAD: ${{ steps.train_baselines.outputs.head }}
-          TRAIN_MERGE_BASE: ${{ steps.train_baselines.outputs.merge_base }}
-          TRAIN_MAIN: ${{ steps.train_baselines.outputs.main }}
-          MERGE_BASE_DIR: ${{ steps.train_baselines.outputs.merge_base_dir }}
+          TRAIN_ACTIVE: ${{ steps.train_baselines.outputs.train_active }}
+          TRAIN_MAIN_SHA: ${{ steps.train_baselines.outputs.main_sha }}
+          LIVE_STORE_RUNTIMES: ${{ needs.live-store-runtimes.outputs.live_runtimes }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           {
             echo 'publish_ios=false'
             echo 'publish_android=false'
           } >> "$GITHUB_OUTPUT"
-          set -e
-          # Only an explicit "not superseded" goes on; an empty value means the
-          # baseline step never decided.
-          if [ "$TRAIN_SUPERSEDED" != false ]; then
-            echo "::notice::This train run publishes nothing: release/next has moved past $GITHUB_SHA."
+          if [ "$TRAIN_SUPERSEDED" != false ] || [ "$TRAIN_ACTIVE" != true ]; then
+            echo '::notice::No active current release train; publishing nothing.'
             exit 0
           fi
-          if [ -n "$TRAIN_HEAD" ] && [ "$TRAIN_MERGE_BASE" = "$TRAIN_HEAD" ]; then
-            echo "::notice::main already contains release/next at $TRAIN_HEAD, so the train carries no native change of its own and publishes nothing; main's publisher serves its testers."
-            exit 0
-          fi
-          if [ -z "$MERGE_BASE_DIR" ]; then
-            echo '::error::The merge-base baseline was not materialized; publishing nothing.'
-            exit 1
-          fi
-          # A resolve costs ~30s per tree per platform, and a single-platform
-          # republish has no use for the other one's verdict.
-          verdicts_vs_main="$(vp run check:mobile-ota-compat -- --base-dir "$RUNNER_TEMP/main-baseline" --platform "$INPUT_PLATFORM")"
-          printf '%s\n' "$verdicts_vs_main"
-          if [ "$TRAIN_MERGE_BASE" = "$TRAIN_MAIN" ]; then
-            verdicts_vs_merge_base="$verdicts_vs_main"
-          else
-            verdicts_vs_merge_base="$(vp run check:mobile-ota-compat -- --base-dir "$MERGE_BASE_DIR" --base-branch merge-base --platform "$INPUT_PLATFORM")"
-            printf '%s\n' "$verdicts_vs_merge_base"
-          fi
-          for pair in 'iOS:ios' 'Android:android'; do
-            label="${pair%%:*}"
-            key="${pair##*:}"
-            # A platform this run did not ask about produces no verdict line, so
-            # it simply keeps the fail-closed `false` and its publish step is
-            # already gated off by INPUT_PLATFORM anyway.
-            if [ "$INPUT_PLATFORM" != all ] && [ "$INPUT_PLATFORM" != "$key" ]; then continue; fi
-            verdict_line="^\[mobile-ota-compat\] ${label}: native-change-required"
-            if ! printf '%s\n' "$verdicts_vs_main" | grep -q "$verdict_line"; then
-              echo "::warning::main still owns the ${label} runtimeVersion, so the ${label} OTA is skipped for this train push — publishing it would hand the train's JS to the whole store fleet. The train starts publishing once a native change of its own moves its fingerprint."
-            elif ! printf '%s\n' "$verdicts_vs_merge_base" | grep -q "$verdict_line"; then
-              echo "::warning::The train's ${label} fingerprint equals its merge-base with main ($TRAIN_MERGE_BASE): main has moved to a native change, but the train carries none of its own, so its runtimeVersion is still the store fleet's. Skipping the ${label} OTA; publishing would hand train JS to the fleet past main's staging."
+          case "$INPUT_PLATFORM" in
+            ios|android|all) ;;
+            *) echo '::error::Unknown publish platform.'; exit 1 ;;
+          esac
+          resolve_train_runtime() {
+            if [ "$1" = ios ]; then
+              (cd packages/mobile && env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios | jq -r '.runtimeVersion // empty')
             else
-              echo "publish_${key}=true" >> "$GITHUB_OUTPUT"
+              (cd packages/mobile && GOOGLE_MAPS_API_KEY="$ANDROID_MAPS_KEY" vp exec expo-updates runtimeversion:resolve --platform android | jq -r '.runtimeVersion // empty')
             fi
+          }
+          for platform in ios android; do
+            if [ "$INPUT_PLATFORM" != all ] && [ "$INPUT_PLATFORM" != "$platform" ]; then continue; fi
+            runtime="$(resolve_train_runtime "$platform")"
+            if ! printf '%s' "$runtime" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "::error::No full $platform train fingerprint; publishing nothing."
+              exit 1
+            fi
+            confirmed="$(resolve_train_runtime "$platform")"
+            if [ "$runtime" != "$confirmed" ]; then
+              echo "::error::Unstable $platform train fingerprint; publishing nothing."
+              exit 1
+            fi
+            node --experimental-strip-types scripts/mobile-release-train-policy.ts \
+              --platform "$platform" --runtime "$runtime" --main-sha "$TRAIN_MAIN_SHA" >> "$GITHUB_OUTPUT"
+            echo "${platform}_runtime_version=$runtime" >> "$GITHUB_OUTPUT"
           done
 
       # Only for a republish dispatched by a native build. That build shipped a
@@ -571,6 +500,8 @@ jobs:
           ANDROID_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           TRAIN_PUBLISH_IOS: ${{ steps.train_guard.outputs.publish_ios }}
           TRAIN_PUBLISH_ANDROID: ${{ steps.train_guard.outputs.publish_android }}
+          TRAIN_IOS_RUNTIME: ${{ steps.train_guard.outputs.ios_runtime_version }}
+          TRAIN_ANDROID_RUNTIME: ${{ steps.train_guard.outputs.android_runtime_version }}
         run: |
           set -euo pipefail
           case "$INPUT_PLATFORM" in
@@ -588,6 +519,12 @@ jobs:
             fi
             if ! printf '%s' "$runtime" | grep -Eq '^[0-9a-f]{40}$'; then
               echo "::error::Could not resolve the full $platform runtime before unlocking."
+              exit 1
+            fi
+            expected_train_runtime="$TRAIN_IOS_RUNTIME"
+            if [ "$platform" = android ]; then expected_train_runtime="$TRAIN_ANDROID_RUNTIME"; fi
+            if [ -n "$expected_train_runtime" ] && [ "$runtime" != "$expected_train_runtime" ]; then
+              echo '::error::Train runtime changed after authorization; refusing direct publish.'
               exit 1
             fi
             echo "${platform}_runtime_version=$runtime" >> "$GITHUB_OUTPUT"
@@ -735,9 +672,13 @@ jobs:
           # app-scoped EOO_TOKEN. The production channel→branch mapping is a one-time
           # dashboard step, so no admin creds are needed here.
           EOO_TOKEN: ${{ secrets.EOO_TOKEN }}
-        # No EXPO_UPDATES_FINGERPRINT_OVERRIDE here: the publish resolves the CURRENT
-        # commit's fingerprint (app.config's `fingerprint` policy) and serves the JS
-        # under it. That matches the shipped binary — which embeds the same Linux gate
+          OTA_EXPECT_RUNTIME_VERSION: ${{ steps.train_guard.outputs.ios_runtime_version }}
+          OTA_EXPECT_MAIN_SHA: ${{ steps.train_baselines.outputs.main_sha }}
+          OTA_EXPECT_TRAIN_SHA: ${{ steps.train_baselines.outputs.train_sha }}
+          OTA_LIVE_STORE_RUNTIMES: ${{ needs.live-store-runtimes.outputs.live_runtimes }}
+        # The publisher independently confirms a train guard's exact runtime,
+        # then freezes it through export/retries. Other publishes resolve the
+        # current commit's fingerprint directly. That matches the shipped binary — which embeds the same Linux gate
         # fingerprint (set at build time, ios-testflight-rn.yml) — for a JS-only
         # commit, and on a native change it resolves the NEW fingerprint, so old
         # binaries (still on the old one) never receive JS that needs the new native
@@ -773,6 +714,10 @@ jobs:
         continue-on-error: true
         env:
           EOO_TOKEN: ${{ secrets.EOO_TOKEN }}
+          OTA_EXPECT_RUNTIME_VERSION: ${{ steps.train_guard.outputs.android_runtime_version }}
+          OTA_EXPECT_MAIN_SHA: ${{ steps.train_baselines.outputs.main_sha }}
+          OTA_EXPECT_TRAIN_SHA: ${{ steps.train_baselines.outputs.train_sha }}
+          OTA_LIVE_STORE_RUNTIMES: ${{ needs.live-store-runtimes.outputs.live_runtimes }}
           # Must match the Android native prebuild (android-apk-rn.yml) so the
           # resolved android.config.googleMaps block — and the freshly-resolved
           # fingerprint — agree with the binary. (No fingerprint override: see the
@@ -1177,3 +1122,67 @@ jobs:
           jq -n --arg content "$CONTENT" '{content: $content, allowed_mentions: {parse: []}}' \
             | curl -sS --fail-with-body -X POST -H "Content-Type: application/json" -d @- "$DISCORD_DEPLOY_WEBHOOK" || \
               echo "::warning::Failed to post Discord notification (see status above)"
+
+  notify-train-deployment:
+    needs: [publish, live-store-runtimes]
+    if: always() && !cancelled() && github.ref == 'refs/heads/release/next'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    environment: Production
+    steps:
+      # Outputs carry only publication results; webhook delivery runs main code.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.x'
+      - name: Record confirmed train publications and failures
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          TRAIN_VERSION: ${{ needs.publish.outputs.train_version }}
+          IOS_OUTCOME: ${{ needs.publish.outputs.ios_outcome }}
+          ANDROID_OUTCOME: ${{ needs.publish.outputs.android_outcome }}
+          IOS_RUNTIME: ${{ needs.publish.outputs.ios_runtime }}
+          ANDROID_RUNTIME: ${{ needs.publish.outputs.android_runtime }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          STORE_RESULT: ${{ needs.live-store-runtimes.result }}
+        run: |
+          set -euo pipefail
+          for platform in ios android; do
+            outcome="$IOS_OUTCOME"
+            runtime="$IOS_RUNTIME"
+            if [ "$platform" = android ]; then outcome="$ANDROID_OUTCOME"; runtime="$ANDROID_RUNTIME"; fi
+            if [ "$outcome" != success ]; then continue; fi
+            args=(record --events train-deployment-events.json --kind train-published
+              --branch production --commit "$SOURCE_COMMIT" --platform "$platform"
+              --runtime "$runtime" --percentage 100 --reason 'release/next published immediately')
+            if [ -n "$TRAIN_VERSION" ]; then args+=(--version "$TRAIN_VERSION"); fi
+            node --experimental-strip-types scripts/mobile-ota-notify.ts "${args[@]}"
+          done
+          if [ "$PUBLISH_RESULT" = failure ] || [ "$STORE_RESULT" = failure ]; then
+            node --experimental-strip-types scripts/mobile-ota-notify.ts record \
+              --events train-deployment-events.json --kind failed --branch production \
+              --commit "$SOURCE_COMMIT" --reason "Train OTA: publish=$PUBLISH_RESULT, public-store evidence=$STORE_RESULT. Successful platforms remain published."
+          fi
+      - name: Deliver train deployment events
+        env:
+          DISCORD_DEPLOY_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+        run: |
+          if [ -f train-deployment-events.json ]; then
+            node --experimental-strip-types scripts/mobile-ota-notify.ts deliver --events train-deployment-events.json
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: train-deployment-events
+          path: train-deployment-events.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Surface train notification failure
+        if: failure()
+        run: |
+          echo '::warning::Train Discord delivery failed; successful OTA publications remain valid.'
+          echo 'Train Discord delivery failed. Pending events remain in the retained artifact.' >> "$GITHUB_STEP_SUMMARY"

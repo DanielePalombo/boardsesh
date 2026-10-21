@@ -163,6 +163,8 @@ export type PublishRetryDependencies = {
   stdout?: TextOutput;
   stderr?: TextOutput;
   confirmPublished?: PublishConfirmation;
+  /** A failed authorization must prevent even the first upload of this attempt. */
+  beforeAttempt?: () => void | Promise<void>;
 };
 
 const CLASSIFIER_WINDOW_CHARS = 4096;
@@ -346,6 +348,18 @@ export async function publishSelfHostedPlatformWithRetry(
   const label = platformLabel(invocation.platform);
 
   for (let attempt = 1; attempt <= SELF_HOSTED_PUBLISH_MAX_ATTEMPTS; attempt++) {
+    try {
+      await dependencies.beforeAttempt?.();
+    } catch {
+      stderr.write(`[mobile:publish] ${label} publish authorization expired; refusing upload.\n`);
+      return {
+        platform: invocation.platform,
+        success: false,
+        attempts: attempt - 1,
+        failureKind: 'permanent',
+        noChange: false,
+      };
+    }
     const scanner = new PublishFailureEvidenceScanner();
     let exitCode = 1;
     try {

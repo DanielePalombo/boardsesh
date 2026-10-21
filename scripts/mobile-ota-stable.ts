@@ -29,6 +29,15 @@ import {
   refreshAfterOwnFinish,
 } from './lib/ota-stable.ts';
 import type { StableCandidate, StableOperation, StableRelease, StableState } from './lib/ota-stable.ts';
+import { parseLiveStoreRuntimes, stableCandidateMatchesLiveRuntimes } from './lib/mobile-release-policy.ts';
+import type { LiveStoreRuntimes } from './lib/mobile-release-policy.ts';
+import {
+  deploymentFailureReason,
+  emptyDeploymentOutbox,
+  githubRunUrl,
+  queueDeploymentEvent,
+} from './lib/ota-deployment-events.ts';
+import type { DeploymentEvent } from './lib/ota-deployment-events.ts';
 
 export function readState(path: string): StableState {
   return existsSync(path) ? parseStableState(JSON.parse(readFileSync(path, 'utf8')) as unknown) : initialStableState();
@@ -55,6 +64,46 @@ interface ControllerOptions {
   log: (message: string) => void;
   operation?: StableOperation;
   expectedSha?: string;
+  liveStoreRuntimes: LiveStoreRuntimes | null;
+}
+function recordEvent(
+  options: ControllerOptions,
+  kind: DeploymentEvent['kind'],
+  key: string,
+  fields: Partial<DeploymentEvent> = {},
+): void {
+  if (!options.apply) return;
+  const candidate = options.state.active?.candidate ?? options.state.candidate;
+  queueDeploymentEvent(
+    (options.state.notifications ??= emptyDeploymentOutbox()),
+    {
+      kind,
+      branch: STABLE_BRANCH,
+      ...(candidate ? { commit: candidate.receipt.commitHash } : {}),
+      runUrl: githubRunUrl(process.env),
+      ...fields,
+    },
+    key,
+  );
+  options.save();
+}
+function recordHold(options: ControllerOptions, reason: string, commit?: string): void {
+  options.log(`Hold: ${reason}`);
+  if (!options.apply || (!options.state.active && !options.state.candidate && !commit)) return;
+  const outbox = (options.state.notifications ??= emptyDeploymentOutbox());
+  if (outbox.lastHoldReason === reason) return;
+  outbox.lastHoldReason = reason;
+  recordEvent(options, 'hold', `${options.state.checkpointRunId}:${options.now.toISOString()}:hold:${reason}`, {
+    reason,
+    ...(commit ? { commit } : {}),
+  });
+}
+function runtimeHoldReason(options: ControllerOptions, receipt: StageReceipt): string | null {
+  if (!options.liveStoreRuntimes)
+    return 'Live App Store and Google Play runtime evidence is unavailable; production soaking is paused.';
+  return stableCandidateMatchesLiveRuntimes(options.liveStoreRuntimes, runtimes(receipt))
+    ? null
+    : 'Frozen candidate must match BOTH publicly released store runtimes; production soaking is paused until stores catch up.';
 }
 const runtimes = (receipt: StageReceipt) => ({
   ios: receipt.platforms.ios.runtimeVersion,
@@ -139,11 +188,16 @@ export async function prepareStable(
   sourceRunId: string,
   sourceSha: string,
   preparationRunId: string,
-): Promise<StableCandidate> {
+): Promise<StableCandidate | null> {
   const receipt = parseStageReceipt(
     JSON.parse(readFileSync(join(options.stagePath, 'receipt.json'), 'utf8')) as unknown,
   );
   if (receipt.commitHash !== sourceSha) throw new Error('Source artifact SHA differs from its trusted deployment run.');
+  const hold = runtimeHoldReason(options, receipt);
+  if (hold) {
+    recordHold(options, hold, receipt.commitHash);
+    return null;
+  }
   validateArchive(options.stagePath, receipt);
   if (options.state.rejectedCommit === sourceSha || options.state.lastCompletedCommit === sourceSha)
     throw new Error('No new unrejected candidate to prepare.');
@@ -170,6 +224,7 @@ export async function prepareStable(
   await promote(options, frozenCopy, STABLE_CANDIDATE_BRANCH, join(options.stagePath, 'candidate-upload-receipt.json'));
   options.state.candidate = candidate;
   options.save();
+  recordEvent(options, 'candidate-frozen', `${preparationRunId}:frozen:${sourceSha}`, { commit: sourceSha });
   writeFileSync(join(options.stagePath, 'candidate.json'), JSON.stringify(candidate, null, 2));
   // QA reads this explicit production-baseline receipt, while exports remain unchanged.
   writeFileSync(join(options.stagePath, 'receipt.json'), JSON.stringify(candidate.receipt, null, 2));
@@ -255,6 +310,23 @@ function assertOwnedOnly(active: StableRelease | null, live: ActiveRollout[]): v
     }
   }
 }
+function recordConfirmedStarts(options: ControllerOptions, active: StableRelease, live: ActiveRollout[]): void {
+  for (const platform of PLATFORMS) {
+    const runtimeVersion = active.candidate.receipt.platforms[platform].runtimeVersion;
+    const id = active.updateIds[platform];
+    if (
+      id &&
+      live.some(
+        (entry) => entry.platform === platform && entry.runtimeVersion === runtimeVersion && sameId(entry.updateId, id),
+      )
+    )
+      recordEvent(options, 'canary-started', `${active.candidate.receipt.commitHash}:${platform}:${id}:start`, {
+        platform,
+        runtimeVersion,
+        percentage: otaReleasePolicy.canarySteps[0],
+      });
+  }
+}
 /** The workflow restores this receipt from the same trusted producer artifact as state.json. */
 function recoverStartingRecord(options: ControllerOptions): void {
   const active = options.state.active;
@@ -286,16 +358,20 @@ function recoverStartingRecord(options: ControllerOptions): void {
   if (options.apply) options.save();
 }
 /** Abort preserves external publications, reverting only the still-live owned rows. */
-export async function abortStable(options: ControllerOptions): Promise<void> {
+export async function abortStable(options: ControllerOptions, preserveForeignRollouts = false): Promise<void> {
   recoverStartingRecord(options);
   const active = options.state.active;
   const live = await listActiveRollouts(options.client, STABLE_BRANCH);
-  assertOwnedOnly(active, live);
+  if (!preserveForeignRollouts && !active?.runtimeChangeAbort) assertOwnedOnly(active, live);
   if (!options.apply) {
     options.log('Plan: abort owned canaries, invalidate candidate, preserve external heads.');
     return;
   }
   if (!active) {
+    if (options.state.candidate)
+      recordEvent(options, 'aborted', `${options.state.checkpointRunId}:${options.now.toISOString()}:abort`, {
+        reason: 'Discarded the pending candidate.',
+      });
     if (options.state.candidate) options.state.rejectedCommit = options.state.candidate.receipt.commitHash;
     options.state.candidate = null;
     options.save();
@@ -327,15 +403,19 @@ export async function abortStable(options: ControllerOptions): Promise<void> {
     active.completedPlatforms[platform] = current[platform];
   }
   active.phase = 'reverting';
+  if (preserveForeignRollouts) active.runtimeChangeAbort = true;
   active.pendingPercentage = null;
   options.state.candidate = null;
   options.save();
   options.log('Abort: preserving observed external heads and reverting remaining owned canaries.');
+  recordEvent(options, 'aborted', `${active.candidate.receipt.commitHash}:${active.startedAt}:abort`, {
+    reason: 'Reverting remaining controller-owned canaries; external heads are preserved.',
+  });
   // Recovery must finish as a tick, even when a manual start detected the
   // external replacement. A start cannot operate on the reverting checkpoint.
-  await tickStable({ ...options, operation: 'tick' });
+  await tickStable({ ...options, operation: 'tick' }, preserveForeignRollouts);
 }
-export async function tickStable(options: ControllerOptions): Promise<void> {
+export async function tickStable(options: ControllerOptions, preserveForeignRollouts = false): Promise<void> {
   const { state, now } = options;
   const operation = options.operation ?? 'tick';
   const selected = state.active?.candidate ?? state.candidate;
@@ -362,7 +442,20 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
   // Reconcile durable leases before classifying live rows as owned or foreign.
   recoverStartingRecord(options);
   const live = await listActiveRollouts(options.client, STABLE_BRANCH);
-  assertOwnedOnly(state.active, live);
+  const candidate = state.active?.candidate ?? state.candidate;
+  if (state.active?.phase !== 'reverting' && candidate) {
+    const hold = runtimeHoldReason(options, candidate.receipt);
+    if (hold) {
+      recordHold(options, hold);
+      // Missing evidence never authorizes a write. A confirmed runtime change
+      // retires only our owned rows, even when another publisher has live rows.
+      if (state.active && options.liveStoreRuntimes && options.apply) await abortStable(options, true);
+      if (options.apply && operation !== 'tick') throw new Error(hold);
+      return;
+    }
+  }
+  if (!preserveForeignRollouts && !state.active?.runtimeChangeAbort) assertOwnedOnly(state.active, live);
+  if (state.active?.phase === 'starting') recordConfirmedStarts(options, state.active, live);
   if (state.active && state.active.phase !== 'reverting' && Object.keys(state.active.unchangedPlatforms).length > 0) {
     const current = await baseline(options, state.active.candidate.receipt);
     if (
@@ -431,6 +524,8 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
       : [];
   const decision = decideStable(state, now, health, operation);
   options.log(`${options.apply ? 'Apply' : 'Plan'}: ${decision.action}. ${decision.reason}`);
+  if (decision.action === 'hold') recordHold(options, decision.reason);
+  else if (options.apply && state.notifications) state.notifications.lastHoldReason = null;
   if (options.apply && decision.action === 'hold' && decision.reason.includes('manual recovery'))
     throw new Error(decision.reason);
   if (options.apply && operation !== 'tick' && decision.action === 'hold') throw new Error(decision.reason);
@@ -501,6 +596,15 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
       active.updateIds = updateIds;
       active.unchangedPlatforms = unchangedPlatforms;
       options.save();
+      // Leases are not deployments. Report only owned rows the server confirms
+      // are live, including a successful sibling of a failed platform upload.
+      try {
+        recordConfirmedStarts(options, active, await listActiveRollouts(options.client, STABLE_BRANCH));
+      } catch (error) {
+        options.log(
+          `Could not confirm deployment events; retry from the durable lease: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     await verifyUnchanged(options, active);
     if (PLATFORMS.every((platform) => active.unchangedPlatforms[platform])) {
@@ -511,6 +615,19 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
       return;
     }
     active.phase = 'ramping';
+    for (const platform of PLATFORMS) {
+      if (active.updateIds[platform])
+        recordEvent(
+          options,
+          'canary-started',
+          `${candidate.receipt.commitHash}:${platform}:${active.updateIds[platform]}:start`,
+          {
+            platform,
+            runtimeVersion: candidate.receipt.platforms[platform].runtimeVersion,
+            percentage: otaReleasePolicy.canarySteps[0],
+          },
+        );
+    }
     // Start clocks after every changed canary and unchanged attestation is confirmed.
     const completedAt = new Date(Math.max(now.getTime(), (options.clock?.() ?? new Date()).getTime())).toISOString();
     active.startedAt = completedAt;
@@ -550,6 +667,11 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
     const target = { branch: STABLE_BRANCH, runtimeVersion, platform, expectedUpdateId: id };
     if (decision.action === 'revert') {
       await revertRollout(options.client, target);
+      recordEvent(options, 'rollout-reverted', `${active.candidate.receipt.commitHash}:${platform}:${id}:revert`, {
+        platform,
+        runtimeVersion,
+        reason: decision.reason,
+      });
       const restored = (await baseline(options, active.candidate.receipt))[platform];
       if (!restored) throw new Error('Reverted update has no native UUID; reconcile manually.');
       active.completedPlatforms[platform] = restored;
@@ -562,6 +684,12 @@ export async function tickStable(options: ControllerOptions): Promise<void> {
         if (details.updateUUID !== (await baseline(options, active.candidate.receipt))[platform])
           throw new Error('Interrupted finish cannot be proven.');
       } else await setRolloutPercentage(options.client, target, percentage);
+      recordEvent(
+        options,
+        decision.action === 'finish' ? 'rollout-finished' : 'rollout-increased',
+        `${active.candidate.receipt.commitHash}:${platform}:${id}:${percentage}`,
+        { platform, runtimeVersion, percentage, reason: decision.reason },
+      );
       if (decision.action === 'finish') {
         const uuid = (await options.client.getUpdateDetails(STABLE_BRANCH, runtimeVersion, id)).updateUUID;
         if (!uuid) throw new Error('Finished update has no native UUID.');
@@ -618,6 +746,7 @@ export function parseStableArgs(argv: string[]): { command: string; apply: boole
     '--smoke-passed',
     '--boot-passed',
     '--expected-sha',
+    '--live-runtimes',
   ];
   for (let index = 0; index < rest.length; index++) {
     const flag = rest[index];
@@ -654,35 +783,47 @@ async function main(): Promise<void> {
   const save = () => {
     if (apply) saveState(flags['--state'], state, runId);
   };
-  if (command === 'qualify') {
-    if (!state.candidate || state.candidate.preparationRunId !== runId)
-      throw new Error('Only this preparation run can qualify its candidate.');
-    const receipt = parseStageReceipt(
-      JSON.parse(readFileSync(join(flags['--stage'], 'receipt.json'), 'utf8')) as unknown,
-    );
-    state.candidate = qualifyCandidate(state.candidate, {
-      receipt,
-      sha: flags['--sha'],
-      bootSha: flags['--boot-sha'],
-      branch: flags['--branch'],
-      smokeResult: flags['--smoke-result'],
-      bootResult: flags['--boot-result'],
-      smokePassed: flags['--smoke-passed'],
-      bootPassed: flags['--boot-passed'],
-    });
-    save();
-    console.log(`Frozen candidate QA: ${state.candidate.qaPassed ? 'passed' : 'rejected'}`);
-    console.log(`Candidate SHA: ${state.candidate.receipt.commitHash}`);
-    if (process.env.GITHUB_STEP_SUMMARY)
-      writeFileSync(
-        process.env.GITHUB_STEP_SUMMARY,
-        `Frozen candidate QA: ${state.candidate.qaPassed ? 'passed' : 'rejected'}\n\nCandidate SHA: \`${state.candidate.receipt.commitHash}\`\n`,
-        { flag: 'a' },
-      );
-    if (!state.candidate.qaPassed) process.exitCode = 1;
-    return;
-  }
   try {
+    if (command === 'qualify') {
+      if (!state.candidate || state.candidate.preparationRunId !== runId)
+        throw new Error('Only this preparation run can qualify its candidate.');
+      const receipt = parseStageReceipt(
+        JSON.parse(readFileSync(join(flags['--stage'], 'receipt.json'), 'utf8')) as unknown,
+      );
+      state.candidate = qualifyCandidate(state.candidate, {
+        receipt,
+        sha: flags['--sha'],
+        bootSha: flags['--boot-sha'],
+        branch: flags['--branch'],
+        smokeResult: flags['--smoke-result'],
+        bootResult: flags['--boot-result'],
+        smokePassed: flags['--smoke-passed'],
+        bootPassed: flags['--boot-passed'],
+      });
+      if (apply)
+        queueDeploymentEvent(
+          (state.notifications ??= emptyDeploymentOutbox()),
+          {
+            kind: state.candidate.qaPassed ? 'qa-passed' : 'qa-rejected',
+            branch: STABLE_BRANCH,
+            commit: state.candidate.receipt.commitHash,
+            runUrl: githubRunUrl(process.env),
+            reason: `Frozen candidate: smokes ${flags['--smoke-result']}; native boots ${flags['--boot-result']}.`,
+          },
+          `${runId}:qa:${state.candidate.receipt.commitHash}:${state.candidate.qaPassed}`,
+        );
+      save();
+      console.log(`Frozen candidate QA: ${state.candidate.qaPassed ? 'passed' : 'rejected'}`);
+      console.log(`Candidate SHA: ${state.candidate.receipt.commitHash}`);
+      if (process.env.GITHUB_STEP_SUMMARY)
+        writeFileSync(
+          process.env.GITHUB_STEP_SUMMARY,
+          `Frozen candidate QA: ${state.candidate.qaPassed ? 'passed' : 'rejected'}\n\nCandidate SHA: \`${state.candidate.receipt.commitHash}\`\n`,
+          { flag: 'a' },
+        );
+      if (!state.candidate.qaPassed) process.exitCode = 1;
+      return;
+    }
     // Login failure must still retain a checkpoint belonging to this run.
     // Otherwise its uploaded copy has the previous producer ID and blocks recovery.
     const client = await adminClientFromEnvironment({
@@ -702,10 +843,14 @@ async function main(): Promise<void> {
       log: console.log,
       ...(command === 'start' || command === 'force-release' ? { operation: command } : {}),
       ...(flags['--expected-sha'] ? { expectedSha: flags['--expected-sha'] } : {}),
+      liveStoreRuntimes:
+        command !== 'abort' && flags['--live-runtimes'] && existsSync(flags['--live-runtimes'])
+          ? parseLiveStoreRuntimes(JSON.parse(readFileSync(flags['--live-runtimes'], 'utf8')) as unknown)
+          : null,
     };
     if (command === 'prepare') {
       const candidate = await prepareStable(options, flags['--source-run-id'], flags['--source-sha'], runId);
-      if (process.env.GITHUB_OUTPUT)
+      if (candidate && process.env.GITHUB_OUTPUT)
         writeFileSync(
           process.env.GITHUB_OUTPUT,
           `sha=${candidate.receipt.commitHash}\nreceipt=${JSON.stringify(candidate.receipt)}\n`,
@@ -716,6 +861,22 @@ async function main(): Promise<void> {
     } else {
       await tickStable(options);
     }
+  } catch (error) {
+    if (apply)
+      queueDeploymentEvent(
+        (state.notifications ??= emptyDeploymentOutbox()),
+        {
+          kind: 'failed',
+          branch: STABLE_BRANCH,
+          ...((state.active?.candidate ?? state.candidate)
+            ? { commit: (state.active?.candidate ?? state.candidate)!.receipt.commitHash }
+            : {}),
+          reason: deploymentFailureReason(command, error),
+          runUrl: githubRunUrl(process.env),
+        },
+        `${runId}:${command}:failed`,
+      );
+    throw error;
   } finally {
     save();
   }

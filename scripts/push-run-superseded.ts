@@ -29,13 +29,18 @@ export type SupersededDecision = { superseded: boolean; reason: string };
  * The workflow's push `paths`, as git pathspecs. `:(glob)` gives `*` and `**` the
  * same meaning they have in a GitHub path filter (`*` stops at `/`). Negated
  * patterns are refused rather than approximated: a wrong pathspec would decide
- * which runs get skipped.
+ * which runs get skipped. An empty result means an unfiltered push: passing no
+ * pathspecs to git diff compares every file.
  */
 export function triggerPathspecs(workflowSource: string): string[] {
   const workflow: unknown = parse(workflowSource);
-  const paths = (workflow as { on?: { push?: { paths?: unknown } } } | null)?.on?.push?.paths;
+  const push = (workflow as { on?: { push?: { paths?: unknown; 'paths-ignore'?: unknown } | null } } | null)?.on?.push;
+  if (push === undefined) throw new Error('the workflow has no on.push trigger');
+  if (push?.['paths-ignore'] !== undefined) throw new Error('on.push.paths-ignore is not supported');
+  const paths = push?.paths;
+  if (paths === undefined) return [];
   if (!Array.isArray(paths) || paths.length === 0) {
-    throw new Error('the workflow has no on.push.paths list');
+    throw new Error('the workflow has an invalid on.push.paths list');
   }
   return paths.map((path) => {
     if (typeof path !== 'string' || path.length === 0) throw new Error('on.push.paths holds a non-string entry');

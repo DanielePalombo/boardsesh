@@ -42,6 +42,7 @@ function jobBlock(workflow: string, jobName: string): string {
 describe.each(ADMIN_WORKFLOWS)('%s', (name) => {
   const source = readWorkflow(name);
   const code = withoutComments(source);
+  const adminCode = name === 'mobile-ota-unlock.yml' ? jobBlock(code, 'revert') : code;
 
   it('pins every action to a commit SHA', () => {
     const uses = [...code.matchAll(/uses:\s*(\S+)/g)].map((match) => match[1]);
@@ -49,19 +50,20 @@ describe.each(ADMIN_WORKFLOWS)('%s', (name) => {
     for (const action of uses) expect(action, action).toMatch(/^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/);
   });
 
-  it('gives its one job a timeout and the ota-stable-release environment', () => {
-    expect(code.match(/^ {4}timeout-minutes: \d+$/gm)).toHaveLength(1);
-    expect(code.match(/^ {4}environment: ota-stable-release$/gm)).toHaveLength(1);
-    expect(code.match(/^ {4}runs-on: ubuntu-latest$/gm)).toHaveLength(1);
+  it('gives its admin job a timeout and the ota-stable-release environment', () => {
+    expect(adminCode.match(/^ {4}timeout-minutes: \d+$/gm)).toHaveLength(1);
+    expect(adminCode.match(/^ {4}environment: ota-stable-release$/gm)).toHaveLength(1);
+    expect(adminCode.match(/^ {4}runs-on: ubuntu-latest$/gm)).toHaveLength(1);
   });
 
   it('checks out trusted main source and nothing else', () => {
-    expect(code.match(/uses: actions\/checkout@/g)).toHaveLength(1);
+    expect(adminCode.match(/uses: actions\/checkout@/g)).toHaveLength(1);
     if (name === 'mobile-ota-unlock.yml')
-      expect(code).toMatch(
+      expect(adminCode).toMatch(
         /uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n {8}with:\n {10}ref: \$\{\{ github\.sha \}\}\n/,
       );
-    else expect(code).toMatch(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n {8}with:\n {10}ref: main\n/);
+    else expect(adminCode).toMatch(/uses: actions\/checkout@[0-9a-f]{40}[^\n]*\n {8}with:\n {10}ref: main\n/);
+
     expect(code).not.toContain('github.head_ref');
     expect(code).not.toContain('github.event.pull_request');
   });
@@ -225,6 +227,23 @@ describe('mobile-ota-unlock.yml', () => {
       'concurrency:\n      group: mobile-ota-unlock\n      cancel-in-progress: false\n      queue: max',
     );
     expect(code).not.toContain('group: mobile-ota-production');
+  });
+
+  it('keeps notification failures independent of the required staged unlock proof', () => {
+    const revert = jobBlock(code, 'revert');
+    const proofStart = revert.indexOf('      - name: Retain verified staged unlock receipt\n');
+    const eventsStart = revert.indexOf('      - name: Retain confirmed unlock events\n');
+    expect(proofStart).toBeGreaterThan(0);
+    expect(eventsStart).toBeGreaterThan(proofStart);
+    const proof = revert.slice(proofStart, eventsStart);
+    expect(proof).toContain("if: success() && inputs.staged_app_id != ''");
+    expect(proof).toContain('if-no-files-found: error');
+    expect(proof).not.toContain('continue-on-error:');
+    const events = revert.slice(eventsStart);
+    expect(events).toContain('        continue-on-error: true');
+    expect(events).toContain('        if: always()');
+    expect(events).toContain('name: ota-unlock-events');
+    expect(jobBlock(code, 'notify')).toContain('    continue-on-error: true');
   });
 
   it('reverts, tolerates an idle branch, and can never finish a rollout', () => {
