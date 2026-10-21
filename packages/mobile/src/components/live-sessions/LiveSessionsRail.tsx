@@ -73,12 +73,15 @@ type LiveSessionsRailProps = {
   enabled: boolean;
   /** Opens the invite sheet for the viewer's own solo session. */
   onInvite: (sessionId: string) => void;
+  /** False while Home's Session card shows, so Start is never offered twice. */
+  showStartPrompt?: boolean;
 };
 
 export const LiveSessionsRail = memo(function LiveSessionsRail({
   boardUuid,
   enabled,
   onInvite,
+  showStartPrompt = true,
 }: LiveSessionsRailProps) {
   const { t } = useTranslation('feed');
   const router = useRouter();
@@ -135,8 +138,9 @@ export const LiveSessionsRail = memo(function LiveSessionsRail({
   const startCollapsed = impressions.loaded ? isStartPromptCollapsed(impressions.days, localDayKey(nowDate())) : null;
 
   const plan = useMemo(
-    () => planLiveRail({ cards, viewerInSession: queueSessionId != null, followsNobody, startCollapsed }),
-    [cards, queueSessionId, followsNobody, startCollapsed],
+    () =>
+      planLiveRail({ cards, viewerInSession: queueSessionId != null, followsNobody, startCollapsed, showStartPrompt }),
+    [cards, queueSessionId, followsNobody, startCollapsed, showStartPrompt],
   );
 
   const blockedOffline = offline.isBlocked && (offline.reason === 'offline' || offline.reason === 'offline_mode');

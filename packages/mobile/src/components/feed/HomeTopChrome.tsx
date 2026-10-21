@@ -21,6 +21,7 @@ import { useTheme } from '../../providers/theme-provider';
 import { createVariantComponent } from '../../theme/variants';
 import { spacing } from '../../theme/tokens';
 import { Icon } from '../Icon';
+import { Text } from '../Text';
 import { iconMap } from '../icon-map';
 import { type AppMenuAction } from '../AppMenu';
 import { ProgressiveBlur } from '../ProgressiveBlur';
@@ -37,6 +38,12 @@ const ROW_GUTTER = spacing[4];
 export const TOP_ISLAND_BAND = spacing[1] + TOP_ACTION_SIZE + spacing[2];
 
 export type HomeTopChromeProps = {
+  /**
+   * False when Home shows neither the feed nor Climbing now: there is nothing
+   * to scope, so `scopeTitle` ("Home") shows as a plain title and the actions
+   * are ignored. The header buttons stay either way.
+   */
+  showScopeMenu: boolean;
   /** The active feed scope, shown as the title-menu. */
   scopeTitle: string;
   /** Scope menu rows, in render order. */
@@ -58,6 +65,7 @@ export const HomeTopChrome = createVariantComponent('HomeTopChrome', {
 });
 
 function HomeTopChromeGlass({
+  showScopeMenu,
   scopeTitle,
   scopeActions,
   onSelectScopeIndex,
@@ -119,12 +127,18 @@ function HomeTopChromeGlass({
             <UserAvatarToolbarAction variant="glass" />
           </GlassActionToolbar>
           <View pointerEvents="box-none" style={styles.headerCenter}>
-            <FeedScopeTitle
-              title={scopeTitle}
-              actions={scopeActions}
-              onSelectIndex={onSelectScopeIndex}
-              accessibilityHint={scopeAccessibilityHint}
-            />
+            {showScopeMenu ? (
+              <FeedScopeTitle
+                title={scopeTitle}
+                actions={scopeActions}
+                onSelectIndex={onSelectScopeIndex}
+                accessibilityHint={scopeAccessibilityHint}
+              />
+            ) : (
+              <Text variant="headline" numberOfLines={1} accessibilityRole="header">
+                {scopeTitle}
+              </Text>
+            )}
           </View>
           {/* Trailing island, two slots wide (the island sizes itself from
               actionCount): the notifications bell, then find-climbers. It now
@@ -145,6 +159,7 @@ function HomeTopChromeGlass({
 }
 
 function HomeTopChromeMaterial({
+  showScopeMenu,
   scopeTitle,
   scopeActions,
   onSelectScopeIndex,
@@ -185,16 +200,22 @@ function HomeTopChromeMaterial({
         style={[styles.materialAppbar, { backgroundColor: systemColors.secondaryBackground }]}
       >
         <UserAvatarToolbarAction variant="material" />
-        <FeedScopeTitle
-          title={scopeTitle}
-          actions={scopeActions}
-          onSelectIndex={onSelectScopeIndex}
-          accessibilityHint={scopeAccessibilityHint}
-        />
-        {/* Flex spacer holds the find-climbers action to the trailing edge — the
-            scope title-menu is a Paper Menu (content-width anchor), so it can't flex
-            into the slot itself the way Appbar.Content / BoardSwitcherButton do. */}
-        <View style={styles.materialSpacer} />
+        {showScopeMenu ? (
+          <>
+            <FeedScopeTitle
+              title={scopeTitle}
+              actions={scopeActions}
+              onSelectIndex={onSelectScopeIndex}
+              accessibilityHint={scopeAccessibilityHint}
+            />
+            {/* Flex spacer holds the find-climbers action to the trailing edge — the
+                scope title-menu is a Paper Menu (content-width anchor), so it can't flex
+                into the slot itself the way Appbar.Content / BoardSwitcherButton do. */}
+            <View style={styles.materialSpacer} />
+          </>
+        ) : (
+          <Appbar.Content title={scopeTitle} />
+        )}
         <NotificationsToolbarAction variant="material" onPress={handleOpenNotifications} />
         <Appbar.Action
           icon={iconMap['person.badge.plus'].android}

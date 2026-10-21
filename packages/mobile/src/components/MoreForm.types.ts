@@ -40,6 +40,7 @@ export type MoreIconName =
   | 'account'
   | 'general'
   | 'climbs'
+  | 'home'
   | 'earlyAccess'
   | 'developer'
   | 'export'
@@ -81,6 +82,17 @@ export type MoreNavRow = {
   onPress: () => void;
 };
 
+/** A small icon button on a row, before its label (a Home section's move up / move down). */
+export type MoreRowAction = {
+  key: string;
+  icon: 'moveUp' | 'moveDown';
+  /** What TalkBack reads for the button, e.g. "Move Playlists up". */
+  accessibilityLabel: string;
+  /** Greys the button out; `onPress` never fires. */
+  disabled?: boolean;
+  onPress: () => void;
+};
+
 /** A switch row (Session Recording). */
 export type MoreToggleRow = {
   kind: 'toggle';
@@ -90,6 +102,13 @@ export type MoreToggleRow = {
   value: boolean;
   disabled?: boolean;
   onValueChange: (value: boolean) => void;
+  /**
+   * Icon buttons before the label. **Android only**: the Compose form draws no
+   * hosted React Native row (QA on a Pixel 8 Pro, #6546), so Settings › Home's
+   * move arrows are native buttons there. iOS and the browser draw no actions;
+   * Settings › Home hosts its own arrow rows on those.
+   */
+  actions?: readonly MoreRowAction[];
 };
 
 /** An inline segmented control (Appearance, Grade Format). */

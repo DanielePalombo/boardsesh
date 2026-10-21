@@ -9,6 +9,7 @@ export type BoardReturnTo =
   | '/(tabs)/climbs'
   | '/(tabs)/discover'
   | '/(tabs)/record'
+  | '/(tabs)/home'
   | `/(tabs)/climbs/setter/${string}`;
 
 export function setterPlaylistReturnTo(username: string): BoardReturnTo {
@@ -36,5 +37,7 @@ export function resolveBoardReturnTo(value: string | undefined): BoardReturnTo {
       // Invalid escapes are untrusted deep links; use the ordinary fallback.
     }
   }
-  return value === '/(tabs)/discover' || value === '/(tabs)/record' ? value : '/(tabs)/climbs';
+  return value === '/(tabs)/discover' || value === '/(tabs)/record' || value === '/(tabs)/home'
+    ? value
+    : '/(tabs)/climbs';
 }

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { subscribeSettings } from '../settings/hooks';
+import { getSetting, setSetting, subscribeSettings } from '../settings/hooks';
+import type { AppSettings, SettingsKey } from '../settings/types';
 import {
   isSameSectionLayout,
   sanitiseSectionLayout,
@@ -37,6 +38,23 @@ export type SectionLayoutStorage = {
   write: (record: SectionLayoutRecord | null) => void;
 };
 
+/** The settings keys that hold exactly a `SectionLayoutRecord | null`. */
+export type SectionLayoutSettingsKey = {
+  [Key in SettingsKey]: [AppSettings[Key]] extends [SectionLayoutRecord | null]
+    ? [SectionLayoutRecord | null] extends [AppSettings[Key]]
+      ? Key
+      : never
+    : never;
+}[SettingsKey];
+
+/** Storage for `createSectionLayoutStore` over one key of the synchronous settings store. */
+export function settingsLayoutStorage(key: SectionLayoutSettingsKey): SectionLayoutStorage {
+  return {
+    read: () => getSetting(key),
+    write: (record) => setSetting(key, record),
+  };
+}
+
 export type SectionLayoutStore<Id extends string> = {
   getLayout: () => SectionLayout<Id>;
   subscribe: (listener: () => void) => () => void;
@@ -55,8 +73,7 @@ export type SectionLayoutStore<Id extends string> = {
  * ```ts
  * export const homeSectionsStore = createSectionLayoutStore({
  *   spec: HOME_SECTIONS,
- *   read: () => getSetting('homeSectionsV1'),
- *   write: (record) => setSetting('homeSectionsV1', record),
+ *   ...settingsLayoutStorage('homeSectionsV1'),
  * });
  * ```
  */

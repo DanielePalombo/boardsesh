@@ -12,14 +12,15 @@ import {
  *
  * Owner decision 2026-10-14 (QA verdict 85): General first, then Privacy,
  * Account and Connected apps, the names climbers know from their phone's own
- * settings; Board and Climbs & grades in a group of their own; the testing pages
+ * settings; Board and Climbs & grades in a group of their own (Home joined them on
+ * 2026-10-18, QA on #6546: what the app shows you, beside how it looks); the testing pages
  * last. For context, people who used each part of Settings in the 90 days before
  * it was split into pages (PostHog): Connected apps 409, Account 404, Board look
  * 264, Offline 106, General 58; Climbs and Board lighting left no signal.
  */
 export const SETTINGS_ROOT_ORDER = [
   { key: 'app', pages: ['general', 'privacy', 'account', 'integrations'] },
-  { key: 'climbing', pages: ['board', 'climbs'] },
+  { key: 'climbing', pages: ['board', 'climbs', 'home'] },
   { key: 'testing', pages: ['earlyAccess', 'developer'] },
 ] as const satisfies readonly { key: string; pages: readonly SettingsRootPage[] }[];
 

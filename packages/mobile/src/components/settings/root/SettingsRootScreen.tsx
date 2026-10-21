@@ -8,6 +8,7 @@ import { renderedBoardLookOption } from '../../../lib/board-render/board-look-op
 import { useBoardRenderSettings } from '../../../lib/board-render-settings';
 import { hapticLight } from '../../../lib/haptics';
 import { useQaMenu } from '../../../lib/qa/use-qa-menu';
+import { homeLayoutPreset, useHomeSectionLayout, type HomeLayoutPreset } from '../../../lib/home-sections';
 import { useAuth } from '../../../providers/auth-provider';
 import { gradeFormatOptions } from '../climbs/climbs-model';
 import { useDeveloperSettingsAccess } from '../developer/use-developer-settings-access';
@@ -36,6 +37,15 @@ export function SettingsRootScreen() {
   // picked but never shown.
   const { boardseshRendererAvailable } = useEffectiveBoardRenderSettings();
 
+  // Which preset Home matches: Default, Focused, or Custom for anything else.
+  const homePreset = homeLayoutPreset(useHomeSectionLayout());
+  const homePresetLabels: Record<HomeLayoutPreset, string> = {
+    default: t('mobile.settings.homeSections.presets.default'),
+    focused: t('mobile.settings.homeSections.focused'),
+    custom: t('mobile.settings.homeSections.presets.custom'),
+  };
+  const homeLabel = homePresetLabels[homePreset];
+
   // Only once the settings have loaded: before that the match is the default
   // look, which would flash the wrong name.
   const boardLookLabel = useMemo(() => {
@@ -57,13 +67,14 @@ export function SettingsRootScreen() {
         values: {
           board: boardLookLabel,
           climbs: gradeFormatOptions(t).find((option) => option.key === gradeFormat)?.label,
+          home: homeLabel,
         },
         onOpen: (page) => {
           hapticLight();
           router.push(SETTINGS_ROOT_ROUTES[page]);
         },
       }),
-    [t, syncIssues, isAuthenticated, showQaPreviews, showDeveloper, boardLookLabel, gradeFormat],
+    [t, syncIssues, isAuthenticated, showQaPreviews, showDeveloper, boardLookLabel, gradeFormat, homeLabel],
   );
 
   return <MoreForm model={model} />;

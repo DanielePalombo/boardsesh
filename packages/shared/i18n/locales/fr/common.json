@@ -26,6 +26,9 @@
         "climbs": {
           "title": "Blocs et cotations"
         },
+        "home": {
+          "title": "Accueil"
+        },
         "earlyAccess": {
           "title": "Accès anticipé"
         },
@@ -470,6 +473,36 @@
         "moveUp": "Monter {{section}}",
         "moveDown": "Descendre {{section}}",
         "moved": "{{section}}, {{position}} sur {{count}}"
+      },
+      "homeSections": {
+        "groupTitle": "Sur l'accueil",
+        "customize": "Personnaliser l'accueil",
+        "description": "Choisis ce qu'affiche l'accueil, et dans quel ordre. Essentiel affiche ta board, ta session et tes listes.",
+        "settingsFooter": "Choisis ce qu'affiche l'accueil, et dans quel ordre. Personnaliser l'accueil, sur l'accueil, modifie la même liste.",
+        "footer": "Les changements s'appliquent immédiatement, sur ce téléphone uniquement. Ils ne changent pas qui peut voir ton activité.",
+        "showAll": "Tout afficher",
+        "focused": "Essentiel",
+        "restoreDefaults": "Rétablir les réglages par défaut",
+        "sections": {
+          "board": "Ta board",
+          "session": "Session",
+          "playlists": "Listes",
+          "climbingNow": "En train de grimper",
+          "beta": "Beta récente",
+          "feed": "Fil"
+        },
+        "descriptions": {
+          "board": "Parcourir les blocs ou changer de board",
+          "session": "Démarrer une session ou voir son chrono",
+          "playlists": "Voies aimées et Projets",
+          "climbingNow": "Sessions en direct à rejoindre",
+          "beta": "Nouvelles vidéos beta pour ta board",
+          "feed": "Sessions et nouveaux blocs de ton crew. Toujours en bas."
+        },
+        "presets": {
+          "default": "Par défaut",
+          "custom": "Personnalisé"
+        }
       },
       "climbList": {
         "title": "Liste des blocs",

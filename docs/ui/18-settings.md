@@ -59,10 +59,6 @@ The mobile Settings screen contains appearance and UI-style controls that have n
 
 - `SegmentedControl` with three options persisted as `ThemeOverride` in key-value storage.
 
-**Open the app on** (Climbs / Home, Settings › General):
-
-- Segmented row persisted as `startupScreen` in the MMKV settings store; Climbs is the default. Applies from the next start and never navigates. Links, notification taps, onboarding and a post-login return still open where they point. See `01-navigation.md` → "Mobile: library entry and tab variants".
-
 **UI Style**:
 
 - `SegmentedControl` with three options: Auto, Liquid Glass, Material.
@@ -71,6 +67,11 @@ The mobile Settings screen contains appearance and UI-style controls that have n
 - **Liquid Glass**: the glass aesthetic. On every iPhone it uses the native `NativeTabs` tab bar; on a glass-capable device (iOS 26) that bar adds the bottom accessory and `GlassView` surfaces, and on iOS < 26 surfaces fall back to frosted `BlurView` while the current climb rides the floating JS queue bar. On Android it falls back to the JS `MaterialTabBar` + solid surfaces. The tab chrome is resolved by `useTabChrome()` (`resolveTabChrome`).
 - **Material**: JS `MaterialTabBar` + opaque M3 surfaces.
 - All three options are always **selectable** on every platform — any phone can opt into Liquid Glass, falling back to JS buttons where the native iOS 26 chrome can't render. An explanatory footnote switches between `mobile.settings.uiStyle.description` (glass-capable), `mobile.settings.uiStyle.glassFallback` (iOS < 26), and `mobile.settings.uiStyle.glassFallbackAndroid` (Android) based on capability and platform.
+
+**Home** (its own page in the root's second group, after Board and Climbs & grades; the row's value is the matching preset: Default, Focused or Custom):
+
+- **Open the app on** (Climbs / Home) first: a segmented row persisted as `startupScreen` in the MMKV settings store, Climbs by default, read through `normaliseStartupScreen()`. Applies from the next start and never navigates. Links, notification taps, onboarding and a post-login return still open where they point. See `01-navigation.md` → "Mobile: library entry and tab variants". A change reports one `Setting Changed { page: 'homeScreen', key: 'startupScreen' }`.
+- Then the Home sections (Your board, Session, Playlists, Climbing now, Fresh beta) in the saved order, each with a switch and ↑/↓ arrows, then the feed's switch (it stays last), then Show all, Focused and Restore defaults. Native form like Board and Climbs & grades (`HomeSettingsScreen`, `home-settings-model.ts`), except the movable rows: the form has no reorderable row, so they are the Customize Home sheet's `SectionLayoutList` rows hosted in one full-bleed `custom` row (`HomeSectionsFormList`). That is a deliberate exception to the native-form rule (#6480), at Marco's ask on #6546. On Android the page has no hosted row (the Compose form drew none on a Pixel 8 Pro): each section is a native switch in the saved order with native ↑/↓ icon buttons before its label (`MoreToggleRow.actions`, drawn by `MoreForm.android` only), disabled at the ends. TalkBack stops on each button and reads "Move Playlists up"; the Compose bridge has no custom accessibility actions. Stored as `homeSectionsV1` in the MMKV settings store, shared with the sheet and Home. See `02-home.md`.
 
 **Grade Format** (V-Grade / Font / Both):
 

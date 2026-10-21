@@ -46,6 +46,7 @@ const MORE_ICON: Record<MoreIconName, string> = {
   account: 'account-circle-outline',
   general: 'cog-outline',
   climbs: 'format-list-bulleted',
+  home: 'home-outline',
   earlyAccess: 'flask-outline',
   developer: 'wrench-outline',
   export: 'export-variant',

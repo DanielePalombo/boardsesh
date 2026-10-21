@@ -11,6 +11,7 @@ export type SettingsRootPage =
   | 'integrations'
   | 'board'
   | 'climbs'
+  | 'home'
   | 'earlyAccess'
   | 'developer';
 
@@ -23,6 +24,7 @@ export const SETTINGS_ROOT_ROUTES = {
   // The route keeps its old name: links to it predate the page's rename.
   board: '/settings/board-look',
   climbs: '/settings/climbs',
+  home: '/settings/home',
   earlyAccess: '/settings/early-access',
   developer: '/settings/developer',
 } as const satisfies Record<SettingsRootPage, `/settings/${string}`>;
@@ -34,6 +36,7 @@ export const SETTINGS_ROOT_ICONS = {
   integrations: 'integrations',
   board: 'boardLook',
   climbs: 'climbs',
+  home: 'home',
   earlyAccess: 'earlyAccess',
   developer: 'developer',
 } as const satisfies Record<SettingsRootPage, MoreIconName>;
@@ -59,6 +62,8 @@ export function settingsPageTitle(page: SettingsRootPage, t: SettingsTranslate):
       return t('mobile.settings.pages.board.title');
     case 'climbs':
       return t('mobile.settings.pages.climbs.title');
+    case 'home':
+      return t('mobile.settings.pages.home.title');
     case 'earlyAccess':
       return t('mobile.settings.pages.earlyAccess.title');
     case 'developer':

@@ -366,6 +366,20 @@ Browser touch, wheel, trackpad, and keyboard scrolling retain native browser beh
 While a visible section awaits content, the drawer gets one pixel of initial
 overflow so those inputs can open the content gate. Hide all removes that overflow.
 
+### Home section controls
+
+Home's **Customize Home** sheet (`HomeCustomizeSheet`) follows the play drawer's pattern: a
+managed `ModalSheet` mounted on the Home tab on first open, Show all and Focused at the head
+of the list (they scroll with it), Restore defaults under it. Both sheets are built from the
+pieces in `src/components/section-layout/SectionLayoutSheet.tsx` (frame, intro, footer,
+sheet list). Settings › Home is the native form with one exception (#6480, Marco's ask on
+#6546): the movable sections, with switches and arrows, are the same `SectionLayoutList`
+rows hosted in one full-bleed `custom` row, because the form has no reorderable row. The
+"Open the app on" row, the feed's switch and Show all / Focused / Restore defaults stay native.
+Android's Compose form drew no hosted row on a real phone, so there each section is a native
+switch with native ↑/↓ buttons (the toggle row's Android-only `actions`). Its layout lives in `homeSectionsStore`
+(`homeSectionsV1`, via `settingsLayoutStorage`); see `docs/ui/02-home.md`.
+
 ## The decision tree
 
 ```

@@ -190,7 +190,7 @@ vi.mock('../../../../hooks/use-bottom-chrome-metrics', () => ({
   useBottomChromeMetrics: () => bottomChrome.metrics,
 }));
 vi.mock('../../../../theme/tokens', () => ({ spacing: { 2: 8, 3: 12, 4: 16 }, borderRadius: { lg: 16 } }));
-vi.mock('../BoardSummaryCard', () => ({ BoardSummaryCard: () => null }));
+vi.mock('../../../boards/BoardSummaryCard', () => ({ BoardSummaryCard: () => null }));
 vi.mock('../GeneratorPickerCard', () => ({
   GeneratorPickerCard: ({ onChange }: { onChange: (selection: GeneratorSelection) => void }) => {
     picker.onChange = onChange;
