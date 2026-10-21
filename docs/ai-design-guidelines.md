@@ -674,7 +674,7 @@ Source: `src/theme/top-bar.ts` (`topBarFor(variant)`), the `label` text variant,
 
 | Role | iOS (Liquid Glass) | Material | Size | Colour |
 | --- | --- | --- | --- | --- |
-| Close / back / minimise | `xmark`, `chevron.left`, `chevron.down`, semibold | `close`, `arrow-left`, `chevron-down` | iOS 17pt glyph, 44pt target (a `systemColors.fill` circle in our chrome); in a native header it is a bare glyph in the 38pt `bar` slot (see the glass size ladder), where UIKit draws the glass and owns hit testing; M3 24dp in 48dp | iOS label; M3 onSurface |
+| Close / back / minimise | `xmark`, `chevron.left`, `chevron.down`, semibold | `close`, `arrow-left`, `chevron-down` | iOS 17pt glyph, 44pt target (a `systemColors.fill` circle in our chrome; in a native header a bare 32pt `mini` frame, `nativeBarGlyphFrame`, with 6pt hit slop out to 44pt, where UIKit draws the glass); M3 24dp in 48dp | iOS label; M3 onSurface |
 | More / edit / help (actions) | `ellipsis` and friends, semibold, same container as close | `more_vert` IconButton | as above | iOS label; M3 onSurfaceVariant |
 | Cancel / plain text action | the word | the word | `label` 17/22/400 (iOS), 14/20/500 (M3) | label colour |
 | `confirm`: saves or commits the climber's own edit (Save, Add, Create, a Done that commits an angle or a crop) | `checkmark` in a brand circle the size of the close; the word is the spoken label | brand text, no fill (an M3 full-screen dialog's Save) | iOS 44pt circle, 17pt semibold glyph; M3 `label` 14/20/500 | brand fill, onPrimary glyph; M3 brand text |
