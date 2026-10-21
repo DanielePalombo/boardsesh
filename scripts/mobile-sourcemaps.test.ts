@@ -1016,7 +1016,13 @@ describe('self-hosted OTA publisher and workflow contracts', () => {
 
   it('never uploads source maps or exposes a Sentry token in PR previews', () => {
     const previewWorkflow = readRepositoryFile('.github/workflows/mobile-ota-preview.yml');
-    expect(previewWorkflow).toContain('vp run mobile:publish');
+    const previewPublisher = readRepositoryFile('scripts/mobile-ota-preview-candidates.ts');
+    expect(workflowStep(previewWorkflow, 'Publish compatible preview runtime variants')).toContain(
+      'tooling/scripts/mobile-ota-preview-candidates.ts publish',
+    );
+    expect(previewPublisher).toContain("['run', 'mobile:publish'");
+    expect(previewPublisher).not.toContain('mobile:upload-sourcemaps');
+    expect(previewPublisher).not.toContain('mobile-upload-sourcemaps.ts');
     expect(previewWorkflow).not.toContain('mobile:upload-sourcemaps');
     expect(previewWorkflow).not.toContain('mobile-upload-sourcemaps.ts');
     expect(previewWorkflow).not.toMatch(/^\s+SENTRY_AUTH_TOKEN:/gm);

@@ -1,7 +1,7 @@
 /// <reference types="node" />
 
 /** Restore only the staged controls; no receipt escapes a failed/partial unlock. */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { adminClientFromEnvironment, sameId } from './lib/xprem-admin.mts';
@@ -16,6 +16,13 @@ import {
 } from './lib/ota-unlock-receipt.ts';
 import type { ControlHead, UnlockExpectations, UnlockProof, UnlockReceipt } from './lib/ota-unlock-receipt.ts';
 import { createUnlockLeaseGuard, protectUnlockWrites } from './lib/ota-unlock-lease.mjs';
+import {
+  deploymentFailureReason,
+  emptyDeploymentOutbox,
+  githubRunUrl,
+  parseDeploymentOutbox,
+  queueDeploymentEvent,
+} from './lib/ota-deployment-events.ts';
 
 export async function unlockStagedControls(
   options: UnlockExpectations & {
@@ -23,6 +30,7 @@ export async function unlockStagedControls(
     client: Pick<XpremAdminClient, 'getUpdateRollout' | 'getUpdateDetails' | 'revertUpdateRollout'>;
     readHead: (platform: OtaPlatform) => Promise<ControlHead>;
     verificationDelaysMs?: readonly number[];
+    onReverted?: (platform: OtaPlatform, rollout: XpremRolloutUpdate) => void;
   },
 ): Promise<UnlockReceipt> {
   validateUnlockExpectations(options);
@@ -66,7 +74,11 @@ export async function unlockStagedControls(
       if (current !== null) throw new Error(`${platform} rollout appeared during unlock.`);
       continue;
     }
-    if (current === null && writtenRuntimes.has(options.runtimes[platform])) continue;
+    if (current === null && writtenRuntimes.has(options.runtimes[platform])) {
+      // A shared-runtime write already restored this platform; the fresh read confirms it.
+      options.onReverted?.(platform, plan.rollout);
+      continue;
+    }
     if (
       current === null ||
       !sameId(current.updateId, plan.rollout.updateId) ||
@@ -79,6 +91,7 @@ export async function unlockStagedControls(
       throw new Error(`${platform} control changed during unlock.`);
     await options.client.revertUpdateRollout('production', options.runtimes[platform], current.updateId);
     writtenRuntimes.add(options.runtimes[platform]);
+    options.onReverted?.(platform, current);
   }
   const platforms = {} as UnlockReceipt['platforms'];
   // Share the bounded propagation wait across both platform attestations.
@@ -135,38 +148,79 @@ async function main(): Promise<void> {
     },
   };
   validateUnlockExpectations(expected);
-  const assertCallerActive = createUnlockLeaseGuard({
-    requestId: process.env.REQUEST_ID,
-    serializedLease: process.env.OTA_UNLOCK_CALLER_LEASE,
-    repository: process.env.GITHUB_REPOSITORY,
-    token: process.env.GITHUB_TOKEN,
-    branch: process.env.OTA_BRANCH,
-    iosRuntime: process.env.IOS_RUNTIME_VERSION ?? '',
-    androidRuntime: process.env.ANDROID_RUNTIME_VERSION ?? '',
-  });
-  await assertCallerActive();
-  const manifestUrl = process.env.EXPO_UPDATES_URL || 'https://updates.boardsesh.com/manifest';
-  const client = await adminClientFromEnvironment({
-    appId: expected.appId,
-    defaultBaseUrl: manifestUrl,
-    environment: process.env,
-  });
-  const receipt = await unlockStagedControls({
-    ...expected,
-    client: protectUnlockWrites(client, assertCallerActive),
-    proof: {
-      repository: process.env.GITHUB_REPOSITORY ?? '',
-      requestId: process.env.REQUEST_ID ?? '',
-      runId: Number(process.env.GITHUB_RUN_ID),
-      headSha: process.env.GITHUB_SHA ?? '',
-    },
-    readHead: (platform) =>
-      readControlHead({ manifestUrl, appId: expected.appId, platform, runtimeVersion: expected.runtimes[platform] }),
-  });
-  await assertCallerActive();
-  mkdirSync(dirname(output), { recursive: true });
-  writeFileSync(output, `${JSON.stringify(receipt)}\n`, { flag: 'wx' });
-  console.log('Both staged controls restored and attested; no source receipt was changed.');
+  const eventsPath = process.env.OTA_DEPLOY_EVENTS_FILE;
+  const outbox =
+    eventsPath && existsSync(eventsPath)
+      ? parseDeploymentOutbox(JSON.parse(readFileSync(eventsPath, 'utf8')) as unknown)
+      : emptyDeploymentOutbox();
+  const saveEvents = () => {
+    if (!eventsPath) return;
+    mkdirSync(dirname(resolve(eventsPath)), { recursive: true });
+    writeFileSync(`${eventsPath}.tmp`, `${JSON.stringify(outbox, null, 2)}\n`);
+    renameSync(`${eventsPath}.tmp`, eventsPath);
+  };
+  try {
+    const assertCallerActive = createUnlockLeaseGuard({
+      requestId: process.env.REQUEST_ID,
+      serializedLease: process.env.OTA_UNLOCK_CALLER_LEASE,
+      repository: process.env.GITHUB_REPOSITORY,
+      token: process.env.GITHUB_TOKEN,
+      branch: process.env.OTA_BRANCH,
+      iosRuntime: process.env.IOS_RUNTIME_VERSION ?? '',
+      androidRuntime: process.env.ANDROID_RUNTIME_VERSION ?? '',
+    });
+    await assertCallerActive();
+    const manifestUrl = process.env.EXPO_UPDATES_URL || 'https://updates.boardsesh.com/manifest';
+    const client = await adminClientFromEnvironment({
+      appId: expected.appId,
+      defaultBaseUrl: manifestUrl,
+      environment: process.env,
+    });
+    const receipt = await unlockStagedControls({
+      ...expected,
+      client: protectUnlockWrites(client, assertCallerActive),
+      proof: {
+        repository: process.env.GITHUB_REPOSITORY ?? '',
+        requestId: process.env.REQUEST_ID ?? '',
+        runId: Number(process.env.GITHUB_RUN_ID),
+        headSha: process.env.GITHUB_SHA ?? '',
+      },
+      onReverted: (platform, rollout) => {
+        queueDeploymentEvent(
+          outbox,
+          {
+            kind: 'rollout-reverted',
+            branch: 'production',
+            platform,
+            runtimeVersion: expected.runtimes[platform],
+            runUrl: githubRunUrl(process.env),
+            reason: `Staged promotion restored control; update ${rollout.updateId}.`,
+          },
+          `${process.env.GITHUB_RUN_ID}:staged-unlock:${platform}:${expected.runtimes[platform]}:${rollout.updateId}`,
+        );
+        saveEvents();
+      },
+      readHead: (platform) =>
+        readControlHead({ manifestUrl, appId: expected.appId, platform, runtimeVersion: expected.runtimes[platform] }),
+    });
+    await assertCallerActive();
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, `${JSON.stringify(receipt)}\n`, { flag: 'wx' });
+    console.log('Both staged controls restored and attested; no source receipt was changed.');
+  } catch (error) {
+    queueDeploymentEvent(
+      outbox,
+      {
+        kind: 'failed',
+        branch: 'production',
+        reason: deploymentFailureReason('Staged control unlock', error),
+        runUrl: githubRunUrl(process.env),
+      },
+      `${process.env.GITHUB_RUN_ID}:staged-unlock:failed`,
+    );
+    saveEvents();
+    throw error;
+  }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
   main().catch((error: unknown) => {

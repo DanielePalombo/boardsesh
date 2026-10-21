@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { parse } from 'yaml';
 
 import buildExpoConfig, {
   ANDROID_BOARD_LINK_PREFIXES,
@@ -317,11 +318,14 @@ describe('mobile CI env parity (OTA fingerprint invariant)', () => {
     for (const { name, platform } of expectedWorkflowResolvers) {
       const source = readWorkflow(name);
       const resolverCalls = source.match(/vp exec expo-updates runtimeversion:resolve/g) ?? [];
-      expect(resolverCalls, `${name} must resolve each explicit fingerprint`).toHaveLength(name === OTA ? 7 : 1);
+      expect(resolverCalls, `${name} must resolve each explicit fingerprint`).toHaveLength(name === OTA ? 9 : 1);
       expect(source).toContain(
         `cd packages/mobile && vp exec expo-updates runtimeversion:resolve --platform ${platform}`,
       );
       if (name === OTA) {
+        // Both stability reads use one platform-aware resolver definition.
+        expect(source).toContain('runtime="$(resolve_train_runtime "$platform")"');
+        expect(source).toContain('confirmed="$(resolve_train_runtime "$platform")"');
         expect(source).toContain(
           'env -u GOOGLE_MAPS_API_KEY vp exec expo-updates runtimeversion:resolve --platform ios',
         );
@@ -351,7 +355,10 @@ describe('mobile CI env parity (OTA fingerprint invariant)', () => {
     const automaticFingerprintWorkflows = [NATIVE_IOS, NATIVE_ANDROID, OTA, OTA_CHECK, OTA_PREVIEW, ANDROID_PR, IOS_PR];
     for (const name of automaticFingerprintWorkflows) {
       const source = readWorkflow(name);
-      if (name === OTA_PREVIEW) {
+      if (name === OTA) {
+        // Every train push evaluates the version/runtime policy, including linker changes.
+        expect(parse(source).on.push.paths).toBeUndefined();
+      } else if (name === OTA_PREVIEW) {
         // Preview runs on every PR synchronization so it can delete a stale
         // branch when the last mobile diff disappears. Its in-job classifier,
         // rather than a trigger paths filter, must retain the fingerprint inputs.
@@ -607,12 +614,13 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(preview).toContain("['branch', `/api/apps/${appId}/branches/${encoded}`]");
   });
 
-  it('resets only when a revision can shrink the published platform set', () => {
+  it('resets new revisions and native changes before publishing runtime variants', () => {
     const preview = readWorkflow(OTA_PREVIEW);
 
-    // The reset takes a live preview offline for the length of a publish. It is worth
-    // that only when a platform can go native-only mid-PR, which needs a fingerprint
-    // path. A JS-only revision republishes in place.
+    // New JS-only revisions can conflict or fail on one target. The reset removes
+    // every older variant before publishing, and native changes still reset on retries.
+    expect(preview).toContain('const sameRevision = previous?.sha === pr.head.sha;');
+    expect(preview).toContain('!sameRevision');
     expect(preview).toContain('const affectsNativeFingerprint = (path) =>');
     // Every declared fingerprint input in packages/mobile/fingerprint.config.js must
     // be covered, or a native revision skips the reset and strands a stale platform.
@@ -635,7 +643,7 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(preview).toMatch(
       /^  reset:\n\s+needs: gate\n\s+if: needs\.gate\.outputs\.action == 'publish' && needs\.gate\.outputs\.needs_reset == 'true'$/m,
     );
-    expect(preview).toContain('needs_reset: ${{ steps.decide.outputs.needs_reset }}');
+    expect(preview).toContain('needs_reset: ${{ steps.pin.outputs.needs_reset }}');
     expect(preview).toContain("core.setOutput('needs_reset', String(needsReset));");
 
     // An unresolved file list must keep the old unconditional reset: the declaration
@@ -735,61 +743,20 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(sweep).toMatch(/Could not list open PRs[^\n]*\n\s*exit 1/);
   });
 
-  it('carries the compat fingerprints through to the preview comment', () => {
-    // A pr-<n> branch is offered only to a binary whose runtimeVersion matches it
-    // EXACTLY. When a native change lands on main, every un-rebased PR keeps the old
-    // fingerprint, its publish is skipped, and the tester's picker silently empties.
-    // Naming both hashes on the PR is what makes that visible, so keep the chain
-    // wired: the check emits them, the job forwards them, the comment prints them.
-    const check = readFileSync(resolve(REPO_ROOT, 'scripts/mobile-ota-compat-check.ts'), 'utf8');
+  it('pins both preview bases before executing candidate code and reports per-base runtimes', () => {
     const preview = readWorkflow(OTA_PREVIEW);
-    for (const platform of ['ios', 'android']) {
-      expect(check, `compat check must emit fingerprint_${platform}`).toContain(`\`fingerprint_${platform}=`);
-      expect(check, `compat check must emit base_fingerprint_${platform}`).toContain(`\`base_fingerprint_${platform}=`);
-      expect(preview).toContain(`fingerprint_${platform}: \${{ steps.compat.outputs.fingerprint_${platform} }}`);
-      expect(preview).toContain(
-        `FINGERPRINT_${platform.toUpperCase()}: \${{ needs.publish.outputs.fingerprint_${platform} }}`,
-      );
-    }
-    expect(preview).toContain('| Platform | Status | Fingerprint |');
-    // Two unresolved hashes compare equal; saying "matches main" there would
-    // invent a reassurance out of a failed resolve.
-    expect(preview).toContain("if (mine === '—') return '`—` (unresolved)';");
-  });
-
-  it('tells "adds native code" apart from "behind a native change on main"', () => {
-    // The two need opposite fixes — a store build vs a rebase — so the skip must not
-    // give one message. Containment is the free signal: origin/main is already
-    // fetched for the baseline worktree.
-    const preview = readWorkflow(OTA_PREVIEW);
-    expect(preview).toContain('git merge-base --is-ancestor "origin/$BASELINE" HEAD');
-    expect(preview).toContain('behind_main: ${{ steps.behind.outputs.behind_main }}');
-    // Three-valued on purpose. --is-ancestor exits >1 on a real error, and folding
-    // that into "not contained" would tell a genuinely native PR to rebase — the
-    // opposite of what it needs. Only the literal 'true' claims the PR is behind.
-    expect(preview).toContain('*) behind=unknown');
-    expect(preview).toContain("const behindMain = process.env.BEHIND_MAIN === 'true';");
-    // Worded as "rebase, then re-check", not "rebase to fix": a PR can be behind
-    // main AND add native code of its own, and containment cannot separate those
-    // without a third fingerprint resolve. Promising a rebase is sufficient would
-    // be wrong in that overlap.
-    expect(preview).toContain('behind a native change on \\`${baseline}\\` — rebase, then re-check');
-    expect(preview).toContain('needs a TestFlight/Play build');
-  });
-
-  it('compares a release-train PR against release/next, not main', () => {
-    // A PR into release/next ships to the train's TestFlight build, whose fingerprint
-    // is the train's. Diffing it against main reported every train PR as "behind a
-    // native change on main" and published nothing (#5898). The base comes from the
-    // API before any PR-author code runs, and is allowlisted so a PR aimed anywhere
-    // else still compares against main.
-    const preview = readWorkflow(OTA_PREVIEW);
-    expect(preview).toContain("const ref = ['main', 'release/next'].includes(pr.base.ref) ? pr.base.ref : 'main';");
-    expect(preview).toContain('git worktree add "$RUNNER_TEMP/main-baseline" "origin/$BASELINE"');
-    expect(preview).not.toContain('git worktree add "$RUNNER_TEMP/main-baseline" origin/main');
-    expect(preview.indexOf('- name: Resolve the baseline branch')).toBeLessThan(
-      preview.indexOf('- name: Install dependencies (PR tree)'),
-    );
+    expect(preview).toContain('Pin both preview bases');
+    expect(preview).toContain("core.setOutput('source_base_sha', bases.sourceBaseSha)");
+    expect(preview).toContain("core.setOutput('main_sha', bases.mainSha)");
+    expect(preview).toContain("core.setOutput('train_sha', bases.trainSha)");
+    expect(preview).toContain('Rebase and compare both pinned preview candidates');
+    expect(preview).toContain('SUMMARY: ${{ needs.publish.outputs.summary }}');
+    expect(preview).toContain('| Base | Platform | Status | Runtime |');
+    const helper = readFileSync(resolve(REPO_ROOT, 'scripts/mobile-ota-preview-candidates.ts'), 'utf8');
+    expect(helper.replace(/\s+/g, ' ')).toContain("'--pr-dir', directory, '--base-dir', baseline");
+    expect(helper).toContain('isReleaseTrainActive(');
+    expect(helper.replace(/\s+/g, ' ')).toContain("'commit-tree', sourceTree, '-p', mergeBase");
+    expect(helper.replace(/\s+/g, ' ')).toContain("'cherry-pick', '--allow-empty', '--keep-redundant-commits'");
   });
 
   it('lists the sweep inventory with the dashboard admin session, not the eoo_ key', () => {
@@ -806,8 +773,9 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
 
   it('publishes the preview to a pr-<number> branch, never production', () => {
     const preview = readWorkflow(OTA_PREVIEW);
-    expect(preview).toMatch(/--channel "\$BRANCH" --platform ios/);
-    expect(preview).toMatch(/--channel "\$BRANCH" --platform android/);
+    const helper = readFileSync(resolve(REPO_ROOT, 'scripts/mobile-ota-preview-candidates.ts'), 'utf8');
+    expect(helper).toContain("'--channel', branch, '--platform', platform");
+    expect(helper).toContain('Refusing non-preview branch.');
     expect(preview).not.toMatch(/^  map:/m);
   });
 
@@ -884,16 +852,15 @@ describe('mobile OTA preview branch isolation + S3 lifecycle coupling', () => {
     expect(idFrom('scripts/lib/ota-branch-probe.ts', 'OTA_APP_ID'), 'ota-branch-probe OTA_APP_ID').toBe(shared);
   });
 
-  it('keeps the Android maps key on the Android publish step, which the surfability probe depends on', () => {
-    // GOOGLE_MAPS_API_KEY is an Android-only fingerprint input, so `mobile:publish`
-    // resolves the runtimeVersion to probe with inside the step that has it. Moving
-    // the key (or resolving the hash anywhere else — the compat step has no key)
-    // makes the probe ask about a runtimeVersion nothing was published under, which
-    // failed a healthy publish in run 34796068541.
+  it('passes maps only to Android publishers after comparing without secrets', () => {
     const preview = readWorkflow(OTA_PREVIEW);
-    const androidStep = otaStep(preview, 'Publish Android OTA');
-    expect(androidStep).toContain('GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}');
-    expect(otaStep(preview, 'Publish iOS OTA')).not.toContain('GOOGLE_MAPS_API_KEY');
+    const helper = readFileSync(resolve(REPO_ROOT, 'scripts/mobile-ota-preview-candidates.ts'), 'utf8');
+    expect(otaStep(preview, 'Rebase and compare both pinned preview candidates')).not.toContain('secrets.');
+    expect(otaStep(preview, 'Publish compatible preview runtime variants')).toContain(
+      'GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}',
+    );
+    expect(helper).toContain("if (platform === 'ios') delete publishEnv.GOOGLE_MAPS_API_KEY;");
+    expect(helper).toContain('delete compatibilityEnv.GOOGLE_MAPS_API_KEY;');
   });
 
   it('uses pull_request (never pull_request_target) so fork jobs get no secrets', () => {

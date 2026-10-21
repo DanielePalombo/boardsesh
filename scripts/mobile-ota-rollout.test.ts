@@ -1,13 +1,34 @@
 /// <reference types="node" />
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { otaReleasePolicy } from '../infra/ota/config';
 import { FAKE_APP, fakeXprem } from './__tests__/helpers/fake-xprem';
-import { parseRolloutArgs, runRolloutCommand } from './mobile-ota-rollout';
+import { deliverRolloutNotifications, parseRolloutArgs, runRolloutCommand } from './mobile-ota-rollout';
+import { emptyDeploymentOutbox, queueDeploymentEvent } from './lib/ota-deployment-events';
 
 const RTV = 'a'.repeat(40);
 const OTHER_RTV = 'b'.repeat(40);
 const POLICY = otaReleasePolicy.health;
+
+it('retains failed delivery without throwing after a successful manual rollout', async () => {
+  const outbox = emptyDeploymentOutbox();
+  queueDeploymentEvent(outbox, { kind: 'rollout-increased', branch: 'production', percentage: 25 }, 'manual-25');
+  const warnings: string[] = [];
+  await expect(
+    deliverRolloutNotifications(
+      {
+        outbox,
+        webhook: 'https://example.com/webhook',
+        save: () => undefined,
+        fetcher: async () => new Response('unavailable', { status: 503 }),
+      },
+      (message) => warnings.push(message),
+    ),
+  ).resolves.toBeUndefined();
+  expect(outbox.pending).toHaveLength(1);
+  expect(outbox.sent).toEqual([]);
+  expect(warnings).toEqual([expect.stringContaining('OTA operation status preserved')]);
+});
 const rolloutPath = (branch: string, runtimeVersion: string): string =>
   `${FAKE_APP}/branch/${branch}/runtimeVersion/${runtimeVersion}/rollout`;
 const LIVE = { active: true, updates: [{ updateId: 11, controlUpdateId: 10, platform: 'ios', percentage: 5 }] };
@@ -76,6 +97,41 @@ describe('parseRolloutArgs', () => {
 });
 
 describe('runRolloutCommand', () => {
+  it('reports a confirmed first platform when the second platform write fails', async () => {
+    const server = fakeXprem({
+      [`GET ${rolloutPath('production', RTV)}`]: {
+        active: true,
+        updates: [...LIVE.updates, { updateId: 12, controlUpdateId: 10, platform: 'android', percentage: 5 }],
+      },
+      [`PUT ${rolloutPath('production', RTV)}`]: (request) =>
+        (request.body as { expectedUpdateId: number }).expectedUpdateId === 11 ? { status: 204 } : { status: 503 },
+    });
+    const confirmed = vi.fn();
+    await expect(
+      runRolloutCommand(
+        server.client,
+        parseRolloutArgs(['set', '--runtime-version', RTV, '--percentage', '25']),
+        POLICY,
+        confirmed,
+      ),
+    ).rejects.toThrow('Split state');
+    expect(confirmed).toHaveBeenCalledExactlyOnceWith(
+      'rollout-increased',
+      expect.objectContaining({ platform: 'ios', percentage: 25, updateId: 11 }),
+    );
+  });
+  it('does not report read-only commands or a no-op revert as deployments', async () => {
+    const server = fakeXprem({ [`GET ${rolloutPath('production', RTV)}`]: { active: false } });
+    const confirmed = vi.fn();
+    await runRolloutCommand(server.client, parseRolloutArgs(['status', '--runtime-version', RTV]), POLICY, confirmed);
+    await runRolloutCommand(
+      server.client,
+      parseRolloutArgs(['revert', '--runtime-version', RTV, '--if-live']),
+      POLICY,
+      confirmed,
+    );
+    expect(confirmed).not.toHaveBeenCalled();
+  });
   it('status without a runtime version walks every one, per platform', async () => {
     const server = fakeXprem({
       [`GET ${FAKE_APP}/branch/production/runtimeVersions`]: [{ runtimeVersion: RTV }, { runtimeVersion: OTHER_RTV }],

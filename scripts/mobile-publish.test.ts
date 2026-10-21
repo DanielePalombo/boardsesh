@@ -8,6 +8,7 @@ import {
   PREVIEW_RUNTIME_RESOLUTION_BUDGET_MINUTES,
   type OtaPublishPlatform,
   type PlatformPublishOutcome,
+  type PublishCommandRequest,
 } from './lib/mobile-publish-retry';
 import {
   buildEasUpdateArgs,
@@ -25,6 +26,8 @@ import {
   selfHostedPublishModeLabel,
   selfHostedPublishSuccessMessages,
   shouldAllowDirtyTree,
+  authorizePublishRuntime,
+  assertPublishTrainAuthorization,
 } from './mobile-publish';
 
 // The repo's Next global.d.ts augments NodeJS.ProcessEnv to require NODE_ENV, so
@@ -359,6 +362,125 @@ describe('resolving the runtimeVersion a publish targeted', () => {
     expect(runsInGithubActions({ GITHUB_ACTIONS: 'true' })).toBe(true);
     expect(runsInGithubActions({ CI: '1' })).toBe(false);
     expect(runsInGithubActions({})).toBe(false);
+  });
+});
+
+describe('guarded train publish runtime', () => {
+  const fingerprint = 'a'.repeat(40);
+  it('identifies missing store evidence explicitly before any upload', () => {
+    const mainSha = 'd'.repeat(40);
+    const trainSha = 'e'.repeat(40);
+    const git = vi.fn((_binary: string, arguments_: readonly string[]) => {
+      if (arguments_[0] === 'fetch') return '';
+      return arguments_[1] === 'origin/main' ? mainSha : trainSha;
+    });
+    expect(() =>
+      assertPublishTrainAuthorization(
+        'ios',
+        processEnv({
+          GITHUB_ACTIONS: 'true',
+          OTA_EXPECT_MAIN_SHA: mainSha,
+          OTA_EXPECT_TRAIN_SHA: trainSha,
+          OTA_EXPECT_RUNTIME_VERSION: fingerprint,
+        }),
+        git as unknown as typeof execFileSync,
+      ),
+    ).toThrow('Missing OTA_LIVE_STORE_RUNTIMES');
+  });
+  it('independently resolves without overrides and freezes the authorized runtime for the upload', () => {
+    const input = processEnv({
+      GITHUB_ACTIONS: 'true',
+      OTA_EXPECT_RUNTIME_VERSION: fingerprint,
+      EXPO_UPDATES_FINGERPRINT_OVERRIDE: 'b'.repeat(40),
+      GOOGLE_MAPS_API_KEY: 'maps-key',
+    });
+    const resolver = vi.fn((_platform: OtaPublishPlatform, rawEnv: NodeJS.ProcessEnv) => {
+      expect(rawEnv.EXPO_UPDATES_FINGERPRINT_OVERRIDE).toBeUndefined();
+      expect(rawEnv.OTA_EXPECT_RUNTIME_VERSION).toBeUndefined();
+      expect(rawEnv.GOOGLE_MAPS_API_KEY).toBe('maps-key');
+      return fingerprint;
+    });
+    const authorized = authorizePublishRuntime('android', input, resolver);
+    expect(authorized.EXPO_UPDATES_FINGERPRINT_OVERRIDE).toBe(fingerprint);
+    expect(authorized.OTA_EXPECT_RUNTIME_VERSION).toBeUndefined();
+    expect(input.EXPO_UPDATES_FINGERPRINT_OVERRIDE).toBe('b'.repeat(40));
+  });
+
+  it.each([null, 'b'.repeat(40)])('blocks publication when independent resolver returns %s', (resolved) => {
+    expect(() =>
+      authorizePublishRuntime(
+        'ios',
+        processEnv({ GITHUB_ACTIONS: 'true', OTA_EXPECT_RUNTIME_VERSION: fingerprint }),
+        () => resolved,
+      ),
+    ).toThrow(/changed or could not be confirmed/);
+  });
+
+  it('requires CI and a full runtime when an expected hash is supplied', () => {
+    expect(() => authorizePublishRuntime('ios', processEnv({ OTA_EXPECT_RUNTIME_VERSION: fingerprint }))).toThrow();
+    expect(() =>
+      authorizePublishRuntime('ios', processEnv({ GITHUB_ACTIONS: 'true', OTA_EXPECT_RUNTIME_VERSION: 'unknown' })),
+    ).toThrow();
+    const unchanged = processEnv({});
+    expect(authorizePublishRuntime('ios', unchanged)).toBe(unchanged);
+  });
+
+  it('stops a pending upload retry when either pinned remote branch advances', async () => {
+    const mainSha = 'd'.repeat(40);
+    const trainSha = 'e'.repeat(40);
+    const publicFingerprint = 'b'.repeat(40);
+    const runtime = (platform: string) => ({
+      version: '2.6.0',
+      buildNumber: 41,
+      runtimeVersion: publicFingerprint,
+      buildTag: `build-${platform}-v2.6.0-41-${publicFingerprint.slice(0, 12)}`,
+      commit: mainSha,
+      protectedRuntimeVersions: [publicFingerprint],
+    });
+    for (const movedBranch of ['origin/main', 'origin/release/next']) {
+      let fetchCount = 0;
+      const git = vi.fn((_command: string, args: string[]) => {
+        if (args[0] === 'fetch') {
+          fetchCount += 1;
+          return '';
+        }
+        if (args[0] === 'tag') return '';
+        if (args[0] === 'rev-parse') {
+          if (args[1] === movedBranch && fetchCount > 1) return 'f'.repeat(40);
+          return args[1] === 'origin/main' ? mainSha : trainSha;
+        }
+        throw new Error('Unexpected git command');
+      });
+      const env = processEnv({
+        GITHUB_ACTIONS: 'true',
+        OTA_EXPECT_RUNTIME_VERSION: fingerprint,
+        OTA_EXPECT_MAIN_SHA: mainSha,
+        OTA_EXPECT_TRAIN_SHA: trainSha,
+        OTA_LIVE_STORE_RUNTIMES: JSON.stringify({
+          schemaVersion: 1,
+          checkedAt: new Date().toISOString(),
+          ios: runtime('ios'),
+          android: runtime('android'),
+        }),
+      });
+      const upload = vi.fn(async (request: PublishCommandRequest) => {
+        request.onStderr('<Code>SlowDown</Code><Message>Please reduce your request rate.</Message>');
+        return { exitCode: 1 };
+      });
+      const outcome = await publishSelfHostedPlatformWithRetry(
+        { platform: 'ios', command: 'vp', args: [], cwd: '.', env },
+        {
+          beforeAttempt: () => assertPublishTrainAuthorization('ios', env, git as unknown as typeof execFileSync),
+          runner: upload,
+          sleeper: async () => undefined,
+          stdout: { write: () => undefined },
+          stderr: { write: () => undefined },
+        },
+      );
+      expect(outcome).toMatchObject({ success: false, attempts: 1, failureKind: 'permanent' });
+      expect(upload).toHaveBeenCalledTimes(1);
+      expect(fetchCount).toBe(2);
+    }
   });
 });
 

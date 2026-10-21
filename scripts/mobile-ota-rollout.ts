@@ -49,6 +49,17 @@ import type { ActiveRollout, RolloutPlatform } from './lib/ota-rollout.ts';
 import { adminClientFromEnvironment } from './lib/xprem-admin.mts';
 import { createUnlockLeaseGuard, protectUnlockWrites } from './lib/ota-unlock-lease.mjs';
 import type { XpremAdminClient } from './lib/xprem-admin.mts';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+  deploymentFailureReason,
+  deliverDeploymentEvents,
+  emptyDeploymentOutbox,
+  githubRunUrl,
+  parseDeploymentOutbox,
+  queueDeploymentEvent,
+} from './lib/ota-deployment-events.ts';
+import type { DeploymentEvent } from './lib/ota-deployment-events.ts';
 
 const LOG = '[ota-rollout]';
 const COMMANDS = ['status', 'set', 'finish', 'revert', 'health'] as const;
@@ -162,6 +173,7 @@ export async function runRolloutCommand(
   client: XpremAdminClient,
   args: RolloutArgs,
   policy: OtaHealthPolicy,
+  onConfirmed?: (kind: DeploymentEvent['kind'], rollout: ActiveRollout) => void,
 ): Promise<string[]> {
   const target = {
     branch: args.branch,
@@ -196,7 +208,10 @@ export async function runRolloutCommand(
   }
 
   if (args.command === 'revert') {
-    const reverted = await revertRollout(client, target, { allowNone: args.ifLive });
+    const reverted = await revertRollout(client, target, {
+      allowNone: args.ifLive,
+      onConfirmed: (rollout) => onConfirmed?.('rollout-reverted', rollout),
+    });
     if (reverted.length === 0) {
       return [`${LOG} No live rollout on "${args.branch}" runtime ${target.runtimeVersion}. Nothing to revert.`];
     }
@@ -204,32 +219,103 @@ export async function runRolloutCommand(
   }
 
   const percentage = args.command === 'finish' ? 100 : (args.percentage ?? 0);
-  const changed = await setRolloutPercentage(client, target, percentage);
+  const changed = await setRolloutPercentage(client, target, percentage, {
+    onConfirmed: (rollout) =>
+      onConfirmed?.(args.command === 'finish' ? 'rollout-finished' : 'rollout-increased', rollout),
+  });
   if (changed.length === 0) return [`${LOG} Already at ${percentage}%. Nothing was changed.`];
   return changed.map((rollout) =>
     args.command === 'finish' ? `${LOG} Finished ${rolloutLine(rollout)}.` : `${LOG} Raised ${rolloutLine(rollout)}.`,
   );
 }
 
+/** A webhook outage must not change the outcome of a confirmed OTA operation. */
+export async function deliverRolloutNotifications(
+  options: Parameters<typeof deliverDeploymentEvents>[0],
+  warn: (message: string) => void = console.warn,
+): Promise<void> {
+  try {
+    await deliverDeploymentEvents(options);
+  } catch (error) {
+    warn(
+      `[ota-rollout] Notification failed; OTA operation status preserved: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseRolloutArgs(process.argv.slice(2));
-  const assertCallerActive = createUnlockLeaseGuard({
-    requestId: process.env.REQUEST_ID,
-    serializedLease: process.env.OTA_UNLOCK_CALLER_LEASE,
-    repository: process.env.GITHUB_REPOSITORY,
-    token: process.env.GITHUB_TOKEN,
-    branch: args.branch,
-    iosRuntime: process.env.IOS_RUNTIME_VERSION ?? '',
-    androidRuntime: process.env.ANDROID_RUNTIME_VERSION ?? '',
-  });
-  await assertCallerActive();
-  const client = await adminClientFromEnvironment({
-    appId: desiredOtaState.appId,
-    defaultBaseUrl: desiredOtaState.baseUrl,
-    environment: process.env,
-  });
-  const protectedClient = args.command === 'revert' ? protectUnlockWrites(client, assertCallerActive) : client;
-  for (const line of await runRolloutCommand(protectedClient, args, otaReleasePolicy.health)) console.log(line);
+  const eventsPath = process.env.OTA_DEPLOY_EVENTS_FILE;
+  const outbox =
+    eventsPath && existsSync(eventsPath)
+      ? parseDeploymentOutbox(JSON.parse(readFileSync(eventsPath, 'utf8')) as unknown)
+      : emptyDeploymentOutbox();
+  const save = () => {
+    if (!eventsPath) return;
+    mkdirSync(dirname(resolve(eventsPath)), { recursive: true });
+    writeFileSync(`${eventsPath}.tmp`, `${JSON.stringify(outbox, null, 2)}\n`);
+    renameSync(`${eventsPath}.tmp`, eventsPath);
+  };
+  const writes = ['set', 'finish', 'revert'].includes(args.command);
+  const record = (kind: DeploymentEvent['kind'], rollout: ActiveRollout) => {
+    if (rollout.platform !== 'ios' && rollout.platform !== 'android') return;
+    queueDeploymentEvent(
+      outbox,
+      {
+        kind,
+        branch: rollout.branch,
+        platform: rollout.platform,
+        runtimeVersion: rollout.runtimeVersion,
+        ...(kind === 'rollout-reverted' ? {} : { percentage: rollout.percentage }),
+        runUrl: githubRunUrl(process.env),
+        reason: `Manual ${args.command}; update ${rollout.updateId}.`,
+      },
+      `${rollout.branch}:${rollout.runtimeVersion}:${rollout.platform}:${rollout.updateId}:${kind}:${rollout.percentage}`,
+    );
+    save();
+  };
+  try {
+    const assertCallerActive = createUnlockLeaseGuard({
+      requestId: process.env.REQUEST_ID,
+      serializedLease: process.env.OTA_UNLOCK_CALLER_LEASE,
+      repository: process.env.GITHUB_REPOSITORY,
+      token: process.env.GITHUB_TOKEN,
+      branch: args.branch,
+      iosRuntime: process.env.IOS_RUNTIME_VERSION ?? '',
+      androidRuntime: process.env.ANDROID_RUNTIME_VERSION ?? '',
+    });
+    await assertCallerActive();
+    const client = await adminClientFromEnvironment({
+      appId: desiredOtaState.appId,
+      defaultBaseUrl: desiredOtaState.baseUrl,
+      environment: process.env,
+    });
+    const protectedClient = args.command === 'revert' ? protectUnlockWrites(client, assertCallerActive) : client;
+    for (const line of await runRolloutCommand(protectedClient, args, otaReleasePolicy.health, record))
+      console.log(line);
+  } catch (error) {
+    if (writes) {
+      queueDeploymentEvent(
+        outbox,
+        {
+          kind: 'failed',
+          branch: args.branch,
+          runtimeVersion: args.runtimeVersion ?? undefined,
+          reason: deploymentFailureReason(`Manual ${args.command}`, error),
+          runUrl: githubRunUrl(process.env),
+        },
+        `${process.env.GITHUB_RUN_ID ?? new Date().toISOString()}:${args.command}:${args.runtimeVersion}:failed`,
+      );
+      save();
+    }
+    throw error;
+  } finally {
+    // A trusted local invocation may supply a webhook. Workflows instead upload
+    // the outbox for a separate main-only Production job to deliver.
+    if (writes && process.env.DISCORD_DEPLOY_WEBHOOK) {
+      await deliverRolloutNotifications({ outbox, webhook: process.env.DISCORD_DEPLOY_WEBHOOK, save });
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

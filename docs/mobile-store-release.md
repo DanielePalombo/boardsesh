@@ -13,7 +13,8 @@ Native changes temporarily stop older binaries receiving new compatible OTAs.
 Keep the backend compatible with installed builds, and move the replacement
 binaries through QA and review promptly. `main` still owns the store fleet's OTA
 delivery; the train's OTA guard prevents a train bundle taking over a runtime
-that main also uses.
+currently offered by either public store. The train is active for OTA publication
+and dual PR previews when its marketing version differs from `main`.
 
 Source of truth for uploaded material:
 
@@ -100,10 +101,16 @@ merge-back PR from `release/next` into `main`. Two readiness checks run on it
 the merge will contain, the other whether both stores can take a submission now.
 Merge it **as a merge commit, never a squash**. Merging submits that version to
 both stores for review (§4); iOS releases once Apple approves it, Android rolls
-out to 100% once Play approves it. After it lands, `main`'s fingerprint equals
-the train's, so `main`'s OTA publisher serves the new fleet again. Do not delete
-or reset the branch. The next sync run sees the merged PR, treats the version as
-released, and moves the train to `main` with the next patch version.
+out to 100% once Play approves it. The manual submission workflows also require
+the immutable tester build tag's source commit to be an ancestor of the latest
+`origin/main`; running a submission workflow from `main` alone is insufficient.
+
+After the merge lands, `main`'s fingerprint equals the train's. Daily production
+soaks pause until both public stores offer those runtimes. Staging and early
+updates continue, and urgent fixes for an older runtime use the existing
+backport workflow. Do not delete or reset the branch. The next sync run sees
+the merged PR, treats the version as released, and moves the train to `main`
+with the next patch version.
 
 **Branch protection.** The ruleset "Protect release train branch" blocks deleting
 and force-pushing `release/next`. Only the repository App (`OTA_PUSH_APP_ID`)
@@ -236,14 +243,17 @@ exact commit, store build number, and fingerprint in an immutable
 `fingerprint-<platform>-<hash>` tag prevents duplicate native builds when a later
 push to the train is JS-only and its version already has a build.
 
-**OTAs during the train.** `release/next` publishes production OTAs too, so the
-testers on the train's binary get JS as fast as main's fleet does, including after
-a sync. The guard is fingerprint identity: xprem serves the newest update per
-runtimeVersion, so the train publishes a platform only when it carries a native
-change of its own, meaning its fingerprint differs from both `main`'s and the
-merge-base's. A superseded push run (a later push to the train already exists)
-publishes nothing. Until the train has such a change, its testers run on a
-runtimeVersion `main`'s publisher already serves.
+**OTAs during the train.** Every push to an active train starts an immediate OTA
+publication, including merges and syncs. It does not wait for the daily soak.
+Xprem selects updates per runtime, so a train platform publishes only when its
+fingerprint differs from the live public store runtimes. Store state is read
+from trusted tooling, and exact immutable build and fingerprint tags identify
+the installed native code. A runtime also becomes reserved for public release
+once an immutable native build using it has merged into `main`, even while that
+build awaits review or `main` has advanced to another runtime. A pending approval
+or tester build is not a live store runtime. Missing or ambiguous evidence blocks publication. Superseded
+push runs publish nothing. A version-only train can share the public runtime;
+that platform stays on regular production updates until its native inputs differ.
 
 ### Version-only releases
 
@@ -713,9 +723,10 @@ Release share the `play-production-track` job lock, so the guard's read and the 
 write never interleave with a release. Before the lock, a draft run read 2.6.0 as a
 draft four seconds before a release committed it, then wrote a second draft on top.
 
-Until Android reaches production, the daily stable OTA controller has no Android
-devices to judge on that native runtime. Release Android promptly after its store
-draft appears (see `docs/mobile-ota-updates.md`, "Daily stable runbook").
+The daily stable OTA controller starts only when both candidate platform runtimes
+match the newest live public store builds. An Android draft, approval awaiting
+publication, or tester-track release does not qualify. Release both store builds
+after merging the train so daily production soaks can resume.
 
 Before submission, dispatch **Mobile Store Audit** (`mobile-store-audit.yml`) on
 `main` with the exact marketing version and iOS build number. It reads App Store

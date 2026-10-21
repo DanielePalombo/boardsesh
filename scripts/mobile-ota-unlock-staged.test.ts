@@ -47,14 +47,57 @@ function fixture(active: OtaPlatform[] = ['ios', 'android'], sharedRuntime = fal
     }),
   };
   const readHead = vi.fn(async (platform: OtaPlatform) => ({ ...heads[platform] }));
-  const run = (verificationDelaysMs: readonly number[] = []) =>
-    unlockStagedControls({ ...expected, proof: unlockProof, client, readHead, verificationDelaysMs });
+  const run = (
+    verificationDelaysMs: readonly number[] = [],
+    onReverted?: (platform: OtaPlatform, rollout: XpremRolloutUpdate) => void,
+  ) => unlockStagedControls({ ...expected, proof: unlockProof, client, readHead, verificationDelaysMs, onReverted });
   return { expected, heads, rollouts, client, readHead, run };
 }
 
 describe('staged control unlock', () => {
+  it.each([false, true])('reports both confirmed reversions once, shared runtime=%s', async (sharedRuntime) => {
+    const { run, client, rollouts } = fixture(['ios', 'android'], sharedRuntime);
+    const onReverted = vi.fn((platform: OtaPlatform) => {
+      expect(rollouts[platform]).toBeNull();
+    });
+    await run([], onReverted);
+    expect(client.revertUpdateRollout).toHaveBeenCalledTimes(sharedRuntime ? 1 : 2);
+    expect(onReverted.mock.calls.map(([platform]) => platform)).toEqual(['ios', 'android']);
+    expect(onReverted).toHaveBeenNthCalledWith(1, 'ios', expect.objectContaining({ updateId: 11 }));
+    expect(onReverted).toHaveBeenNthCalledWith(2, 'android', expect.objectContaining({ updateId: 21 }));
+  });
+  it('does not report no-op unlocks as deployment changes', async () => {
+    const { run } = fixture([]);
+    const onReverted = vi.fn();
+    await run([], onReverted);
+    expect(onReverted).not.toHaveBeenCalled();
+  });
+  it('reports the confirmed first platform when the second write fails without issuing a receipt', async () => {
+    const { run, client } = fixture();
+    const onReverted = vi.fn();
+    const revert = client.revertUpdateRollout.getMockImplementation()!;
+    client.revertUpdateRollout.mockImplementation(async (branch, runtime, identifier) => {
+      if (runtime === unlockExpected.runtimes.android) throw new Error('second platform failed');
+      return revert(branch, runtime, identifier);
+    });
+    await expect(run([], onReverted)).rejects.toThrow('second platform failed');
+    expect(onReverted).toHaveBeenCalledExactlyOnceWith('ios', expect.objectContaining({ updateId: 11 }));
+  });
+  it('retains confirmed events when the final control attestation refuses a receipt', async () => {
+    const { run, heads, client } = fixture();
+    const onReverted = vi.fn();
+    const revert = client.revertUpdateRollout.getMockImplementation()!;
+    client.revertUpdateRollout.mockImplementation(async (...args) => {
+      await revert(...args);
+      heads.ios.contentSha256 = 'f'.repeat(64);
+    });
+    await expect(run([], onReverted)).rejects.toThrow('did not preserve the staged control');
+    expect(onReverted).toHaveBeenCalledTimes(2);
+  });
+
   it.each(['step-ended', 'expired'])('blocks the second staged write when caller %s', async (failure) => {
     const staged = fixture();
+    const onReverted = vi.fn();
     const lifetime = callerLeaseFixture();
     const revert = staged.client.revertUpdateRollout.getMockImplementation()!;
     staged.client.revertUpdateRollout.mockImplementation(async (...args) => {
@@ -69,10 +112,12 @@ describe('staged control unlock', () => {
         readHead: staged.readHead,
         client: protectUnlockWrites(staged.client, lifetime.guard),
         verificationDelaysMs: [],
+        onReverted,
       }),
     ).rejects.toThrow(/wait step|expired/);
     expect(staged.client.revertUpdateRollout).toHaveBeenCalledTimes(1);
     expect(staged.rollouts.android).not.toBeNull();
+    expect(onReverted).toHaveBeenCalledExactlyOnceWith('ios', expect.objectContaining({ updateId: 11 }));
   });
   it.each([{ selected: ['ios', 'android'] }, { selected: ['ios'] }, { selected: [] }] as { selected: OtaPlatform[] }[])(
     'attests exactly the requested controls with live platforms $selected',

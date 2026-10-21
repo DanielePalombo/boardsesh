@@ -128,6 +128,7 @@ async function writeEach(
   action: WriteAction,
   alreadyDone: (current: ActiveRollout) => boolean,
   write: (current: ActiveRollout) => Promise<void>,
+  onConfirmed?: (current: ActiveRollout) => void,
 ): Promise<ActiveRollout[]> {
   const written: ActiveRollout[] = [];
   for (const rollout of planned) {
@@ -157,6 +158,7 @@ async function writeEach(
       );
     }
     written.push(current);
+    onConfirmed?.(current);
   }
   return written;
 }
@@ -166,6 +168,7 @@ export async function setRolloutPercentage(
   client: XpremAdminClient,
   target: RolloutTarget,
   percentage: number,
+  options: { onConfirmed?: (current: ActiveRollout) => void } = {},
 ): Promise<ActiveRollout[]> {
   if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) {
     throw new Error('A rollout percentage is a whole number from 1 to 100.');
@@ -187,6 +190,7 @@ export async function setRolloutPercentage(
       : { done: `raised to ${percentage}%`, command: `set --percentage ${percentage}` },
     (current) => current.percentage === percentage,
     (current) => client.setUpdateRolloutPercentage(target.branch, target.runtimeVersion, percentage, current.updateId),
+    (current) => options.onConfirmed?.({ ...current, percentage }),
   );
   return changed.map((rollout) => ({ ...rollout, percentage }));
 }
@@ -201,7 +205,7 @@ export async function setRolloutPercentage(
 export async function revertRollout(
   client: XpremAdminClient,
   target: RolloutTarget,
-  options: { allowNone?: boolean } = {},
+  options: { allowNone?: boolean; onConfirmed?: (current: ActiveRollout) => void } = {},
 ): Promise<ActiveRollout[]> {
   const targeted = matchingTarget(await readRollout(client, target.branch, target.runtimeVersion), target);
   if (targeted.length === 0) {
@@ -216,6 +220,7 @@ export async function revertRollout(
       { done: 'reverted', command: 'revert' },
       () => false,
       (current) => client.revertUpdateRollout(target.branch, target.runtimeVersion, current.updateId),
+      options.onConfirmed,
     );
   } catch (error) {
     // It ended between the read above and the write: with allowNone that is the

@@ -73,6 +73,8 @@ describe('mobile-ota-boot-check.yml', () => {
       'scripts/lib/ota-boot-check.ts',
       'scripts/mobile-ota-boot-preview.ts',
       'scripts/lib/ota-preview-boot-receipt.ts',
+      'scripts/mobile-ota-preview-source.ts',
+      'scripts/mobile-ota-preview-candidates.ts',
       'scripts/lib/ota-publish-protocol.ts',
     ]);
   });
@@ -104,26 +106,47 @@ describe('mobile-ota-boot-check.yml', () => {
     expect(receipt.run).toContain('elif [ -n "$RECEIPT_JSON" ]; then');
   });
 
-  it('archives a preview receipt only after both actual publisher steps succeed', () => {
+  it('retains receipts and exact generated source from the same candidate publication', () => {
     const preview = parse(readFileSync(join(REPO_ROOT, '.github/workflows/mobile-ota-preview.yml'), 'utf8')) as {
       jobs: { publish: Job };
     };
     const publishJob = preview.jobs.publish;
-    for (const platform of ['ios', 'android']) {
-      const step = stepNamed(publishJob, `Publish ${platform === 'ios' ? 'iOS' : 'Android'} OTA`);
-      expect(step.env?.OTA_PREVIEW_RECEIPT_PATH).toBe(`\${{ runner.temp }}/preview-${platform}.json`);
-    }
-    for (const name of ['Collect the frozen preview receipt', 'Archive the frozen preview receipt']) {
-      expect(stepNamed(publishJob, name).if).toBe(
-        "steps.publish_ios.outcome == 'success' && steps.publish_android.outcome == 'success'",
+    expect(stepNamed(publishJob, 'Rebase and compare both pinned preview candidates').env?.EOO_TOKEN).toBeUndefined();
+    expect(stepNamed(publishJob, 'Publish compatible preview runtime variants').env?.EOO_TOKEN).toBe(
+      '${{ secrets.EOO_TOKEN }}',
+    );
+    for (const name of ['Archive the frozen preview receipt', 'Archive generated preview source'])
+      expect(stepNamed(publishJob, name).if).toBe("always() && steps.candidates.outputs.published == 'true'");
+    expect(stepNamed(publishJob, 'Archive the frozen preview receipt').with?.name).toBe('mobile-ota-preview-receipt');
+    expect(stepNamed(publishJob, 'Archive generated preview source').with?.name).toBe('mobile-ota-preview-source');
+    for (const platform of ['ios', 'android'] as const) {
+      const restore = stepNamed(workflow.jobs[platform], 'Restore exact generated source');
+      expect(restore.run).toContain('mobile-ota-preview-source.ts');
+      expect(restore.run).toContain(platform);
+      expect(indexOfStep(workflow.jobs[platform], 'Restore exact generated source')).toBeLessThan(
+        indexOfStep(workflow.jobs[platform], 'Compute the binary cache key'),
       );
     }
-    expect(stepNamed(publishJob, 'Archive the frozen preview receipt').with?.name).toBe('mobile-ota-preview-receipt');
-    expect(stepNamed(publishJob, 'Collect the frozen preview receipt').env?.HEAD_SHA).toBe(
-      '${{ needs.gate.outputs.head_sha }}',
-    );
-    expect(stepNamed(publishJob, 'Collect the frozen preview receipt').run).toContain(
-      '"$HEAD_SHA" "$BRANCH" "$GITHUB_RUN_ID" "$DEPLOYMENT_ID"',
+  });
+
+  it('refreshes same-repository previews from base pushes without authorizing forks', () => {
+    const refresh = readFileSync(join(REPO_ROOT, '.github/workflows/mobile-ota-preview-refresh.yml'), 'utf8');
+    const parsed = parse(refresh) as { on: { push: { branches: string[] } }; jobs: { refresh: Job } };
+    expect(parsed.on.push.branches).toEqual(['main', 'release/next']);
+    expect(refresh).toContain('pr.head.repo?.full_name !== repository');
+    expect(refresh).toContain('ref: context.payload.repository.default_branch');
+    expect(refresh).toContain("workflow_id: 'mobile-ota-preview.yml'");
+    expect(refresh).not.toContain('secrets.');
+    expect(refresh).not.toContain('actions/checkout');
+    expect(refresh).not.toContain('pull_request_target');
+    const preview = parse(readFileSync(join(REPO_ROOT, '.github/workflows/mobile-ota-preview.yml'), 'utf8')) as {
+      jobs: { publish: Job };
+    };
+    const tooling = stepNamed(preview.jobs.publish, 'Check out trusted preview tooling');
+    expect(String(tooling.with?.ref)).toContain("github.event_name == 'pull_request'");
+    expect(String(tooling.with?.ref)).toContain('github.event.pull_request.head.repo.full_name == github.repository');
+    expect(String(tooling.with?.ref)).toContain(
+      'needs.gate.outputs.head_sha || github.event.repository.default_branch',
     );
   });
 
@@ -197,7 +220,7 @@ describe('mobile-ota-boot-check.yml', () => {
       ]) {
         expect(key, input).toContain(`'${input}'`);
       }
-      const buildSteps = job.steps.filter((step) => /install|build|generate|pin|save|\.env/i.test(step.name ?? ''));
+      const buildSteps = job.steps.filter((step) => /install|build|pin|save|\.env/i.test(step.name ?? ''));
       expect(buildSteps.length).toBeGreaterThanOrEqual(3);
       for (const step of buildSteps) expect(step.if, step.name).toBe("steps.cache.outputs.cache-hit != 'true'");
     });

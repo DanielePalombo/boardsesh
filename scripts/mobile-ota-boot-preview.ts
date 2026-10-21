@@ -10,12 +10,13 @@ import { object, UPDATE_ID } from './lib/ota-publish-protocol.ts';
 
 export const PREVIEW_WORKFLOW = '.github/workflows/mobile-ota-preview.yml';
 export const PREVIEW_ARTIFACT = 'mobile-ota-preview-receipt';
-export const PREVIEW_WAIT_MS = 25 * 60_000;
+export const PREVIEW_WAIT_MS = 60 * 60_000;
 
 export interface PreviewProof {
   repository: string;
   headSha: string;
   pullRequest: number;
+  defaultBranch?: string;
 }
 function positiveId(input: unknown): number {
   if (typeof input !== 'number' || !Number.isSafeInteger(input) || input <= 0)
@@ -25,20 +26,26 @@ function positiveId(input: unknown): number {
 
 export function validatePreviewRun(input: unknown, proof: PreviewProof): Record<string, unknown> {
   const run = object(input, 'Preview run');
-  if (
-    run.path !== PREVIEW_WORKFLOW ||
-    run.event !== 'pull_request' ||
-    run.head_sha !== proof.headSha ||
-    object(run.repository, 'run repository').full_name !== proof.repository ||
-    object(run.head_repository, 'run head repository').full_name !== proof.repository ||
-    !Array.isArray(run.pull_requests) ||
-    !run.pull_requests.some((input) => {
+  const sameRepository =
+    object(run.repository, 'run repository').full_name === proof.repository &&
+    object(run.head_repository, 'run head repository').full_name === proof.repository;
+  const pinnedPull =
+    run.event === 'pull_request' &&
+    run.head_sha === proof.headSha &&
+    Array.isArray(run.pull_requests) &&
+    run.pull_requests.some((input) => {
       const pr = object(input, 'run pull request');
       return pr.number === proof.pullRequest && object(pr.head, 'run PR head').sha === proof.headSha;
-    })
-  ) {
+    });
+  // Dispatch uses the trusted default branch's workflow, so its head SHA is the
+  // tooling commit, not the PR head. The receipt/deployment attest the latter.
+  const trustedDispatch =
+    run.event === 'workflow_dispatch' &&
+    run.head_branch === (proof.defaultBranch ?? 'main') &&
+    typeof run.head_sha === 'string' &&
+    /^[0-9a-f]{40}$/.test(run.head_sha);
+  if (run.path !== PREVIEW_WORKFLOW || !sameRepository || (!pinnedPull && !trustedDispatch))
     throw new Error('Preview run is not the trusted workflow for the pinned PR head.');
-  }
   positiveId(run.id);
   return run;
 }
@@ -58,7 +65,7 @@ export function validatePreviewArtifact(
     !Number.isFinite(Date.parse(artifact.expires_at)) ||
     Date.parse(artifact.expires_at) <= nowMs ||
     provenance.id !== run.id ||
-    provenance.head_sha !== proof.headSha ||
+    provenance.head_sha !== run.head_sha ||
     typeof artifact.size_in_bytes !== 'number' ||
     artifact.size_in_bytes <= 0 ||
     artifact.size_in_bytes > 1024 * 1024
@@ -70,7 +77,7 @@ export function validatePreviewArtifact(
 export function validatePreviewReceipt(input: unknown, proof: PreviewProof, runId: number) {
   const receipt = object(input, 'Preview receipt');
   if (
-    receipt.version !== 1 ||
+    (receipt.version !== 1 && receipt.version !== 2) ||
     receipt.commitHash !== proof.headSha ||
     receipt.branch !== `pr-${proof.pullRequest}` ||
     receipt.previewRunId !== runId
@@ -89,6 +96,50 @@ export function validatePreviewReceipt(input: unknown, proof: PreviewProof, runI
       !UPDATE_ID.test(fields.updateId)
     )
       throw new Error(`Invalid ${platform} preview identity.`);
+  }
+  if (receipt.version === 2) {
+    if (
+      typeof receipt.sourceBaseSha !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(receipt.sourceBaseSha) ||
+      typeof receipt.sourceBaseRef !== 'string' ||
+      receipt.sourceArtifact !== 'mobile-ota-preview-source' ||
+      !Array.isArray(receipt.candidates)
+    )
+      throw new Error('Invalid generated preview provenance.');
+    for (const platform of ['ios', 'android']) {
+      const fields = object(platforms[platform], 'Generated platform');
+      for (const key of ['candidateCommit', 'candidateTree', 'targetSha'])
+        if (typeof fields[key] !== 'string' || !/^[0-9a-f]{40}$/.test(fields[key]))
+          throw new Error('Invalid generated source SHA.');
+      if (
+        !['main', 'release/next'].includes(String(fields.targetRef)) ||
+        fields.sourceBundle !== (fields.targetRef === 'main' ? 'main.bundle' : 'train.bundle') ||
+        typeof fields.sourceBundleSha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(fields.sourceBundleSha256)
+      )
+        throw new Error('Invalid generated source bundle.');
+      const candidate = receipt.candidates
+        .map((entry) => object(entry, 'Candidate'))
+        .find(
+          (entry) =>
+            entry.targetRef === fields.targetRef &&
+            entry.targetSha === fields.targetSha &&
+            entry.commitHash === fields.candidateCommit &&
+            entry.treeHash === fields.candidateTree &&
+            entry.sourceBundle === fields.sourceBundle &&
+            entry.sourceBundleSha256 === fields.sourceBundleSha256,
+        );
+      if (!candidate) throw new Error('Generated platform has no matching candidate.');
+      const published = object(object(candidate.platforms, 'Candidate platforms')[platform], 'Candidate platform');
+      const identity = object(published.receipt, 'Candidate publish receipt');
+      if (
+        published.status !== 'published' ||
+        identity.commitHash !== fields.candidateCommit ||
+        identity.branch !== receipt.branch ||
+        ['runtimeVersion', 'bundleSha256', 'updateId'].some((key) => identity[key] !== fields[key])
+      )
+        throw new Error('Generated candidate identity differs from selected platform.');
+    }
   }
   return receipt;
 }
@@ -217,12 +268,24 @@ export async function resolvePreviewReceipt(
       'Preview runs',
     );
     if (!Array.isArray(response.workflow_runs)) throw new Error('Missing preview workflow runs.');
-    const matchingRuns = response.workflow_runs
-      .map((input) => validatePreviewRun(input, proof))
+    const dispatchResponse = object(
+      await request(`${baseUrl}/actions/workflows/mobile-ota-preview.yml/runs?event=workflow_dispatch&per_page=100`),
+      'Dispatch runs',
+    );
+    if (!Array.isArray(dispatchResponse.workflow_runs)) throw new Error('Missing dispatch workflow runs.');
+    const matchingRuns = [...response.workflow_runs, ...dispatchResponse.workflow_runs]
+      .flatMap((input) => {
+        try {
+          return [validatePreviewRun(input, proof)];
+        } catch {
+          return [];
+        }
+      })
+      .filter((entry, index, runs) => runs.findIndex((other) => other.id === entry.id) === index)
       .sort((left, right) => Number(right.id) - Number(left.id));
-    const run = matchingRuns[0];
-    if (run?.status === 'completed') {
-      if (run.conclusion !== 'success')
+    for (const run of matchingRuns) {
+      if (run.status !== 'completed') continue;
+      if (run.event === 'pull_request' && run.conclusion !== 'success')
         throw new Error(
           `Pinned preview run ${String(run.id)} completed with ${String(run.conclusion)}; no boot proof can be made.`,
         );
@@ -232,28 +295,59 @@ export async function resolvePreviewReceipt(
       );
       if (!Array.isArray(artifacts.artifacts)) throw new Error('Missing preview artifact list.');
       const receipts = artifacts.artifacts.filter((input) => object(input, 'Artifact').name === PREVIEW_ARTIFACT);
-      if (receipts.length !== 1)
+      if (receipts.length !== 1) {
+        if (run.event === 'workflow_dispatch') continue;
         throw new Error(`Pinned preview run ${String(run.id)} has no unique receipt for both platforms.`);
+      }
       const artifactId = validatePreviewArtifact(receipts[0], run, proof, nowMs());
-      const receipt = validatePreviewReceipt(
+      const rawReceipt = object(
         readPreviewReceiptZip(
           (await request(`${baseUrl}/actions/artifacts/${artifactId}/zip`, true, true)) as Uint8Array,
         ),
-        proof,
-        Number(run.id),
+        'Preview receipt',
       );
+      // Other default-branch dispatches target other PRs; never adopt their proof.
+      if (
+        run.event === 'workflow_dispatch' &&
+        (rawReceipt.commitHash !== proof.headSha || rawReceipt.branch !== `pr-${proof.pullRequest}`)
+      )
+        continue;
+      if (run.conclusion !== 'success')
+        throw new Error(`Pinned preview run ${String(run.id)} completed with ${String(run.conclusion)}.`);
+      const receipt = validatePreviewReceipt(rawReceipt, proof, Number(run.id));
       validatePreviewDeployment(
         await request(`${baseUrl}/deployments/${String(receipt.deploymentId)}`),
         await request(`${baseUrl}/deployments/${String(receipt.deploymentId)}/statuses?per_page=1`),
         proof,
         Number(receipt.deploymentId),
       );
+      if (receipt.version === 2) {
+        const sources = artifacts.artifacts.filter(
+          (input) => object(input, 'Artifact').name === receipt.sourceArtifact,
+        );
+        if (sources.length !== 1) throw new Error('No unique generated preview source artifact.');
+        const artifact = object(sources[0], 'Generated source artifact');
+        const provenance = object(artifact.workflow_run, 'Source workflow run');
+        if (
+          artifact.expired !== false ||
+          typeof artifact.expires_at !== 'string' ||
+          !Number.isFinite(Date.parse(artifact.expires_at)) ||
+          Date.parse(artifact.expires_at) <= nowMs() ||
+          provenance.id !== run.id ||
+          provenance.head_sha !== run.head_sha ||
+          typeof artifact.size_in_bytes !== 'number' ||
+          artifact.size_in_bytes <= 0 ||
+          artifact.size_in_bytes > 512 * 1024 * 1024
+        )
+          throw new Error('Generated source artifact does not match the attested preview run.');
+        receipt.sourceArtifactId = positiveId(artifact.id);
+      }
       await requirePinnedHead();
       return receipt;
     }
     await (options.sleeper ?? sleep)(Math.max(1, Math.min(15_000, finishBy - nowMs())));
   }
-  throw new Error('Timed out after 25 minutes waiting for a successful preview receipt for the pinned PR head.');
+  throw new Error('Timed out after 60 minutes waiting for a successful preview receipt for the pinned PR head.');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

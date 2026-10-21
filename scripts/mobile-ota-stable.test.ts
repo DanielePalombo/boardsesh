@@ -115,10 +115,192 @@ function fixture() {
     clock: () => new Date('2026-10-09T02:01:00Z'),
     save,
     log: vi.fn(),
+    liveStoreRuntimes: {
+      schemaVersion: 1,
+      checkedAt: '2026-10-09T02:00:00Z',
+      ios: {
+        version: '1.0.0',
+        buildNumber: 1,
+        runtimeVersion: candidate.receipt.platforms.ios.runtimeVersion,
+        buildTag: `build-ios-v1.0.0-1-${candidate.receipt.platforms.ios.runtimeVersion.slice(0, 12)}`,
+        commit: 'a'.repeat(40),
+        protectedRuntimeVersions: [candidate.receipt.platforms.ios.runtimeVersion],
+      },
+      android: {
+        version: '1.0.0',
+        buildNumber: 1,
+        runtimeVersion: candidate.receipt.platforms.android.runtimeVersion,
+        buildTag: `build-android-v1.0.0-1-${candidate.receipt.platforms.android.runtimeVersion.slice(0, 12)}`,
+        commit: 'a'.repeat(40),
+        protectedRuntimeVersions: [candidate.receipt.platforms.android.runtimeVersion],
+      },
+    },
   };
   return { options, client, live, baselineIds, save, root };
 }
 describe('stable controller execution', () => {
+  it('pauses candidate preparation until BOTH runtimes are publicly released', async () => {
+    const { options, root } = fixture();
+    options.state.active = null;
+    options.liveStoreRuntimes!.android.runtimeVersion = 'f'.repeat(40);
+    writeFileSync(join(root, 'receipt.json'), JSON.stringify(candidateFixture().receipt));
+    expect(await prepareStable(options, '101', candidateFixture().receipt.commitHash, '102')).toBeNull();
+    expect(mocks.promote).not.toHaveBeenCalled();
+    expect(mocks.baseline).not.toHaveBeenCalled();
+    expect(options.state.notifications?.pending).toEqual([
+      expect.objectContaining({ kind: 'hold', commit: candidateFixture().receipt.commitHash }),
+    ]);
+  });
+  it('holds without live-store evidence and announces an unchanged hold only once', async () => {
+    const { options, client } = fixture();
+    options.liveStoreRuntimes = null;
+    await tickStable(options);
+    await tickStable(options);
+    expect(client.setUpdateRolloutPercentage).not.toHaveBeenCalled();
+    expect(client.revertUpdateRollout).not.toHaveBeenCalled();
+    expect(options.state.active?.percentage).toBe(5);
+    expect(options.state.notifications?.pending.map((event) => event.kind)).toEqual(['hold']);
+    await abortStable(options);
+    expect(client.revertUpdateRollout).toHaveBeenCalledTimes(2);
+    expect(options.state.active).toBeNull();
+  });
+  it.each(['start', 'force-release'] as const)(
+    'manual %s cannot bypass missing or incompatible public store runtime evidence',
+    async (operation) => {
+      for (const evidence of ['missing', 'mismatched'] as const) {
+        const { options, root, live, client } = fixture();
+        live.splice(0);
+        options.state.active = null;
+        options.state.candidate = candidateFixture();
+        options.operation = operation;
+        options.expectedSha = candidateFixture().receipt.commitHash;
+        writeFileSync(join(root, 'candidate.json'), JSON.stringify(candidateFixture()));
+        if (evidence === 'missing') options.liveStoreRuntimes = null;
+        else options.liveStoreRuntimes!.android.runtimeVersion = 'f'.repeat(40);
+        await expect(tickStable(options)).rejects.toThrow('production soaking is paused');
+        expect(mocks.promote).not.toHaveBeenCalled();
+        expect(client.setUpdateRolloutPercentage).not.toHaveBeenCalled();
+        expect(client.revertUpdateRollout).not.toHaveBeenCalled();
+        expect(options.state.active).toBeNull();
+        expect(options.state.candidate?.receipt.commitHash).toBe(candidateFixture().receipt.commitHash);
+        expect(options.state.notifications?.pending.map((event) => event.kind)).toEqual(['hold']);
+      }
+    },
+  );
+  it('retires a recorded forced finish when public store runtimes change', async () => {
+    const { options, root, client } = fixture();
+    options.state.active!.forceRelease = true;
+    options.state.active!.phase = 'finishing';
+    options.liveStoreRuntimes!.android.runtimeVersion = 'f'.repeat(40);
+    writeFileSync(join(root, 'candidate.json'), JSON.stringify(candidateFixture()));
+    await tickStable(options);
+    expect(client.setUpdateRolloutPercentage).not.toHaveBeenCalled();
+    expect(client.revertUpdateRollout.mock.calls.map((call) => call[2])).toEqual(['31', '32']);
+    expect(options.state.active).toBeNull();
+    expect(options.state.rejectedCommit).toBe(candidateFixture().receipt.commitHash);
+  });
+  it.each(['start', 'force-release'] as const)(
+    'manual %s fails after safely reverting an incompatible active candidate',
+    async (operation) => {
+      const { options, root, client } = fixture();
+      options.state.active!.phase = 'starting';
+      options.operation = operation;
+      options.expectedSha = candidateFixture().receipt.commitHash;
+      options.liveStoreRuntimes!.android.runtimeVersion = 'f'.repeat(40);
+      writeFileSync(join(root, 'candidate.json'), JSON.stringify(candidateFixture()));
+      await expect(tickStable(options)).rejects.toThrow('production soaking is paused');
+      expect(client.setUpdateRolloutPercentage).not.toHaveBeenCalled();
+      expect(client.revertUpdateRollout.mock.calls.map((call) => call[2])).toEqual(['31', '32']);
+      expect(options.state.active).toBeNull();
+      expect(options.state.rejectedCommit).toBe(candidateFixture().receipt.commitHash);
+      expect(options.state.notifications?.pending.filter((event) => event.kind === 'hold')).toHaveLength(1);
+    },
+  );
+  it('retires only owned canaries when public store runtimes change, preserving foreign rollouts', async () => {
+    const { options, client } = fixture();
+    const foreignRuntime = 'f'.repeat(40);
+    const ownedRuntimes = Object.values(candidateFixture().receipt.platforms).map(
+      (platform) => platform.runtimeVersion,
+    );
+    options.liveStoreRuntimes!.android.runtimeVersion = foreignRuntime;
+    client.getRuntimeVersions.mockResolvedValue([...ownedRuntimes, foreignRuntime]);
+    const originalRead = client.getUpdateRollout.getMockImplementation()!;
+    client.getUpdateRollout.mockImplementation(async (branch, runtime) =>
+      runtime === foreignRuntime
+        ? {
+            active: true,
+            updates: [
+              {
+                updateId: '99',
+                platform: 'android',
+                percentage: 25,
+                controlUpdateId: '98',
+                createdAt: '2026-10-09T01:00:00Z',
+              },
+            ],
+          }
+        : originalRead(branch, runtime),
+    );
+    await tickStable(options);
+    expect(client.setUpdateRolloutPercentage).not.toHaveBeenCalled();
+    expect(client.revertUpdateRollout.mock.calls.map((call) => call[2])).toEqual(['31', '32']);
+    expect(options.state.active).toBeNull();
+    expect(options.state.rejectedCommit).toBe(candidateFixture().receipt.commitHash);
+    expect(options.state.notifications?.pending.filter((event) => event.kind === 'rollout-reverted')).toHaveLength(2);
+  });
+  it('runtime mismatch in a read-only plan performs no aborts or notification writes', async () => {
+    const { options, client, save } = fixture();
+    options.apply = false;
+    options.liveStoreRuntimes!.android.runtimeVersion = 'f'.repeat(40);
+    await tickStable(options);
+    expect(client.revertUpdateRollout).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(options.state.notifications).toBeUndefined();
+  });
+  it('keeps an abort with no active or pending candidate quiet', async () => {
+    const { options, live } = fixture();
+    options.state.active = null;
+    live.splice(0);
+    await abortStable(options);
+    expect(options.state.notifications).toBeUndefined();
+  });
+  it('recovers a partial runtime-change abort with foreign rollouts even during store lookup failure', async () => {
+    const { options, client, root } = fixture();
+    const foreignRuntime = 'f'.repeat(40);
+    options.liveStoreRuntimes!.android.runtimeVersion = foreignRuntime;
+    client.getRuntimeVersions.mockResolvedValue([
+      ...Object.values(candidateFixture().receipt.platforms).map((platform) => platform.runtimeVersion),
+      foreignRuntime,
+    ]);
+    const originalRead = client.getUpdateRollout.getMockImplementation()!;
+    client.getUpdateRollout.mockImplementation(async (branch, runtime) =>
+      runtime === foreignRuntime
+        ? {
+            active: true,
+            updates: [
+              {
+                updateId: '99',
+                platform: 'android',
+                percentage: 25,
+                controlUpdateId: '98',
+                createdAt: '2026-10-09T01:00:00Z',
+              },
+            ],
+          }
+        : originalRead(branch, runtime),
+    );
+    const write = client.revertUpdateRollout.getMockImplementation()!;
+    client.revertUpdateRollout.mockImplementationOnce(write).mockRejectedValueOnce(new Error('Android unavailable'));
+    await expect(tickStable(options)).rejects.toThrow('Android unavailable');
+    const path = join(root, 'state.json');
+    saveState(path, options.state, '201');
+    options.state = readState(path);
+    expect(options.state.active).toMatchObject({ phase: 'reverting', runtimeChangeAbort: true });
+    options.liveStoreRuntimes = null;
+    await tickStable(options);
+    expect(client.revertUpdateRollout.mock.calls.map((call) => call[2])).toEqual(['31', '32', '32']);
+    expect(options.state.active).toBeNull();
+  });
   it('uses live authenticated empty-target reads only for the frozen candidate, preserving production baselines', async () => {
     const { options, root } = fixture();
     const candidate = candidateFixture();
@@ -135,7 +317,7 @@ describe('stable controller execution', () => {
     expect(mocks.promote).toHaveBeenCalledWith(
       expect.objectContaining({ branch: 'pr-stable-candidate', emptyBranchReader: options.client }),
     );
-    expect(prepared.receipt.baselineProductionUpdateIds).toEqual(candidate.receipt.baselineProductionUpdateIds);
+    expect(prepared?.receipt.baselineProductionUpdateIds).toEqual(candidate.receipt.baselineProductionUpdateIds);
     expect(
       JSON.parse(readFileSync(join(root, 'candidate-upload-receipt.json'), 'utf8')).baselineProductionUpdateIds,
     ).toEqual({ ios: null, android: null });
@@ -286,6 +468,7 @@ describe('stable controller execution', () => {
       updateIds: { ios: '31' },
       unchangedPlatforms: { android: candidateFixture().receipt.baselineProductionUpdateIds.android },
     });
+    expect(options.state.notifications?.pending.filter((event) => event.kind === 'canary-started') ?? []).toEqual([]);
   });
 
   it('recovers a trusted live lease before ownership classification and can resume the mixed release', async () => {
@@ -953,12 +1136,22 @@ describe('stable controller execution', () => {
     await expect(tickStable(options)).rejects.toThrow('Android write unavailable');
     expect(live[0].percentage).toBe(10);
     expect(options.state.active?.pendingPercentage).toBe(10);
+    expect(
+      options.state.notifications?.pending
+        .filter((event) => event.kind === 'rollout-increased')
+        .map((event) => event.platform),
+    ).toEqual(['ios']);
     options.now = new Date('2026-10-09T02:30:00Z');
     options.clock = () => options.now;
     await tickStable(options);
     expect(options.state.active?.percentage).toBe(10);
     expect(options.state.active?.pendingPercentage).toBeNull();
     expect(options.state.active?.stepSince).toBe('2026-10-09T02:30:00.000Z');
+    expect(
+      options.state.notifications?.pending
+        .filter((event) => event.kind === 'rollout-increased')
+        .map((event) => event.platform),
+    ).toEqual(['ios', 'android']);
   });
   it('unhealthy on either platform reverts both recorded IDs', async () => {
     const { options, client } = fixture();
@@ -1082,7 +1275,14 @@ describe('checkpoint file and command safety', () => {
     const execution = invokeWithoutAdmin(path, root, { loadedProducer: '0' });
     expect(execution.status).toBe(1);
     expect(execution.stderr).toContain('Set OTA_ADMIN_EMAIL and OTA_ADMIN_PASSWORD');
-    expect(readState(path)).toEqual({ ...initialStableState(), checkpointRunId: '202' });
+    expect(readState(path)).toMatchObject({
+      ...initialStableState(),
+      checkpointRunId: '202',
+      notifications: {
+        pending: [expect.objectContaining({ kind: 'failed' })],
+        sent: [],
+      },
+    });
   });
   it.each([
     { overrides: { ref: 'refs/heads/other' }, error: 'Only trusted main can apply' },
