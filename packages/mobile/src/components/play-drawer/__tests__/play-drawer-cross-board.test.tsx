@@ -33,6 +33,7 @@ const recorded = vi.hoisted(() => ({
   switchOverlay: [] as Props[],
   actionBar: [] as Props[],
   deferredSections: [] as Props[],
+  playbackFrames: [] as Array<string | null>,
   logAscent: [] as Props[],
   favoriteStatus: [] as Props[],
   playback: [] as Props[],
@@ -69,8 +70,12 @@ const navigation = vi.hoisted(() => ({
   },
 }));
 
+// What the playback hook reports: a static climb unless a case animates one.
+const playbackState = vi.hoisted(() => ({ isAnimatable: false, currentFrameString: '' }));
+
 const drawerSections = vi.hoisted(() => ({
   defaults: {
+    activeHolds: false,
     logbook: true,
     climberLogs: true,
     setterNotes: true,
@@ -80,6 +85,7 @@ const drawerSections = vi.hoisted(() => ({
     similarClimbs: true,
   },
   sections: {
+    activeHolds: false,
     logbook: true,
     climberLogs: true,
     setterNotes: true,
@@ -91,7 +97,16 @@ const drawerSections = vi.hoisted(() => ({
   ready: true,
 }));
 vi.mock('../../../lib/play-drawer-sections-preference', () => {
-  const order = ['logbook', 'climberLogs', 'setterNotes', 'betaVideos', 'boardseshGrade', 'community', 'similarClimbs'];
+  const order = [
+    'activeHolds',
+    'logbook',
+    'climberLogs',
+    'setterNotes',
+    'betaVideos',
+    'boardseshGrade',
+    'community',
+    'similarClimbs',
+  ];
   return {
     DEFAULT_PLAY_DRAWER_SECTIONS: drawerSections.defaults,
     DEFAULT_PLAY_DRAWER_SECTION_ORDER: order,
@@ -258,12 +273,18 @@ vi.mock('../PlayDrawerActionBar', () => ({
     return createElement('div', { 'data-testid': 'action-bar' });
   },
 }));
-vi.mock('../DeferredSections', () => ({
-  DeferredSections: (props: Props) => {
-    recorded.deferredSections.push(props);
-    return createElement('div', { 'data-testid': 'deferred-sections' });
-  },
-}));
+vi.mock('../DeferredSections', async () => {
+  const { useContext } = await import('react');
+  const { PlaybackFrameContext } = await import('../playback-frame-context');
+  return {
+    DeferredSections: (props: Props) => {
+      recorded.deferredSections.push(props);
+      // What Active holds would read: the playback frame comes by context, not props.
+      recorded.playbackFrames.push(useContext(PlaybackFrameContext));
+      return createElement('div', { 'data-testid': 'deferred-sections' });
+    },
+  };
+});
 vi.mock('../../LogAscentSheet', () => ({
   LogAscentSheet: (props: Props) => {
     recorded.logAscent.push(props);
@@ -386,7 +407,7 @@ vi.mock('../../../hooks/use-mounted-on-first-open', () => ({ useMountedOnFirstOp
 vi.mock('../use-mobile-playback', () => ({
   useMobilePlayback: (args: Props) => {
     recorded.playback.push(args);
-    return { isAnimatable: false };
+    return { ...playbackState };
   },
 }));
 vi.mock('../use-drawer-dismiss-gesture', () => ({
@@ -491,6 +512,7 @@ beforeEach(() => {
   recorded.switchOverlay = [];
   recorded.actionBar = [];
   recorded.deferredSections = [];
+  recorded.playbackFrames = [];
   recorded.scrollGate = [];
   recorded.logAscent = [];
   recorded.favoriteStatus = [];
@@ -504,6 +526,8 @@ beforeEach(() => {
   recorded.sectionsSheet = [];
   recorded.actionsMenu = [];
   recorded.pinnedSheets.clear();
+  playbackState.isAnimatable = false;
+  playbackState.currentFrameString = '';
   platform.OS = 'web';
   drawerSections.sections = { ...drawerSections.defaults };
   drawerSections.ready = true;
@@ -885,6 +909,7 @@ describe('PlayDrawer draws the climb on its own board (#5099)', () => {
 describe('PlayDrawer configurable sections', () => {
   function hideEverySection() {
     drawerSections.sections = {
+      activeHolds: false,
       logbook: false,
       climberLogs: false,
       setterNotes: false,
@@ -1031,6 +1056,114 @@ describe('PlayDrawer configurable sections', () => {
     expect(recorded.actionsMenu.at(-1)).toBeDefined();
     expect(recorded.actionBar.at(-1)).not.toHaveProperty('onEditSections');
     expect(recorded.actionBar.at(-1)).not.toHaveProperty('onOpenActions');
+  });
+});
+
+describe('PlayDrawer active holds section', () => {
+  // A MoonBoard 2024 climb: Active holds is MoonBoard only.
+  const MOON_CLIMB = {
+    ...climbOn('moonboard', 3, 40, 'MOON00000000000000000000000DDDD'),
+    frames: 'p49r42p90r43p196r44',
+  };
+  function showOnlyActiveHolds() {
+    drawerSections.sections = {
+      activeHolds: true,
+      logbook: false,
+      climberLogs: false,
+      setterNotes: false,
+      betaVideos: false,
+      boardseshGrade: false,
+      community: false,
+      similarClimbs: false,
+    };
+  }
+  function lastSectionsClimb(): unknown {
+    const props = recorded.deferredSections.at(-1);
+    if (!props) throw new Error('DeferredSections never rendered');
+    return props.climb;
+  }
+  function rerenderDrawer(rendered: ReturnType<typeof renderDrawer>) {
+    rendered.rerender(
+      createElement(PlayDrawer, {
+        presentation: 'pane' as const,
+        boardConfig: TWELVE_BY_TWELVE,
+        openTarget: null,
+        onOpenQueue: vi.fn(),
+      }),
+    );
+  }
+
+  it('is the peek on its own on a MoonBoard climb, so the drawer scrolls to it', () => {
+    showOnlyActiveHolds();
+    queueState.currentClimbQueueItem = queueItem(MOON_CLIMB, 'queue-moon');
+    renderDrawer();
+    expect(recorded.scroll.at(-1)?.scrollEnabled).toBe(true);
+    expect(recorded.deferredSections.at(-1)).toMatchObject({ boardName: 'moonboard', layoutId: 3 });
+    expect(lastSectionsClimb()).toBe(MOON_CLIMB);
+    // A static climb: no playback frame, so Active holds reads the climb's frames.
+    expect(recorded.playbackFrames.at(-1)).toBeNull();
+  });
+
+  it('lists its switch in View options on a MoonBoard climb, even with another board active', () => {
+    queueState.currentClimbQueueItem = queueItem(MOON_CLIMB, 'queue-moon');
+    renderDrawer();
+    const openViewOptions = recorded.actionsMenu.at(-1)?.onOpenViewOptions as () => void;
+    act(openViewOptions);
+    expect(recorded.sectionsSheet.at(-1)).toMatchObject({ visible: true, listsActiveHolds: true });
+  });
+
+  it('leaves its switch out of View options on another board', () => {
+    queueState.currentClimbQueueItem = queueItem(TWELVE_CLIMB, 'queue-twelve');
+    renderDrawer();
+    const openViewOptions = recorded.actionsMenu.at(-1)?.onOpenViewOptions as () => void;
+    act(openViewOptions);
+    expect(recorded.sectionsSheet.at(-1)).toMatchObject({ visible: true, listsActiveHolds: false });
+  });
+
+  it('never shows on another board, switched on or not: the drawer has nothing to scroll to', () => {
+    showOnlyActiveHolds();
+    queueState.currentClimbQueueItem = queueItem(TWELVE_CLIMB, 'queue-twelve');
+    renderDrawer();
+    expect(recorded.deferredSections).toHaveLength(0);
+    expect(recorded.scroll.at(-1)?.scrollEnabled).toBe(false);
+  });
+
+  it('follows the board to the next climb', () => {
+    showOnlyActiveHolds();
+    queueState.currentClimbQueueItem = queueItem(MOON_CLIMB, 'queue-moon');
+    const rendered = renderDrawer();
+    const nextClimb = { ...MOON_CLIMB, uuid: 'NEXTMOON000000000000000000EEEE', frames: 'p5r42p100r44' };
+    queueState.currentClimbQueueItem = queueItem(nextClimb, 'queue-next');
+    rerenderDrawer(rendered);
+    expect(lastSectionsClimb()).toBe(nextClimb);
+  });
+
+  it("hands Active holds the playback frame the board paints by context, keeping the sections' props", () => {
+    showOnlyActiveHolds();
+    playbackState.isAnimatable = true;
+    playbackState.currentFrameString = 'p49r42';
+    queueState.currentClimbQueueItem = queueItem(MOON_CLIMB, 'queue-moon');
+    const rendered = renderDrawer();
+    expect(lastBoardProps().currentFrameOverride).toBe('p49r42');
+    expect(recorded.playbackFrames.at(-1)).toBe('p49r42');
+    const before = recorded.deferredSections.at(-1) ?? {};
+    playbackState.currentFrameString = 'p90r43';
+    rerenderDrawer(rendered);
+    expect(recorded.playbackFrames.at(-1)).toBe('p90r43');
+    const after = recorded.deferredSections.at(-1) ?? {};
+    // No prop carries the frame, so the memoised sections skip a playback tick.
+    expect(Object.values(after)).not.toContain('p90r43');
+    expect(after.climb).toBe(before.climb);
+    expect(after.sections).toBe(before.sections);
+  });
+
+  it('provides no playback frame while Active holds is off, so a tick changes nothing for nobody', () => {
+    playbackState.isAnimatable = true;
+    playbackState.currentFrameString = 'p49r42';
+    queueState.currentClimbQueueItem = queueItem(MOON_CLIMB, 'queue-moon');
+    renderDrawer();
+    expect(lastBoardProps().currentFrameOverride).toBe('p49r42');
+    expect(recorded.playbackFrames.at(-1)).toBeNull();
   });
 });
 

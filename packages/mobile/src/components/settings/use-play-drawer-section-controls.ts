@@ -7,15 +7,25 @@ import {
 } from '../../lib/play-drawer-sections-preference';
 import type { SectionMoveDirection } from '../../lib/section-layout';
 import { hapticSelection } from '../../lib/haptics';
+import { useActiveBoardIsMoonboard } from '../../hooks/use-active-board-is-moonboard';
 import type { MoreSection } from '../MoreForm.types';
 import type { SectionLayoutRowModel } from '../section-layout/SectionLayoutList';
 
 export type PlayDrawerSectionControl = SectionLayoutRowModel<PlayDrawerSectionId>;
 
-/** Shared order, labels and actions for Settings and the drawer's sheet. */
-export function usePlayDrawerSectionControls() {
+/**
+ * Shared order, labels and actions for Settings and the drawer's sheet.
+ * `listsActiveHolds` overrides when the MoonBoard-only Active holds switch is
+ * listed; by default it is listed while the active board is a MoonBoard.
+ */
+export function usePlayDrawerSectionControls({ listsActiveHolds }: { listsActiveHolds?: boolean } = {}) {
   const { t } = useTranslation('common');
   const { sections, order, ready, setSection, setAll, move, restoreDefaults } = usePlayDrawerSectionsPreference();
+  // Active holds is MoonBoard only: its switch is listed only while the active
+  // board is one, the same gate as the MoonBoard grid labels in Board look,
+  // unless the caller knows better (View options on a MoonBoard climb).
+  const activeIsMoonboard = useActiveBoardIsMoonboard();
+  const showsActiveHolds = listsActiveHolds ?? activeIsMoonboard;
   const sheetTitle = t('mobile.settings.climbDrawer.sheetTitle');
   const description = t('mobile.settings.climbDrawer.description');
   // "Below the climb": the sheet's group heading and the Settings section's
@@ -29,6 +39,7 @@ export function usePlayDrawerSectionControls() {
   const hideAllLabel = t('mobile.settings.climbDrawer.hideAll');
   const showAllLabel = t('mobile.settings.climbDrawer.showAll');
   const restoreDefaultsLabel = t('mobile.settings.climbDrawer.restoreDefaults');
+  const activeHoldsLabel = t('mobile.settings.climbDrawer.sections.activeHolds');
   const logbookLabel = t('mobile.settings.climbDrawer.sections.logbook');
   const climberLogsLabel = t('mobile.settings.climbDrawer.sections.climberLogs');
   const setterNotesLabel = t('mobile.settings.climbDrawer.sections.setterNotes');
@@ -38,6 +49,7 @@ export function usePlayDrawerSectionControls() {
   const similarClimbsLabel = t('mobile.settings.climbDrawer.sections.similarClimbs');
   const controls = useMemo<PlayDrawerSectionControl[]>(() => {
     const labels: Record<PlayDrawerSectionId, string> = {
+      activeHolds: activeHoldsLabel,
       logbook: logbookLabel,
       climberLogs: climberLogsLabel,
       setterNotes: setterNotesLabel,
@@ -46,10 +58,14 @@ export function usePlayDrawerSectionControls() {
       community: communityLabel,
       similarClimbs: similarClimbsLabel,
     };
-    return order.map((id) => ({ id, label: labels[id], visible: sections[id], movable: true }));
+    return order
+      .filter((id) => showsActiveHolds || id !== 'activeHolds')
+      .map((id) => ({ id, label: labels[id], visible: sections[id], movable: true }));
   }, [
     sections,
     order,
+    showsActiveHolds,
+    activeHoldsLabel,
     logbookLabel,
     climberLogsLabel,
     setterNotesLabel,
@@ -68,9 +84,21 @@ export function usePlayDrawerSectionControls() {
   const onMove = useCallback(
     (sectionId: PlayDrawerSectionId, direction: SectionMoveDirection): boolean => {
       if (!ready) return false;
-      return move(sectionId, direction);
+      // Steps past a section this screen does not list, so each arrow moves
+      // the row one place among the rows on screen.
+      const listedIds = new Set(controls.map((control) => control.id));
+      const start = order.indexOf(sectionId);
+      let moved = false;
+      for (let step = 1; start + step * direction >= 0 && start + step * direction < order.length; step += 1) {
+        // Only an explicit false is a refusal, as for SectionLayoutList's onMove.
+        if (move(sectionId, direction) === false) break;
+        moved = true;
+        const passed = order[start + step * direction];
+        if (passed === undefined || listedIds.has(passed)) break;
+      }
+      return moved;
     },
-    [ready, move],
+    [ready, move, controls, order],
   );
   const canShowAll = ready && controls.some((control) => !control.visible);
   const canHideAll = ready && controls.some((control) => control.visible);
@@ -78,13 +106,21 @@ export function usePlayDrawerSectionControls() {
   const hideAll = useCallback(() => {
     if (!canHideAll) return;
     hapticSelection();
-    setAll(false);
-  }, [canHideAll, setAll]);
+    setAll(
+      false,
+      controls.map((control) => control.id),
+    );
+  }, [canHideAll, setAll, controls]);
   const showAll = useCallback(() => {
     if (!canShowAll) return;
     hapticSelection();
-    setAll(true);
-  }, [canShowAll, setAll]);
+    // Only the listed switches: Show all on a Kilter must not switch on the
+    // MoonBoard-only Active holds behind the climber's back.
+    setAll(
+      true,
+      controls.map((control) => control.id),
+    );
+  }, [canShowAll, setAll, controls]);
   const handleRestoreDefaults = useCallback(() => {
     if (!canRestoreDefaults) return;
     hapticSelection();

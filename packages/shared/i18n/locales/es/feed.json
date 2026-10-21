@@ -22,6 +22,31 @@
         "everyone": "Todos",
         "findGym": "Busca un rocódromo cerca",
         "hint": "Cambia de quién ves las vías"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Empieza una sesión",
+          "startBody": "Elige un entrenamiento o simplemente escala",
+          "running": "Sesión en marcha",
+          "open": "Abrir sesión"
+        },
+        "playlists": {
+          "all": "Todas las listas"
+        },
+        "empty": {
+          "title": "Tu Inicio está vacío",
+          "body": "Vuelve a activar secciones para ver tu plafón, tu sesión o tu crew."
+        },
+        "beta": {
+          "title": "Beta reciente",
+          "titleBoard": "Beta reciente en este plafón",
+          "empty": "Aún no hay vídeos de beta",
+          "error": "No se pudieron cargar los vídeos de beta.",
+          "offline": "Sin conexión. La beta reciente vuelve a aparecer cuando recuperes la conexión.",
+          "offlineMode": "El modo sin conexión está activado. La beta reciente vuelve a aparecer cuando lo desactives.",
+          "unknownClimb": "Bloque desconocido",
+          "openClimb": "Abrir {{climb}}"
+        }
       }
     },
     "liveSessions": {

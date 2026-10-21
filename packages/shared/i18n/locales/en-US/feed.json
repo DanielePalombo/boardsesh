@@ -22,6 +22,31 @@
         "everyone": "Everyone",
         "findGym": "Find a gym near you",
         "hint": "Switches whose climbs you see"
+      },
+      "sections": {
+        "session": {
+          "startTitle": "Start a session",
+          "startBody": "Pick a workout or just climb",
+          "running": "Session running",
+          "open": "Open session"
+        },
+        "playlists": {
+          "all": "All playlists"
+        },
+        "empty": {
+          "title": "Your Home is empty",
+          "body": "Turn sections back on to see your board, your session or your crew."
+        },
+        "beta": {
+          "title": "Fresh beta",
+          "titleBoard": "Fresh beta on this board",
+          "empty": "No beta videos yet",
+          "error": "Couldn't load beta videos.",
+          "offline": "No signal. Fresh beta shows up again when you're back online.",
+          "offlineMode": "Offline mode is on. Fresh beta shows up again when you turn it off.",
+          "unknownClimb": "Unknown climb",
+          "openClimb": "Open {{climb}}"
+        }
       }
     },
     "liveSessions": {

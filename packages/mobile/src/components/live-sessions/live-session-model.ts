@@ -214,16 +214,27 @@ export type RailPlanInput = {
   followsNobody: boolean | null;
   /** Quiet-days verdict; null until the impression store has been read. */
   startCollapsed: boolean | null;
+  /**
+   * False when something else on the screen already offers Start, such as
+   * Home's Session card: the rail then never offers it a second time.
+   */
+  showStartPrompt?: boolean;
 };
 
 const EMPTY_PLAN_ENTRIES: RailEntry[] = [];
 
-export function planLiveRail({ cards, viewerInSession, followsNobody, startCollapsed }: RailPlanInput): RailPlan {
+export function planLiveRail({
+  cards,
+  viewerInSession,
+  followsNobody,
+  startCollapsed,
+  showStartPrompt = true,
+}: RailPlanInput): RailPlan {
   const inSession = viewerInSession || cards.some((card) => card.viewerIsMember);
   // A session already on the selected board: a second solo session on the same
   // wall is the outcome the rail exists to prevent.
   const liveOnSelectedBoard = cards.some((card) => !card.viewerIsMember && card.reasons.includes('SELECTED_BOARD'));
-  const showStart = !inSession && !liveOnSelectedBoard;
+  const showStart = showStartPrompt && !inSession && !liveOnSelectedBoard;
   // Find climbers can lead the rail, so its position matters whenever it can show.
   const findCouldShow = !inSession && (followsNobody !== false || cards.length === 0);
   // The Start row only replaces the tile on an empty rail.

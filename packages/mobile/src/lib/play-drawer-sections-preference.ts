@@ -10,8 +10,13 @@ import {
   type SectionMoveDirection,
 } from './section-layout';
 
-/** The sections below the fold: each has a switch and a place in the climber's order. */
+/**
+ * The sections below the fold: each has a switch and a place in the climber's
+ * order. Active holds (#6290) leads the default order but starts switched off,
+ * so the drawer opens as it always has; switched on, it is the peek at the fold.
+ */
 export const BELOW_FOLD_SECTION_IDS = [
+  'activeHolds',
   'logbook',
   'climberLogs',
   'setterNotes',
@@ -27,6 +32,9 @@ export type PlayDrawerSectionId = (typeof PLAY_DRAWER_SECTION_IDS)[number];
 export type PlayDrawerSectionsVisibility = Readonly<Record<PlayDrawerSectionId, boolean>>;
 
 export const DEFAULT_PLAY_DRAWER_SECTIONS: PlayDrawerSectionsVisibility = Object.freeze({
+  // Off, so the drawer looks as it always has until the climber asks for it.
+  // A record saved before it existed has no key for it and reads as off.
+  activeHolds: false,
   logbook: true,
   climberLogs: true,
   setterNotes: true,
@@ -120,6 +128,26 @@ export function ensurePlayDrawerSectionsLoaded(): Promise<void> {
   return loadPromise;
 }
 
+/**
+ * The switches to store: those this bundle does not know, as they were read,
+ * and only the known ones that differ from their default. Like the order, a
+ * switch left at its default is not written, so a later release's new default
+ * (Active holds switched on, say) still reaches a climber who only changed
+ * another switch.
+ */
+function sectionsToWrite(): Record<string, unknown> {
+  const knownSectionIds: readonly string[] = PLAY_DRAWER_SECTION_IDS;
+  const sections: Record<string, unknown> = {};
+  for (const [sectionId, enabled] of Object.entries(storedSectionsMap(lastReadRecord))) {
+    if (!knownSectionIds.includes(sectionId)) sections[sectionId] = enabled;
+  }
+  for (const sectionId of PLAY_DRAWER_SECTION_IDS) {
+    const enabled = snapshot.sections[sectionId];
+    if (enabled !== DEFAULT_PLAY_DRAWER_SECTIONS[sectionId]) sections[sectionId] = enabled;
+  }
+  return sections;
+}
+
 function recordToWrite(): Record<string, unknown> {
   const otherFields = { ...lastReadRecord };
   delete otherFields.order;
@@ -127,7 +155,7 @@ function recordToWrite(): Record<string, unknown> {
   return {
     ...otherFields,
     version: 1,
-    sections: { ...storedSectionsMap(lastReadRecord), ...snapshot.sections },
+    sections: sectionsToWrite(),
     ...(isSameSectionOrder(order, DEFAULT_PLAY_DRAWER_SECTION_ORDER) ? {} : { order }),
   };
 }
@@ -160,10 +188,14 @@ export function setPlayDrawerSection(sectionId: PlayDrawerSectionId, enabled: bo
   persist();
 }
 
-export function setAllPlayDrawerSections(enabled: boolean): void {
+/** Switches every section, or only `sectionIds` (the ones a screen lists), on or off. */
+export function setAllPlayDrawerSections(
+  enabled: boolean,
+  sectionIds: readonly PlayDrawerSectionId[] = PLAY_DRAWER_SECTION_IDS,
+): void {
   loadBeforeWriting();
   const sections = { ...snapshot.sections };
-  for (const sectionId of PLAY_DRAWER_SECTION_IDS) {
+  for (const sectionId of sectionIds) {
     changedSections.add(sectionId);
     sections[sectionId] = enabled;
   }

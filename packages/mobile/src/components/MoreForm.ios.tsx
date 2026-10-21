@@ -118,6 +118,8 @@ const IOS_SF_SYMBOL: Record<MoreIconName, string> = {
   general: 'gearshape',
   // SF Symbols 4, iOS 16.0+.
   climbs: 'figure.climbing',
+  // The Home tab's own glyph.
+  home: 'house',
   // Sparkles for features not everyone has yet. `testtube.2` drew filled
   // liquid, and `flask` needs iOS 17 (the app's floor is 16.4).
   earlyAccess: 'sparkles',

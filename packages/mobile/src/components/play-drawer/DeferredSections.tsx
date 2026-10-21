@@ -20,6 +20,7 @@ import { buildAngleGradeBars, type AngleGradeBar } from './community-utils';
 import { rankBySizeCompatibility } from './similar-climbs-utils';
 import { BetaVideosSection } from './BetaVideosSection';
 import { SetterNotesSection } from './SetterNotesSection';
+import { ActiveHoldsSection } from './ActiveHoldsSection';
 import { useAuth } from '../../providers/auth-provider';
 import { useBoardseshGradeEnabled } from '../../providers/feature-flags-provider';
 import { useTheme } from '../../providers/theme-provider';
@@ -201,9 +202,10 @@ export const DeferredSections = memo(function DeferredSections({
         isAuthenticated,
         boardseshGradeEnabled,
         description: climb.description,
+        boardName,
         screenshotMode: process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1',
       }),
-    [sections, order, isAuthenticated, boardseshGradeEnabled, climb.description],
+    [sections, order, isAuthenticated, boardseshGradeEnabled, climb.description, boardName],
   );
   const visibleSectionSet = useMemo(() => new Set(visibleSections), [visibleSections]);
   const firstSectionId = visibleSections[0];
@@ -458,6 +460,18 @@ export const DeferredSections = memo(function DeferredSections({
       const onToggle = isFirst ? onFirstSectionToggle : undefined;
       let section: ReactNode;
       switch (sectionId) {
+        case 'activeHolds':
+          // Reads only the frames: nothing to fetch, so it may draw as the peek at once.
+          section = (
+            <ActiveHoldsSection
+              boardName={boardName}
+              layoutId={layoutId}
+              frames={climb.frames}
+              onHeaderLayout={onHeaderLayout}
+              onToggle={onToggle}
+            />
+          );
+          break;
         case 'logbook':
           section = (
             <CollapsibleSection

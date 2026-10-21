@@ -26,6 +26,9 @@
         "climbs": {
           "title": "Boulder & Grade"
         },
+        "home": {
+          "title": "Start"
+        },
         "earlyAccess": {
           "title": "Früher Zugang"
         },
@@ -449,6 +452,7 @@
         "showAll": "Alles anzeigen",
         "restoreDefaults": "Standard wiederherstellen",
         "sections": {
+          "activeHolds": "Aktive Griffe",
           "logbook": "Routenbuch",
           "climberLogs": "Einträge von Kletterer*innen",
           "setterNotes": "Notizen vom Routenbau",
@@ -469,6 +473,36 @@
         "moveUp": "{{section}} nach oben verschieben",
         "moveDown": "{{section}} nach unten verschieben",
         "moved": "{{section}}, {{position}} von {{count}}"
+      },
+      "homeSections": {
+        "groupTitle": "Auf Start",
+        "customize": "Start anpassen",
+        "description": "Wähle, was Start zeigt und in welcher Reihenfolge. Fokus zeigt dein Board, deine Session und deine Playlists.",
+        "settingsFooter": "Wähle, was Start zeigt und in welcher Reihenfolge. Start anpassen auf dem Start-Tab ändert dieselbe Liste.",
+        "footer": "Änderungen gelten sofort und nur auf diesem Handy. Sie ändern nicht, wer dein Klettern sehen kann.",
+        "showAll": "Alles anzeigen",
+        "focused": "Fokus",
+        "restoreDefaults": "Standard wiederherstellen",
+        "sections": {
+          "board": "Dein Board",
+          "session": "Session",
+          "playlists": "Playlists",
+          "climbingNow": "Gerade am Klettern",
+          "beta": "Frische Beta",
+          "feed": "Feed"
+        },
+        "descriptions": {
+          "board": "Boulder durchsuchen oder Board wechseln",
+          "session": "Session starten oder ihre Zeit sehen",
+          "playlists": "Gelikte Boulder und Projekte",
+          "climbingNow": "Live-Sessions zum Mitmachen",
+          "beta": "Neue Beta-Videos für dein Board",
+          "feed": "Sessions und neue Boulder deiner Crew. Immer ganz unten."
+        },
+        "presets": {
+          "default": "Standard",
+          "custom": "Eigene"
+        }
       },
       "climbList": {
         "title": "Boulderliste",

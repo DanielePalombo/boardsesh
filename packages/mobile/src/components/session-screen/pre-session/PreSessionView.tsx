@@ -27,8 +27,8 @@ import { useBottomChromeMetrics } from '../../../hooks/use-bottom-chrome-metrics
 import { reportError } from '../../../lib/error-reporting';
 import { RecordTopChrome } from '../RecordTopChrome';
 import { SESSION_START_FAB_HEIGHT, SessionStartFab } from '../SessionStartFab';
-import { BoardSummaryCard } from './BoardSummaryCard';
-import { useSessionBoardNavigation } from '../use-session-board-navigation';
+import { BoardSummaryCard } from '../../boards/BoardSummaryCard';
+import { useBoardShortcutNavigation } from '../../../lib/boards/use-board-shortcut-navigation';
 import { RestTimerArmRow } from '../RestTimerArmRow';
 import { SessionVisibilityRow } from '../SessionVisibilityRow';
 import {
@@ -115,7 +115,8 @@ export function PreSessionView({
   const { systemColors, variant } = useTheme();
   const insets = useSafeAreaInsets();
   const bottomChrome = useBottomChromeMetrics();
-  const { boardQuery, hasNoBoard, browseClimbs, openBoardSwitcher, retryBoard } = useSessionBoardNavigation();
+  const { boardQuery, hasNoBoard, browseClimbs, openBoardSwitcher, retryBoard } =
+    useBoardShortcutNavigation('/(tabs)/record');
   const { data: activeBoard } = boardQuery;
   const { isAuthenticated } = useAuth();
   const { startSession, appendQueueItems } = useQueueActions();

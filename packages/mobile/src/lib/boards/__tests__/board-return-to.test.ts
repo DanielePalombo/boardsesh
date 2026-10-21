@@ -25,6 +25,17 @@ describe('resolveBoardReturnTo', () => {
     expect(resolveBoardReturnTo('/(tabs)/record')).toBe('/(tabs)/record');
   });
 
+  it('returns to Home after a board change from its board card', () => {
+    expect(resolveBoardReturnTo('/(tabs)/home')).toBe('/(tabs)/home');
+  });
+
+  it.each(['/(tabs)/home/notifications', '/(tabs)/home/', '/(tabs)/home?next=/settings'])(
+    'rejects a modified Home return route: %s',
+    (route) => {
+      expect(resolveBoardReturnTo(route)).toBe('/(tabs)/climbs');
+    },
+  );
+
   it.each(['/(tabs)/record/../settings', '/(tabs)/record/', ' /(tabs)/record', '/(tabs)/record?next=/settings'])(
     'rejects a modified Session return route: %s',
     (route) => {

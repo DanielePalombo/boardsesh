@@ -26,6 +26,9 @@
         "climbs": {
           "title": "Climbs & grades"
         },
+        "home": {
+          "title": "Home"
+        },
         "earlyAccess": {
           "title": "Early access"
         },
@@ -449,6 +452,7 @@
         "showAll": "Show all",
         "restoreDefaults": "Restore defaults",
         "sections": {
+          "activeHolds": "Active holds",
           "logbook": "Logbook",
           "climberLogs": "Climber logs",
           "setterNotes": "Setter’s notes",
@@ -469,6 +473,36 @@
         "moveUp": "Move {{section}} up",
         "moveDown": "Move {{section}} down",
         "moved": "{{section}}, {{position}} of {{count}}"
+      },
+      "homeSections": {
+        "groupTitle": "On Home",
+        "customize": "Customize Home",
+        "description": "Choose what Home shows, and in what order. Focused shows your board, session and playlists.",
+        "settingsFooter": "Choose what Home shows, and in what order. Customize Home, on Home itself, changes the same list.",
+        "footer": "Changes apply right away, on this phone only. They don't change who can see your climbing.",
+        "showAll": "Show all",
+        "focused": "Focused",
+        "restoreDefaults": "Restore defaults",
+        "sections": {
+          "board": "Your board",
+          "session": "Session",
+          "playlists": "Playlists",
+          "climbingNow": "Climbing now",
+          "beta": "Fresh beta",
+          "feed": "Feed"
+        },
+        "descriptions": {
+          "board": "Browse climbs or change board",
+          "session": "Start a session or see its timer",
+          "playlists": "Liked climbs and Projects",
+          "climbingNow": "Live sessions you can join",
+          "beta": "New beta videos for your board",
+          "feed": "Sessions and new climbs from your crew. Always last."
+        },
+        "presets": {
+          "default": "Default",
+          "custom": "Custom"
+        }
       },
       "climbList": {
         "title": "Climb list",

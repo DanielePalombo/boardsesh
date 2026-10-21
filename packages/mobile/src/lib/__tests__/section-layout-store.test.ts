@@ -4,15 +4,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsChange } from '../../settings/hooks';
 import type { SectionLayoutRecord, SectionLayoutSpec } from '../section-layout';
 
-const settings = vi.hoisted(() => ({ listeners: new Set<(change: SettingsChange) => void>() }));
+const settings = vi.hoisted(() => ({
+  listeners: new Set<(change: SettingsChange) => void>(),
+  values: new Map<string, unknown>(),
+}));
 vi.mock('../../settings/hooks', () => ({
   subscribeSettings: (listener: (change: SettingsChange) => void) => {
     settings.listeners.add(listener);
     return () => settings.listeners.delete(listener);
   },
+  getSetting: (key: string) => settings.values.get(key) ?? null,
+  setSetting: (key: string, value: unknown) => {
+    settings.values.set(key, value);
+  },
 }));
 
-import { createSectionLayoutStore, useSectionLayout } from '../section-layout-store';
+import { createSectionLayoutStore, settingsLayoutStorage, useSectionLayout } from '../section-layout-store';
 
 type ButtonId = 'mirror' | 'favorite' | 'share' | 'queue';
 const SPEC: SectionLayoutSpec<ButtonId> = {
@@ -48,6 +55,7 @@ function resetEverySetting(): void {
 
 beforeEach(() => {
   settings.listeners.clear();
+  settings.values.clear();
 });
 
 describe('createSectionLayoutStore', () => {
@@ -266,5 +274,18 @@ describe('createSectionLayoutStore', () => {
       order: ['favorite', 'mirror', 'angle', 'queue', 'share'],
       visible: { mirror: true, favorite: true, share: true, queue: true, angle: true },
     });
+  });
+});
+
+describe('settingsLayoutStorage', () => {
+  it('reads and writes one key of the settings store', () => {
+    const storage = settingsLayoutStorage('homeSectionsV1');
+    expect(storage.read()).toBeNull();
+    const record: SectionLayoutRecord = { version: 1, order: ['queue'], visible: { queue: false } };
+    storage.write(record);
+    expect(settings.values.get('homeSectionsV1')).toBe(record);
+    expect(storage.read()).toBe(record);
+    storage.write(null);
+    expect(storage.read()).toBeNull();
   });
 });

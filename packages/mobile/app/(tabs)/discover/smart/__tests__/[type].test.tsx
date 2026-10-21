@@ -194,6 +194,7 @@ describe('SmartPlaylistDetail open event', () => {
 
   it.each([
     ['Discover', 'discover', 'discover'],
+    ["Home's Playlists card", 'home', 'home'],
     ['a deep link with no source', undefined, 'other'],
     ['a source nobody defined', 'somewhere_else', 'other'],
   ])('names the list and where it was opened from: %s', (_label, source, expected) => {

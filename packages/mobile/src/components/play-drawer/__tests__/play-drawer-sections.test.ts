@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { BoardName } from '@boardsesh/shared-schema';
 import {
   DEFAULT_PLAY_DRAWER_SECTION_ORDER,
   DEFAULT_PLAY_DRAWER_SECTIONS,
@@ -11,6 +12,7 @@ vi.mock('../../../lib/preference-store', () => ({ getPreference: vi.fn(), setPre
 vi.mock('../../../lib/error-reporting', () => ({ reportError: vi.fn() }));
 
 const NO_SECTIONS: PlayDrawerSectionsVisibility = {
+  activeHolds: false,
   logbook: false,
   climberLogs: false,
   setterNotes: false,
@@ -25,6 +27,7 @@ const ELIGIBLE_INPUT = {
   isAuthenticated: true,
   boardseshGradeEnabled: true,
   description: 'Start with your left hand on the sidepull.',
+  boardName: 'moonboard' as BoardName,
   screenshotMode: false,
 };
 
@@ -156,4 +159,32 @@ describe('visiblePlayDrawerSections', () => {
   it('returns no sections when the user hides everything, regardless of eligibility', () => {
     expect(visiblePlayDrawerSections({ ...ELIGIBLE_INPUT, sections: NO_SECTIONS })).toEqual([]);
   });
+
+  it('treats Active holds as a section like the rest on a MoonBoard: on its own it is the peek', () => {
+    expect(visiblePlayDrawerSections({ ...ELIGIBLE_INPUT, sections: { ...NO_SECTIONS, activeHolds: true } })).toEqual([
+      'activeHolds',
+    ]);
+    // Off by default, so the default drawer is unchanged.
+    expect(visiblePlayDrawerSections(ELIGIBLE_INPUT)).not.toContain('activeHolds');
+    // Switched on, it leads the default order.
+    expect(
+      visiblePlayDrawerSections({
+        ...ELIGIBLE_INPUT,
+        sections: { ...DEFAULT_PLAY_DRAWER_SECTIONS, activeHolds: true },
+      })[0],
+    ).toBe('activeHolds');
+  });
+
+  it.each<BoardName>(['kilter', 'tension', 'woods', 'spray'])(
+    'never shows Active holds on a %s climb, switched on or not, so the next section is the peek',
+    (boardName) => {
+      const sections = { ...DEFAULT_PLAY_DRAWER_SECTIONS, activeHolds: true };
+      const visible = visiblePlayDrawerSections({ ...ELIGIBLE_INPUT, boardName, sections });
+      expect(visible).not.toContain('activeHolds');
+      expect(visible[0]).toBe('logbook');
+      expect(
+        visiblePlayDrawerSections({ ...ELIGIBLE_INPUT, boardName, sections: { ...NO_SECTIONS, activeHolds: true } }),
+      ).toEqual([]);
+    },
+  );
 });

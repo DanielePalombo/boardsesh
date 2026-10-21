@@ -26,6 +26,19 @@ type CollapsibleSectionProps = {
    * clips it to the title's row; it brings its own colours and one-line layout.
    */
   summary?: string | ReactElement | null;
+  /**
+   * What a screen reader says for the summary while the section is collapsed,
+   * after the title. Text summaries are not read out today; a section whose
+   * line carries information (a list of holds, say) passes its words here.
+   */
+  summaryAccessibilityLabel?: string;
+  /**
+   * While collapsed with a summary, draw the summary in the title's place and
+   * across the whole row, and the title only once the section is open. For a
+   * section whose collapsed line says more than its name (Active holds).
+   * Screen readers still hear the title first.
+   */
+  hideTitleWhenCollapsed?: boolean;
   /** When this value changes, expanded state resets to `defaultExpanded` without remounting the tree. */
   resetKey?: number;
   /** Optional trailing action rendered in the header (e.g. an Attach button). */
@@ -52,6 +65,8 @@ export function CollapsibleSection({
   defaultExpanded = false,
   keepExpanded = false,
   summary,
+  summaryAccessibilityLabel,
+  hideTitleWhenCollapsed = false,
   resetKey,
   headerAction,
   onHeaderLayout,
@@ -87,6 +102,8 @@ export function CollapsibleSection({
       title={title}
       defaultExpanded={defaultExpanded}
       summary={summary}
+      summaryAccessibilityLabel={summaryAccessibilityLabel}
+      hideTitleWhenCollapsed={hideTitleWhenCollapsed}
       resetKey={resetKey}
       headerAction={headerAction}
       onHeaderLayoutEvent={onHeaderLayout ? handleHeaderLayout : undefined}
@@ -103,6 +120,8 @@ function CollapsibleSectionInternal({
   title,
   defaultExpanded,
   summary,
+  summaryAccessibilityLabel,
+  hideTitleWhenCollapsed,
   resetKey,
   headerAction,
   onHeaderLayoutEvent,
@@ -114,6 +133,8 @@ function CollapsibleSectionInternal({
   title: string;
   defaultExpanded: boolean;
   summary?: string | ReactElement | null;
+  summaryAccessibilityLabel?: string;
+  hideTitleWhenCollapsed: boolean;
   resetKey?: number;
   headerAction?: ReactNode;
   // Internal prop takes the raw LayoutChangeEvent; the public `onHeaderLayout`
@@ -177,6 +198,9 @@ function CollapsibleSectionInternal({
     onToggle?.(next);
   }, [expanded, chevronRotation, persistKey, onToggle]);
 
+  // A summary that draws itself may stand in for the title while collapsed.
+  const summaryReplacesTitle = hideTitleWhenCollapsed && !expanded && summary != null && typeof summary !== 'string';
+
   const chevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${chevronRotation.value * 180}deg` }],
   }));
@@ -192,19 +216,21 @@ function CollapsibleSectionInternal({
         <PressableSurface
           onPress={toggleExpanded}
           accessibilityRole="button"
-          accessibilityLabel={title}
+          accessibilityLabel={!expanded && summaryAccessibilityLabel ? `${title}. ${summaryAccessibilityLabel}` : title}
           accessibilityState={{ expanded }}
           style={styles.headerPress}
         >
-          <Text variant="headline" style={styles.title}>
-            {title}
-          </Text>
+          {summaryReplacesTitle ? null : (
+            <Text variant="headline" style={styles.title}>
+              {title}
+            </Text>
+          )}
           {expanded || !summary ? null : typeof summary === 'string' ? (
             <Text variant="footnote" style={styles.summary} numberOfLines={1}>
               {summary}
             </Text>
           ) : (
-            <View style={styles.summarySlot}>{summary}</View>
+            <View style={summaryReplacesTitle ? styles.summaryRow : styles.summarySlot}>{summary}</View>
           )}
         </PressableSurface>
         {headerAction}
@@ -276,6 +302,15 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     overflow: 'hidden',
     marginStart: spacing[2],
+    marginEnd: spacing[2],
+  },
+  // In the title's place: the whole row up to the chevron, from the start.
+  summaryRow: {
+    flexGrow: 1,
+    flexBasis: 0,
+    flexShrink: 1,
+    alignItems: 'flex-start',
+    overflow: 'hidden',
     marginEnd: spacing[2],
   },
   content: {

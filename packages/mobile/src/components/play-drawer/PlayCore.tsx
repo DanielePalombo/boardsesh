@@ -88,6 +88,7 @@ import {
   usePlayDrawerSectionsPreference,
 } from '../../lib/play-drawer-sections-preference';
 import { visiblePlayDrawerSections } from './play-drawer-sections';
+import { PlaybackFrameContext } from './playback-frame-context';
 import { usePlayerButtonsPreference } from '../../lib/player-buttons-preference';
 import { DEFAULT_PLAYER_BUTTONS_POSITION } from '../../lib/player-buttons';
 import { useDrawerDismissGesture } from './use-drawer-dismiss-gesture';
@@ -117,6 +118,8 @@ import {
 import { useActiveBoard } from '../../lib/graphql/use-active-board';
 import { useDisplayGrade } from '../../hooks/use-display-grade';
 import { useShareClimb } from '../../hooks/use-share-climb';
+import { activeBoardIsMoonboard } from '../../hooks/use-active-board-is-moonboard';
+import { isMoonboardBoardName } from '@boardsesh/board-config';
 import { LostHoldsBanner } from './LostHoldsBanner';
 import { useLostHoldRemix } from './use-lost-hold-remix';
 import { getBoardRenderData } from '../../lib/board-details';
@@ -428,6 +431,19 @@ export function PlayCore({
   // (workout builder, logbook/cross-board, the peer-driven accessory wall climb).
   const isPreview = drawerPreviewItem != null;
 
+  // #5099: the shown climb does not have to belong to the board the climber has
+  // selected. A queue item left over from a board switch, a party peer on
+  // another wall, or a restored launch snapshot all keep their own
+  // `boardType`/`layoutId` — and drawing them against the active board's
+  // placements matches none of their hold ids, so the renderer drops every hold
+  // and paints a veil over bare board art. Draw each climb on ITS board instead,
+  // at its own angle, and let the mismatch raise the switch-board gate below.
+  const renderBoardResolution = useMemo(
+    () => resolveClimbRenderBoard(displayedClimb, boardConfig),
+    [displayedClimb, boardConfig],
+  );
+  const renderBoardConfig = renderBoardResolution?.boardConfig ?? boardConfig;
+
   const drawerGradeSectionEnabled = useBoardseshGradeEnabled();
   const visibleSectionIds = useMemo(
     () =>
@@ -437,9 +453,17 @@ export function PlayCore({
         isAuthenticated,
         boardseshGradeEnabled: drawerGradeSectionEnabled,
         description: displayedClimb?.description,
+        boardName: renderBoardConfig.boardName as BoardName,
         screenshotMode: process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1',
       }),
-    [sections, sectionOrder, isAuthenticated, drawerGradeSectionEnabled, displayedClimb?.description],
+    [
+      sections,
+      sectionOrder,
+      isAuthenticated,
+      drawerGradeSectionEnabled,
+      displayedClimb?.description,
+      renderBoardConfig.boardName,
+    ],
   );
   const firstSectionId = visibleSectionIds[0];
   const hasVisibleSections = sectionsReady && visibleSectionIds.length > 0;
@@ -499,19 +523,6 @@ export function PlayCore({
         climbMirrored: displayedClimb?.mirrored,
       });
   const clearMirror = useCallback(() => setMirrorFlip(null), []);
-
-  // #5099: the shown climb does not have to belong to the board the climber has
-  // selected. A queue item left over from a board switch, a party peer on
-  // another wall, or a restored launch snapshot all keep their own
-  // `boardType`/`layoutId` — and drawing them against the active board's
-  // placements matches none of their hold ids, so the renderer drops every hold
-  // and paints a veil over bare board art. Draw each climb on ITS board instead,
-  // at its own angle, and let the mismatch raise the switch-board gate below.
-  const renderBoardResolution = useMemo(
-    () => resolveClimbRenderBoard(displayedClimb, boardConfig),
-    [displayedClimb, boardConfig],
-  );
-  const renderBoardConfig = renderBoardResolution?.boardConfig ?? boardConfig;
 
   // A climb that lost a hold: the banner's count and its one action, Remix.
   const { lostHoldCount, onRemix: handleRemixLostHolds } = useLostHoldRemix({
@@ -672,6 +683,10 @@ export function PlayCore({
   });
   const lightbulbLabelKind = getBleLightbulbLabelKind(lightbulbPressAction, lightbulbHolderIsAuthoritative);
   const { data: activeBoardForNavigation } = useActiveBoard();
+  // View options lists the MoonBoard-only Active holds switch on a MoonBoard
+  // climb even when the active board is another (a reachable gym board), so
+  // the climber can always turn off a section they can see.
+  const sectionsListActiveHolds = isMoonboardBoardName(boardName) || activeBoardIsMoonboard(activeBoardForNavigation);
   const {
     navigationState,
     nextHeaderClimb,
@@ -1994,27 +2009,38 @@ export function PlayCore({
                       importantForAccessibility={wallCallout === 'explainer' ? 'no-hide-descendants' : 'auto'}
                       pointerEvents={wallCallout === 'explainer' ? 'none' : 'auto'}
                     >
-                      <DeferredSections
-                        climb={displayedClimb}
-                        boardName={boardName as BoardName}
-                        layoutId={layoutId}
-                        sizeId={sizeId}
-                        setIds={setIds}
-                        angle={angle}
-                        enabled={isSheetOpen}
-                        contentEnabled={belowFoldContentRequested}
-                        sections={sections}
-                        order={sectionOrder}
-                        onSimilarClimbPress={handleSimilarClimbPress}
-                        onFirstSectionHeaderLayout={onSectionHeaderMeasured}
-                        onFirstSectionLayout={handleFirstSectionLayout}
-                        onFirstSectionToggle={handleFirstSectionToggle}
-                        onAddBetaVideo={isAuthenticated ? handleOpenAddBetaVideo : undefined}
-                        onOpenFullLogbook={handleOpenFullLogbook}
-                        onOpenClimberLogs={handleOpenClimberLogs}
-                        onOpenClimberProfile={handleOpenClimberProfile}
-                        onFindClimbers={handleFindClimbers}
-                      />
+                      {/* The frame the board paints on an animated climb, for Active
+                          holds alone (and only while it is on): the sections' own
+                          props stay the same between playback frames. */}
+                      <PlaybackFrameContext.Provider
+                        value={
+                          visibleSectionIds.includes('activeHolds') && playback.isAnimatable
+                            ? playback.currentFrameString
+                            : null
+                        }
+                      >
+                        <DeferredSections
+                          climb={displayedClimb}
+                          boardName={boardName as BoardName}
+                          layoutId={layoutId}
+                          sizeId={sizeId}
+                          setIds={setIds}
+                          angle={angle}
+                          enabled={isSheetOpen}
+                          contentEnabled={belowFoldContentRequested}
+                          sections={sections}
+                          order={sectionOrder}
+                          onSimilarClimbPress={handleSimilarClimbPress}
+                          onFirstSectionHeaderLayout={onSectionHeaderMeasured}
+                          onFirstSectionLayout={handleFirstSectionLayout}
+                          onFirstSectionToggle={handleFirstSectionToggle}
+                          onAddBetaVideo={isAuthenticated ? handleOpenAddBetaVideo : undefined}
+                          onOpenFullLogbook={handleOpenFullLogbook}
+                          onOpenClimberLogs={handleOpenClimberLogs}
+                          onOpenClimberProfile={handleOpenClimberProfile}
+                          onFindClimbers={handleFindClimbers}
+                        />
+                      </PlaybackFrameContext.Provider>
                     </View>
                   )}
                 </>
@@ -2038,6 +2064,7 @@ export function PlayCore({
         activeAngle={activeAngle}
         climbBoardMismatch={climbBoardMismatch}
         sectionsSettingsOpen={sectionsSettingsOpen}
+        sectionsListActiveHolds={sectionsListActiveHolds}
         buttonsPreviewBoard={buttonsPreviewBoard}
         addBetaVideoOpen={addBetaVideoOpen}
         addToPlaylistOpen={addToPlaylistOpen}

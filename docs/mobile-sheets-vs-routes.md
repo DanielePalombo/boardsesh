@@ -255,7 +255,7 @@ work and native QA before claiming that contract works on Android.
 
 ### Play drawer section controls
 
-Settings → Climbs & grades → Climb view and the player's ⋯ → View options use the same seven visibility
+Settings → Climbs & grades → Climb view and the player's ⋯ → View options use the same eight visibility
 switches, listed in the climber's order. View options opens the **View options** sheet (`PlayDrawerSectionsSheet`)
 as a managed `ModalSheet` mounted inside the player, above `/play`. ⋯ is a native menu
 (SwiftUI `Menu` on iOS, Compose dropdown on Android, Paper menu on web) in the top row:
@@ -279,7 +279,7 @@ account included, keeps the stored choices, because ⋯ → View options and Set
 Climbs & grades → Climb view both write them. These device-local choices use AsyncStorage (IndexedDB in
 the browser) and keep each section's existing expansion preference.
 
-The climber also orders the seven sections below the fold. Each sheet row carries ↑/↓
+The climber also orders the eight sections below the fold. Each sheet row carries ↑/↓
 arrows (44-point buttons named "Move Logbook up" and so on, disabled at the ends; a move
 announces the new place), drawn by the shared `SectionLayoutList`. A hidden section keeps
 its place, so showing it again puts it back. Restore defaults, under the list, brings back
@@ -288,8 +288,9 @@ has Restore defaults too, but the order only changes in View options: Settings s
 the native form. Order and switches share the `playDrawerSections` record,
 `{ version: 1, sections, order }`. `order` came later under the same version, so an older
 bundle still reads the switches; if it writes the record, the order goes back to the
-default and the switches survive. `order` is left out while it matches the default, so a
-later release's default order still reaches climbers who never moved anything. Writes keep
+default and the switches survive. `order` is left out while it matches the default, and so
+is every switch left at its default, so a later release's default order or a new default
+switch still reaches climbers who never touched it. Writes keep
 fields, switches and ordered ids this bundle does not know (an unknown id goes back after
 the id it followed), so a newer bundle's sections survive an OTA rollback and an edit.
 Every section with a switch is below the fold and ordered (`BELOW_FOLD_SECTION_IDS`). The
@@ -300,8 +301,8 @@ for surfaces that must know it before the first frame: one store per key, the on
 that key, re-reading it on every settings change, and storing `null` for the defaults unless
 a later release's ids still need a home.
 
-Any section can be the peek at the fold, so each says something while collapsed: Logbook
-your ticks at this angle (plus crew and other angles), Climber logs the crew counts,
+Any section can be the peek at the fold, so each says something while collapsed: Active
+holds the climb's holds by role, Logbook your ticks at this angle (plus crew and other angles), Climber logs the crew counts,
 Setter's notes their first line, Beta Videos a count or "None yet", Boardsesh grade its
 grade, Community the angle with the most sends, Similar climbs the closest match by name
 (or that the board needs downloading). `CollapsibleSection`'s `summary` also takes a React
@@ -313,6 +314,44 @@ a Logbook peek keeps its head start.
 The sheet has two tabs, **Below the climb** (these sections) and **Buttons** (the player's buttons, Previous and
 next, and whether the controls sit below or above the board). The buttons, their layout rule, storage and the ⋯
 stand-ins are described in [climb-view-options.md](climb-view-options.md).
+
+**Active holds** (`activeHolds`, #6290) is MoonBoard only: other boards are too dense for a
+list of holds to help. `visiblePlayDrawerSections` makes it eligible only when the climb on
+screen is drawn on a MoonBoard, so on any other board it never mounts, never peeks and takes
+no slot, whatever the stored switch says. View options and Settings → Climbs & grades →
+Climb view list its switch only while the active board is a MoonBoard
+(`useActiveBoardIsMoonboard`, the same gate as Board look's MoonBoard grid labels). Show all
+and Hide all touch only the listed switches, and an arrow steps past an unlisted section. It
+leads the default order and starts switched off, so the default drawer is unchanged; a
+record saved before it existed has no key for it and reads as off, and an order saved before
+it slots it in first. Switched on, on a MoonBoard climb, it is the peek at the fold.
+Collapsed, its header is just its line (`ActiveHoldsLine`, a summary node drawn in the
+title's place through `CollapsibleSection`'s `hideTitleWhenCollapsed`): each role's marker
+followed by its wall coordinates, bottom to top (`B5`), across the row up to the chevron.
+Expanded (`ActiveHoldsSection`), it is titled and lists a row a role.
+
+The line measures each of its readings off screen and draws the richest one that fits the
+row at the climber's text size (`chooseActiveHoldsLine` in `active-holds-line.ts`): every
+coordinate; then only Hand cut short, never below its first coordinate and never collapsing
+under its chip; then Hand as a count; then the section's title instead of a line. Start and
+Finish are never cut. Widths are cached by a reading's words with every digit as 0 (the line
+draws tabular figures) at module scope, with the room it last had and the reading it last
+drew, which stands in until a new climb is measured; so a swipe, a playback frame or folding
+the section open and shut never flashes another reading. The header's
+`summaryAccessibilityLabel` reads the title and every hold ("Active holds. Start: B5. Hand:
+F8, K8. Finish: J18.") on the collapsed header, whatever the line shows.
+
+Each role's marker matches the board: its colour and the climber's override through
+`resolveHoldStateMarker` (the helper the renderer's hold-state map uses), and its glyph from
+the board's look (`useBoardRenderMode` in `src/hooks/use-board-render-look.ts`): classic
+draws the climber's marker shape, Aura a dot, or the role glyph (━ ┃ ✕ ○) when role glyphs
+are on. Each marker sits on a chip in the board's dark field colour (`BOARD_FIELD_COLORS.dark`)
+in both themes, or the light field for a colour that is under 3:1 on the dark one, so every
+marker clears 3:1 on a light or a dark sheet. The summary is `summarizeActiveHolds` in
+`@boardsesh/play-view`. It reads frames only: no queries, no Bluetooth, nothing to wait for,
+so it draws as the peek at once. On an animated climb the playback frame reaches it through
+`PlaybackFrameContext`, which only Active holds reads and which stays `null` while it is not
+shown, so a playback frame never re-renders the other sections.
 
 The first eligible visible section supplies the header preview at the fold; its header
 mounts before deferred content so hiding Logbook never strands the remaining sections.
@@ -326,6 +365,20 @@ Pinch, zoomed panning, and downward dismissal retain their own gesture handling.
 Browser touch, wheel, trackpad, and keyboard scrolling retain native browser behavior.
 While a visible section awaits content, the drawer gets one pixel of initial
 overflow so those inputs can open the content gate. Hide all removes that overflow.
+
+### Home section controls
+
+Home's **Customize Home** sheet (`HomeCustomizeSheet`) follows the play drawer's pattern: a
+managed `ModalSheet` mounted on the Home tab on first open, Show all and Focused at the head
+of the list (they scroll with it), Restore defaults under it. Both sheets are built from the
+pieces in `src/components/section-layout/SectionLayoutSheet.tsx` (frame, intro, footer,
+sheet list). Settings › Home is the native form with one exception (#6480, Marco's ask on
+#6546): the movable sections, with switches and arrows, are the same `SectionLayoutList`
+rows hosted in one full-bleed `custom` row, because the form has no reorderable row. The
+"Open the app on" row, the feed's switch and Show all / Focused / Restore defaults stay native.
+Android's Compose form drew no hosted row on a real phone, so there each section is a native
+switch with native ↑/↓ buttons (the toggle row's Android-only `actions`). Its layout lives in `homeSectionsStore`
+(`homeSectionsV1`, via `settingsLayoutStorage`); see `docs/ui/02-home.md`.
 
 ## The decision tree
 

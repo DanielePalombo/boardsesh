@@ -27,19 +27,19 @@ vi.mock('react-native', () => ({
   StyleSheet: { create: (styles: unknown) => styles },
 }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
-vi.mock('../../Card', () => ({
+vi.mock('../../../components/Card', () => ({
   Card: ({ children, onPress }: { children?: ReactNode; onPress?: () => void }) =>
     createElement(onPress ? 'button' : 'section', { onClick: onPress }, children),
 }));
-vi.mock('../../Text', () => ({
+vi.mock('../../../components/Text', () => ({
   Text: ({ children }: { children?: ReactNode }) => createElement('span', null, children),
 }));
-vi.mock('../../Icon', () => ({ Icon: () => null }));
-vi.mock('../../Button', () => ({
+vi.mock('../../../components/Icon', () => ({ Icon: () => null }));
+vi.mock('../../../components/Button', () => ({
   Button: ({ title, onPress }: { title: string; onPress: () => void }) =>
     createElement('button', { onClick: onPress }, title),
 }));
-vi.mock('../../PressableSurface', () => ({
+vi.mock('../../../components/PressableSurface', () => ({
   PressableSurface: ({
     children,
     onPress,
@@ -55,14 +55,15 @@ vi.mock('../../../lib/board-details', () => ({
   getBoardRenderData: () => ({ boardWidth: 100, boardHeight: 120 }),
 }));
 vi.mock('../../../lib/spray/use-spray-wall-token', () => ({ useSprayWallToken: () => '' }));
-vi.mock('../../BoardImageNative', () => ({ BoardImageNative: () => null }));
+vi.mock('../../../components/BoardImageNative', () => ({ BoardImageNative: () => null }));
 vi.mock('../../../providers/theme-provider', () => ({ useTheme: () => ({ systemColors: {} }) }));
 
-import { BoardSummaryCard } from '../pre-session/BoardSummaryCard';
-import { useSessionBoardNavigation } from '../use-session-board-navigation';
+import { BoardSummaryCard } from '../../../components/boards/BoardSummaryCard';
+import { useBoardShortcutNavigation } from '../use-board-shortcut-navigation';
+import type { BoardReturnTo } from '../board-return-to';
 
-function SessionBoardActions() {
-  const { boardQuery, hasNoBoard, browseClimbs, openBoardSwitcher, retryBoard } = useSessionBoardNavigation();
+function BoardActions({ returnTo }: { returnTo: BoardReturnTo }) {
+  const { boardQuery, hasNoBoard, browseClimbs, openBoardSwitcher, retryBoard } = useBoardShortcutNavigation(returnTo);
   return createElement(BoardSummaryCard, {
     board: boardQuery.data,
     hasNoBoard,
@@ -73,7 +74,7 @@ function SessionBoardActions() {
   });
 }
 
-describe('Session board navigation', () => {
+describe('Board card navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     boardState.data = {
@@ -90,7 +91,7 @@ describe('Session board navigation', () => {
   });
 
   it('browses the already selected board without activating it again', () => {
-    const { container } = render(createElement(SessionBoardActions));
+    const { container } = render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     expect(screen.getByText('My board · 12 × 12 · 40°')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /^mobile.session.browseClimbs/ }));
     expect(navigation.navigate).toHaveBeenCalledExactlyOnceWith('/(tabs)/climbs');
@@ -103,7 +104,7 @@ describe('Session board navigation', () => {
   it('keeps the full board context available to the browse action', () => {
     const boardName = 'Sharma Climbing Gavà - Kilter Board Original with a longer custom gym name';
     boardState.data = { ...boardState.data, name: boardName } as UserBoard;
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     const browse = screen.getByRole('button', { name: /^mobile.session.browseClimbs/ });
     expect(browse.textContent).toContain(boardName);
     expect(browse.getAttribute('aria-label')).toBe(`mobile.session.browseClimbs, ${boardName} · 12 × 12 · 40°`);
@@ -111,7 +112,7 @@ describe('Session board navigation', () => {
   });
 
   it('changes boards through a separate action that returns to Session', () => {
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     fireEvent.click(screen.getByRole('button', { name: 'mobile.session.changeBoard' }));
     expect(navigation.push).toHaveBeenCalledExactlyOnceWith({
       pathname: '/boards',
@@ -120,9 +121,28 @@ describe('Session board navigation', () => {
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
+  it('comes back to Home when the change started on Home', () => {
+    render(createElement(BoardActions, { returnTo: '/(tabs)/home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mobile.session.changeBoard' }));
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith({
+      pathname: '/boards',
+      params: { returnTo: '/(tabs)/home' },
+    });
+  });
+
+  it('sends a first pick from Home to Climbs, where the new board is', () => {
+    boardState.data = null;
+    render(createElement(BoardActions, { returnTo: '/(tabs)/home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mobile.session.chooseBoard' }));
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith({
+      pathname: '/boards',
+      params: { returnTo: '/(tabs)/climbs' },
+    });
+  });
+
   it('offers first selection only after storage confirms no board', () => {
     boardState.data = null;
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     fireEvent.click(screen.getByRole('button', { name: 'mobile.session.chooseBoard' }));
     expect(navigation.push).toHaveBeenCalledExactlyOnceWith({
       pathname: '/boards',
@@ -134,7 +154,7 @@ describe('Session board navigation', () => {
   it('waits for storage instead of offering a new selection', () => {
     boardState.data = undefined;
     boardState.isSuccess = false;
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     expect(screen.getByText('actions.loading')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
     expect(navigation.push).not.toHaveBeenCalled();
@@ -144,7 +164,7 @@ describe('Session board navigation', () => {
     boardState.data = undefined;
     boardState.isSuccess = false;
     boardState.isError = true;
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     expect(screen.getByText('mobile.emptyState.boardRestoreFailed.title')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'actions.retry' }));
     expect(boardState.refetch).toHaveBeenCalledOnce();
@@ -156,7 +176,7 @@ describe('Session board navigation', () => {
   it('keeps browsing available when a refresh fails with a cached board', () => {
     boardState.isSuccess = false;
     boardState.isError = true;
-    render(createElement(SessionBoardActions));
+    render(createElement(BoardActions, { returnTo: '/(tabs)/record' }));
     fireEvent.click(screen.getByRole('button', { name: /^mobile.session.browseClimbs/ }));
     expect(navigation.navigate).toHaveBeenCalledExactlyOnceWith('/(tabs)/climbs');
     expect(screen.queryByRole('button', { name: 'actions.retry' })).toBeNull();

@@ -155,6 +155,7 @@ const SETTINGS_PAGES = [
   'board-look/custom',
   'board-look/accessibility',
   'climbs',
+  'home',
   'early-access',
   'developer',
   'climb-list',
@@ -244,6 +245,7 @@ describe('the settings stack', () => {
       integrations: 'integrations',
       board: 'board-look/index',
       climbs: 'climbs',
+      home: 'home',
       earlyAccess: 'early-access',
       developer: 'developer',
     } as const;
