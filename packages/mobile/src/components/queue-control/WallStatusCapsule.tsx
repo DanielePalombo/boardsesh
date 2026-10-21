@@ -30,7 +30,6 @@ import { spacing, borderRadius } from '../../theme/tokens';
 import { withAlpha } from '../../theme/colors';
 import { selectByVariant } from '../../theme/variants/select-by-variant';
 import { CHROME_LABEL_MAX_FONT_SCALE } from '../../theme/typography';
-import { glassSize } from '../../theme/layout';
 import { boardPresenceClimbToClimb } from '../../lib/board-presence/presence-climb';
 import { LargeContentViewer } from '../LargeContentViewer';
 import { Text } from '../Text';
@@ -39,12 +38,25 @@ import { PressableSurface } from '../PressableSurface';
 import { GlassSurface } from '../GlassSurface';
 import { BoardDriverAvatar } from '../board-presence/BoardDriverAvatar';
 import { useOpenWallPreview } from './use-open-wall-preview';
-import { NativeHeaderActionContext } from '../chrome/native-header-action-context';
+import { NativeHeaderActionContext, NativeTitleMaxWidthContext } from '../chrome/native-header-action-context';
+import { NATIVE_ACTION_SIZE } from '../chrome/GlassActionToolbar';
 
 const CAPSULE_HEIGHT = 32;
-// 20pt reads unambiguously as a face above M3's ~18dp floor while protecting the
-// truncating climb name in the tight slot. Fixed — does not scale with Dynamic Type.
-const AVATAR_SIZE = 20;
+// The capsule's face: 18pt still reads as a face and leaves the truncating climb
+// name more of UIKit's tight title slot. Fixed — does not scale with Dynamic Type.
+const CAPSULE_AVATAR_SIZE = 18;
+const CAPSULE_ANON_GLYPH = 16;
+// The avatar → name → grade gap and the trailing inset, each 2pt under
+// spacing[2] / spacing[3] so the name keeps more of the title slot. The spacing
+// scale has no 6 or 10.
+const CAPSULE_GAP = 6;
+const CAPSULE_PADDING_END = 10;
+// Under this title bound (a 320pt frame beside five bar slots leaves 58pt) the
+// avatar would squeeze the name to nothing and clip the grade, so it drops out.
+const CAPSULE_COMPACT_BELOW = 100;
+// 20pt reads unambiguously as a face above M3's ~18dp floor in the Material band.
+// Fixed — does not scale with Dynamic Type.
+const BAND_AVATAR_SIZE = 20;
 const ANON_GLYPH = 12;
 // Material status band: a 4dp tertiary accent rail down the leading edge and a
 // 56dp two-line body (overline + climb line) — already past the 48dp touch floor.
@@ -71,6 +83,8 @@ function WallStatusCapsuleImpl({ climb, boardName }: WallStatusCapsuleProps) {
   const reduceMotion = useReducedMotion();
   const openWallPreview = useOpenWallPreview();
   const nativeHeader = useContext(NativeHeaderActionContext);
+  const titleMaxWidth = useContext(NativeTitleMaxWidthContext);
+  const compact = titleMaxWidth != null && titleMaxWidth < CAPSULE_COMPACT_BELOW;
   const nativeGlass = useNativeGlass();
 
   const name = climb.name ?? '';
@@ -189,7 +203,7 @@ function WallStatusCapsuleImpl({ climb, boardName }: WallStatusCapsuleProps) {
                     uri={climb.sentByAvatarUrl}
                     name={senderName}
                     userId={null}
-                    size={AVATAR_SIZE}
+                    size={BAND_AVATAR_SIZE}
                     status="none"
                   />
                 ) : (
@@ -231,25 +245,36 @@ function WallStatusCapsuleImpl({ climb, boardName }: WallStatusCapsuleProps) {
         accessibilityRole="button"
         accessibilityLabel={a11yLabel}
         accessibilityHint={t('mobile.boardPresence.stripA11yHint')}
-        style={styles.pressable}
+        style={[styles.pressable, compact && styles.pressableCompact]}
       >
         {/* One tap target and one spoken label; profile navigation lives in the preview. */}
-        <View style={styles.capsuleAvatar} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          {hasSenderIdentity ? (
-            <BoardDriverAvatar
-              uri={climb.sentByAvatarUrl}
-              name={senderName}
-              userId={null}
-              size={AVATAR_SIZE}
-              status="none"
-            />
-          ) : (
-            <Icon maxFontSizeMultiplier={1} name="profile.fill" size={18} color={brandColors.warning} />
-          )}
-        </View>
+        {compact ? null : (
+          <View
+            style={styles.capsuleAvatar}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            {hasSenderIdentity ? (
+              <BoardDriverAvatar
+                uri={climb.sentByAvatarUrl}
+                name={senderName}
+                userId={null}
+                size={CAPSULE_AVATAR_SIZE}
+                status="none"
+              />
+            ) : (
+              <Icon
+                maxFontSizeMultiplier={1}
+                name="profile.fill"
+                size={CAPSULE_ANON_GLYPH}
+                color={brandColors.warning}
+              />
+            )}
+          </View>
+        )}
         <LargeContentViewer title={a11yLabel} onActivate={handlePress} style={styles.capsuleNameViewer}>
           <Text
-            variant="footnote"
+            variant="caption1"
             color={systemColors.label}
             numberOfLines={1}
             ellipsizeMode="tail"
@@ -261,7 +286,7 @@ function WallStatusCapsuleImpl({ climb, boardName }: WallStatusCapsuleProps) {
         </LargeContentViewer>
         {formattedGrade ? (
           <Text
-            variant="footnote"
+            variant="caption1"
             numberOfLines={1}
             maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
             style={[styles.grade, { color: gradeColor }]}
@@ -275,7 +300,7 @@ function WallStatusCapsuleImpl({ climb, boardName }: WallStatusCapsuleProps) {
 
   // The native glass draws its own rounded edge. Opaque fills, RN borders and
   // clipping would cover or cut that lens, and opacity entry animations flatten it.
-  const capsuleRadius = (nativeHeader ? glassSize.inline : CAPSULE_HEIGHT) / 2;
+  const capsuleRadius = (nativeHeader ? NATIVE_ACTION_SIZE : CAPSULE_HEIGHT) / 2;
   const surface = nativeGlass ? (
     <GlassSurface
       glassEffectStyle="regular"
@@ -320,7 +345,7 @@ const styles = StyleSheet.create({
     height: CAPSULE_HEIGHT,
   },
   nativeGlassCapsule: {
-    height: glassSize.inline,
+    height: NATIVE_ACTION_SIZE,
   },
   capsule: {
     flexShrink: 1,
@@ -332,8 +357,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   nativeCapsule: {
-    height: glassSize.inline,
-    borderRadius: glassSize.inline / 2,
+    height: NATIVE_ACTION_SIZE,
+    borderRadius: NATIVE_ACTION_SIZE / 2,
   },
   capsuleAvatar: {
     flexShrink: 0,
@@ -350,8 +375,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     height: '100%',
     paddingStart: spacing[1],
-    paddingEnd: spacing[3],
-    gap: spacing[2],
+    paddingEnd: CAPSULE_PADDING_END,
+    gap: CAPSULE_GAP,
+  },
+  // Without the avatar the name starts at the trailing inset, so the text sits evenly.
+  pressableCompact: {
+    paddingStart: CAPSULE_PADDING_END,
   },
   name: {
     flexShrink: 1,
@@ -400,9 +429,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   bandAnon: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
+    width: BAND_AVATAR_SIZE,
+    height: BAND_AVATAR_SIZE,
+    borderRadius: BAND_AVATAR_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
