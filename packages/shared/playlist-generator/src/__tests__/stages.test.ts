@@ -201,6 +201,17 @@ describe('generateStagedPlan matches generateWorkoutPlan', () => {
     expect(generateStagedPlan(plan, DENSE_GRADES)).toEqual([]);
   });
 
+  it('ignores a warm-up left in persisted workout-stage options', () => {
+    const persistedStage = {
+      id: 'main',
+      kind: 'gradeFocus',
+      options: { ...DEFAULT_GRADE_FOCUS_OPTIONS, warmUp: 'standard', targetGrade: 10, numberOfClimbs: 3 },
+    } as unknown as WorkoutStage;
+    const staged = generateStagedPlan({ stages: [persistedStage] }, DENSE_GRADES);
+
+    expect(staged.map((slot) => slot.section)).toEqual(['main', 'main', 'main']);
+  });
+
   it('runs the index across several workout stages', () => {
     const plan: WorkoutPlan = {
       stages: [
@@ -424,6 +435,10 @@ describe('pruneRun', () => {
     const next = pruneRun(RUN, ['p1', 'p2', 'p3']);
 
     expect(next.stages.map((stage) => stage.id)).toEqual(['stage-1']);
+  });
+
+  it('empties the run when none of its climbs are left in a non-empty queue', () => {
+    expect(pruneRun(RUN, ['unknown'])).toEqual({ stages: [] });
   });
 
   it('leaves the run alone while the queue is empty (hydration or session sync)', () => {
