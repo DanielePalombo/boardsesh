@@ -1,0 +1,360 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_GRADE_FOCUS_OPTIONS,
+  DEFAULT_LADDER_OPTIONS,
+  DEFAULT_PYRAMID_OPTIONS,
+  DEFAULT_VOLUME_OPTIONS,
+  type GeneratorGradeScale,
+  type GeneratorOptions,
+  type StagedSlot,
+  WARM_UP_OPTIONS,
+  type WorkoutPlan,
+  type WorkoutRun,
+  appendStageToRun,
+  buildWorkoutRun,
+  generateStagedPlan,
+  generateWorkoutPlan,
+  locateInRun,
+  planFromGeneratorOptions,
+  pruneRun,
+} from '../index';
+
+const DENSE_GRADES: GeneratorGradeScale = Array.from({ length: 33 }, (_, i) => ({ difficulty_id: i + 1 }));
+const MOONBOARD_GRADES: GeneratorGradeScale = Array.from({ length: 16 }, (_, i) => ({ difficulty_id: i + 13 }));
+const SPARSE_GRADES: GeneratorGradeScale = [13, 17, 21, 25].map((difficulty_id) => ({ difficulty_id }));
+
+const GRADE_CASES: Array<{ name: string; grades: GeneratorGradeScale; targetGrade: number }> = [
+  { name: 'dense mid-range', grades: DENSE_GRADES, targetGrade: 15 },
+  { name: 'dense lowest grade', grades: DENSE_GRADES, targetGrade: 1 },
+  { name: 'MoonBoard-like mid-range', grades: MOONBOARD_GRADES, targetGrade: 20 },
+  { name: 'MoonBoard-like lowest grade', grades: MOONBOARD_GRADES, targetGrade: 13 },
+  { name: 'sparse top grade', grades: SPARSE_GRADES, targetGrade: 25 },
+  { name: 'sparse lowest grade', grades: SPARSE_GRADES, targetGrade: 13 },
+  { name: 'empty scale', grades: [], targetGrade: 5 },
+];
+
+const WORKOUT_CASES: GeneratorOptions[] = [
+  { ...DEFAULT_VOLUME_OPTIONS, targetGrade: 0, mainSetClimbs: 6, mainSetVariability: 0 },
+  { ...DEFAULT_VOLUME_OPTIONS, targetGrade: 0, mainSetClimbs: 6, mainSetVariability: 3 },
+  { ...DEFAULT_PYRAMID_OPTIONS, targetGrade: 0, numberOfSteps: 5, climbsPerStep: 2 },
+  { ...DEFAULT_PYRAMID_OPTIONS, targetGrade: 0, numberOfSteps: 4, climbsPerStep: 1 },
+  { ...DEFAULT_LADDER_OPTIONS, targetGrade: 0, numberOfSteps: 5, climbsPerStep: 2 },
+  { ...DEFAULT_GRADE_FOCUS_OPTIONS, targetGrade: 0, numberOfClimbs: 7 },
+];
+
+const EQUIVALENCE_CASES = WORKOUT_CASES.flatMap((workout) =>
+  WARM_UP_OPTIONS.flatMap((warmUp) =>
+    GRADE_CASES.map(({ name, grades, targetGrade }) => ({
+      label: `${workout.type}${workout.type === 'volume' ? ` variability ${workout.mainSetVariability}` : ''} / warm-up ${warmUp} / ${name}`,
+      options: { ...workout, warmUp, targetGrade },
+      grades,
+    })),
+  ),
+);
+
+// Volume's variability draws from Math.random; replay the same sequence for both generators.
+const seedRandom = () => {
+  let seed = 42;
+  vi.spyOn(Math, 'random').mockImplementation(() => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  });
+};
+
+const withoutStageId = (slots: StagedSlot[]) => slots.map(({ stageId: _stageId, ...slot }) => slot);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('generateStagedPlan matches generateWorkoutPlan', () => {
+  it.each(EQUIVALENCE_CASES)('$label', ({ options, grades }) => {
+    seedRandom();
+    const expected = generateWorkoutPlan(options, grades);
+    vi.restoreAllMocks();
+    seedRandom();
+    const staged = generateStagedPlan(planFromGeneratorOptions(options), grades);
+
+    expect(withoutStageId(staged)).toEqual(expected);
+  });
+
+  it('tags warm-up slots with the warm-up stage and the rest with the workout stage', () => {
+    const plan = planFromGeneratorOptions({ ...DEFAULT_PYRAMID_OPTIONS, warmUp: 'standard', targetGrade: 20 });
+    const staged = generateStagedPlan(plan, DENSE_GRADES);
+
+    expect(staged.filter((slot) => slot.section === 'warmUp').every((slot) => slot.stageId === 'stage-0')).toBe(true);
+    expect(staged.filter((slot) => slot.section !== 'warmUp').every((slot) => slot.stageId === 'stage-1')).toBe(true);
+  });
+
+  it('keeps the lowest-grade warm-up length (#6233)', () => {
+    const plan = planFromGeneratorOptions({ ...DEFAULT_GRADE_FOCUS_OPTIONS, warmUp: 'extended', targetGrade: 13 });
+    const warmUpSlots = generateStagedPlan(plan, MOONBOARD_GRADES).filter((slot) => slot.section === 'warmUp');
+
+    expect(warmUpSlots.map((slot) => slot.grade)).toEqual(Array(12).fill(13));
+  });
+
+  it('generates nothing for a warm-up with no stage after it', () => {
+    const plan: WorkoutPlan = { stages: [{ id: 'warm', kind: 'warmUp', warmUpType: 'standard' }] };
+
+    expect(generateStagedPlan(plan, DENSE_GRADES)).toEqual([]);
+  });
+
+  it('generates nothing for a warm-up followed by another warm-up', () => {
+    const plan: WorkoutPlan = {
+      stages: [
+        { id: 'first', kind: 'warmUp', warmUpType: 'standard' },
+        { id: 'second', kind: 'warmUp', warmUpType: 'standard' },
+        {
+          id: 'main',
+          kind: 'gradeFocus',
+          options: { ...DEFAULT_GRADE_FOCUS_OPTIONS, warmUp: 'none', targetGrade: 10, numberOfClimbs: 2 },
+        },
+      ],
+    };
+    const staged = generateStagedPlan(plan, DENSE_GRADES);
+
+    expect(staged.map((slot) => [slot.stageId, slot.grade, slot.index])).toEqual([
+      ['second', 6, 0],
+      ['second', 7, 1],
+      ['second', 8, 2],
+      ['second', 9, 3],
+      ['main', 10, 4],
+      ['main', 10, 5],
+    ]);
+  });
+
+  it('runs the index across several workout stages', () => {
+    const plan: WorkoutPlan = {
+      stages: [
+        {
+          id: 'focus',
+          kind: 'gradeFocus',
+          options: { ...DEFAULT_GRADE_FOCUS_OPTIONS, warmUp: 'none', targetGrade: 10, numberOfClimbs: 2 },
+        },
+        { id: 'warm', kind: 'warmUp', warmUpType: 'standard' },
+        {
+          id: 'ladder',
+          kind: 'ladder',
+          options: { ...DEFAULT_LADDER_OPTIONS, warmUp: 'none', targetGrade: 20, numberOfSteps: 2, climbsPerStep: 1 },
+        },
+      ],
+    };
+    const staged = generateStagedPlan(plan, DENSE_GRADES);
+
+    expect(staged.map((slot) => slot.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(staged.map((slot) => slot.stageId)).toEqual([
+      'focus',
+      'focus',
+      'warm',
+      'warm',
+      'warm',
+      'warm',
+      'ladder',
+      'ladder',
+    ]);
+    expect(staged.slice(2, 6).map((slot) => slot.grade)).toEqual([16, 17, 18, 19]);
+  });
+});
+
+describe('planFromGeneratorOptions', () => {
+  it('splits a warm-up into its own stage with deterministic ids', () => {
+    const plan = planFromGeneratorOptions({ ...DEFAULT_VOLUME_OPTIONS, warmUp: 'extended', targetGrade: 18 });
+
+    expect(plan).toEqual({
+      stages: [
+        { id: 'stage-0', kind: 'warmUp', warmUpType: 'extended' },
+        { id: 'stage-1', kind: 'volume', options: { ...DEFAULT_VOLUME_OPTIONS, warmUp: 'none', targetGrade: 18 } },
+      ],
+    });
+  });
+
+  it('emits only the workout stage when no warm-up is picked', () => {
+    const plan = planFromGeneratorOptions({ ...DEFAULT_LADDER_OPTIONS, warmUp: 'none', targetGrade: 18 });
+
+    expect(plan.stages).toHaveLength(1);
+    expect(plan.stages[0]).toMatchObject({ id: 'stage-0', kind: 'ladder' });
+  });
+
+  it('uses an injected id factory', () => {
+    const plan = planFromGeneratorOptions(
+      { ...DEFAULT_PYRAMID_OPTIONS, warmUp: 'standard', targetGrade: 18 },
+      (stagePosition) => `custom-${stagePosition * 10}`,
+    );
+
+    expect(plan.stages.map((stage) => stage.id)).toEqual(['custom-0', 'custom-10']);
+  });
+
+  it('survives a JSON round trip', () => {
+    const plan = planFromGeneratorOptions({ ...DEFAULT_GRADE_FOCUS_OPTIONS, warmUp: 'standard', targetGrade: 18 });
+
+    expect(JSON.parse(JSON.stringify(plan))).toEqual(plan);
+  });
+
+  it('does not mutate the options it was given', () => {
+    const options: GeneratorOptions = { ...DEFAULT_VOLUME_OPTIONS, warmUp: 'standard', targetGrade: 18 };
+    planFromGeneratorOptions(options);
+
+    expect(options.warmUp).toBe('standard');
+  });
+});
+
+const PLAN: WorkoutPlan = planFromGeneratorOptions({ ...DEFAULT_PYRAMID_OPTIONS, warmUp: 'standard', targetGrade: 18 });
+
+describe('buildWorkoutRun', () => {
+  it('groups uuids by stage in plan order, keeping entry order within a stage', () => {
+    const run = buildWorkoutRun(
+      [
+        { uuid: 'p1', stageId: 'stage-1' },
+        { uuid: 'w1', stageId: 'stage-0' },
+        { uuid: 'p2', stageId: 'stage-1' },
+        { uuid: 'w2', stageId: 'stage-0' },
+      ],
+      PLAN,
+    );
+
+    expect(run).toEqual({
+      stages: [
+        { id: 'stage-0', kind: 'warmUp', itemUuids: ['w1', 'w2'] },
+        { id: 'stage-1', kind: 'pyramid', itemUuids: ['p1', 'p2'] },
+      ],
+    });
+  });
+
+  it('skips stages with no items and entries for unknown stages', () => {
+    const run = buildWorkoutRun(
+      [
+        { uuid: 'p1', stageId: 'stage-1' },
+        { uuid: 'x1', stageId: 'gone' },
+      ],
+      PLAN,
+    );
+
+    expect(run).toEqual({ stages: [{ id: 'stage-1', kind: 'pyramid', itemUuids: ['p1'] }] });
+  });
+
+  it('returns an empty run for no entries', () => {
+    expect(buildWorkoutRun([], PLAN)).toEqual({ stages: [] });
+  });
+});
+
+const RUN: WorkoutRun = {
+  stages: [
+    { id: 'stage-0', kind: 'warmUp', itemUuids: ['w1', 'w2'] },
+    { id: 'stage-1', kind: 'pyramid', itemUuids: ['p1', 'p2', 'p3'] },
+  ],
+};
+
+describe('appendStageToRun', () => {
+  it('adds a new stage at the end without touching the input', () => {
+    const snapshot = structuredClone(RUN);
+    const next = appendStageToRun(RUN, { id: 'stage-2', kind: 'gradeFocus' }, ['g1', 'g2']);
+
+    expect(next.stages.map((stage) => stage.id)).toEqual(['stage-0', 'stage-1', 'stage-2']);
+    expect(next.stages[2]).toEqual({ id: 'stage-2', kind: 'gradeFocus', itemUuids: ['g1', 'g2'] });
+    expect(RUN).toEqual(snapshot);
+  });
+
+  it('appends to a stage that is already in the run', () => {
+    const next = appendStageToRun(RUN, { id: 'stage-1', kind: 'pyramid' }, ['p4']);
+
+    expect(next.stages[1].itemUuids).toEqual(['p1', 'p2', 'p3', 'p4']);
+    expect(RUN.stages[1].itemUuids).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('skips uuids already in the run and duplicates in the input', () => {
+    const next = appendStageToRun(RUN, { id: 'stage-2', kind: 'volume' }, ['w1', 'v1', 'v1']);
+
+    expect(next.stages[2].itemUuids).toEqual(['v1']);
+  });
+
+  it('returns the same run when there is nothing to add', () => {
+    expect(appendStageToRun(RUN, { id: 'stage-2', kind: 'volume' }, [])).toBe(RUN);
+    expect(appendStageToRun(RUN, { id: 'stage-2', kind: 'volume' }, ['p1'])).toBe(RUN);
+  });
+});
+
+describe('pruneRun', () => {
+  it('returns the same object when every uuid is still queued', () => {
+    expect(pruneRun(RUN, ['w1', 'w2', 'p1', 'p2', 'p3', 'other'])).toBe(RUN);
+  });
+
+  it('drops a removed item, including the current one', () => {
+    const next = pruneRun(RUN, ['w1', 'w2', 'p1', 'p3']);
+
+    expect(next.stages[1].itemUuids).toEqual(['p1', 'p3']);
+    expect(next.stages[0]).toBe(RUN.stages[0]);
+    expect(RUN.stages[1].itemUuids).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('drops a stage left empty', () => {
+    const next = pruneRun(RUN, ['p1', 'p2', 'p3']);
+
+    expect(next.stages.map((stage) => stage.id)).toEqual(['stage-1']);
+  });
+
+  it('empties the run when the queue is cleared', () => {
+    expect(pruneRun(RUN, [])).toEqual({ stages: [] });
+  });
+});
+
+describe('locateInRun', () => {
+  const QUEUE = ['w1', 'w2', 'p1', 'p2', 'p3'];
+
+  it('locates the first climb', () => {
+    expect(locateInRun(RUN, 'w1', QUEUE)).toEqual({
+      stageIndex: 0,
+      stageCount: 2,
+      stageId: 'stage-0',
+      kind: 'warmUp',
+      positionInStage: 1,
+      stageSize: 2,
+      remainingInStage: 1,
+    });
+  });
+
+  it('locates a middle climb', () => {
+    expect(locateInRun(RUN, 'p2', QUEUE)).toMatchObject({
+      stageIndex: 1,
+      stageId: 'stage-1',
+      kind: 'pyramid',
+      positionInStage: 2,
+      stageSize: 3,
+      remainingInStage: 1,
+    });
+  });
+
+  it('locates the last climb', () => {
+    expect(locateInRun(RUN, 'p3', QUEUE)).toMatchObject({ positionInStage: 3, stageSize: 3, remainingInStage: 0 });
+  });
+
+  it('follows the queue order after a reorder', () => {
+    const reordered = ['w1', 'w2', 'p3', 'p1', 'p2'];
+
+    expect(locateInRun(RUN, 'p3', reordered)).toMatchObject({ positionInStage: 1, remainingInStage: 2 });
+    expect(locateInRun(RUN, 'p2', reordered)).toMatchObject({ positionInStage: 3, remainingInStage: 0 });
+  });
+
+  it('ignores climbs that left the queue', () => {
+    expect(locateInRun(RUN, 'p3', ['p1', 'p3'])).toEqual({
+      stageIndex: 0,
+      stageCount: 1,
+      stageId: 'stage-1',
+      kind: 'pyramid',
+      positionInStage: 2,
+      stageSize: 2,
+      remainingInStage: 0,
+    });
+  });
+
+  it('returns null for a uuid in no stage', () => {
+    expect(locateInRun(RUN, 'extra', [...QUEUE, 'extra'])).toBeNull();
+  });
+
+  it('returns null for a uuid that is not queued', () => {
+    expect(locateInRun(RUN, 'p1', ['w1'])).toBeNull();
+  });
+
+  it('returns null for an empty run', () => {
+    expect(locateInRun({ stages: [] }, 'w1', QUEUE)).toBeNull();
+  });
+});
