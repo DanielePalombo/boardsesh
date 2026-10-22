@@ -299,11 +299,27 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     // a reconnect loop. The counter resets whenever a write fully drains (#3181).
     private let maxWriteStallRecoveries = 2
 
-    private lazy var centralManager = CBCentralManager(
-        delegate: self,
-        queue: bleQueue,
-        options: [CBCentralManagerOptionRestoreIdentifierKey: "com.boardsesh.app.board-ble"]
-    )
+    // How long `requestAuthorization` waits for the climber to answer the
+    // system Bluetooth alert. The alert is modal, so this is a leak backstop,
+    // not a deadline anyone should reach: a climber who leaves the alert up
+    // and comes back minutes later still carries straight on.
+    private let authorizationAnswerTimeout: TimeInterval = 600
+    // Fallback for `requestAuthorization` in case CoreBluetooth answers the
+    // alert without a state change the delegate hears about.
+    private let authorizationAnswerPollInterval: TimeInterval = 0.5
+
+    /// The CoreBluetooth central, once something has created it. Creating a
+    /// `CBCentralManager` while the app's Bluetooth authorization is
+    /// `.notDetermined` is what shows the system "allow Bluetooth" alert, so
+    /// on a phone that has never answered it this stays nil until the climber
+    /// starts a scan (or JS asks through `requestAuthorization`). Every other
+    /// read goes through `centralStateOnBleQueue`, which never creates it.
+    /// See `completeInit` for the launch-time rule.
+    private var createdCentralManager: CBCentralManager?
+    private let authorizationProvider: () -> CBManagerAuthorization
+    private var authorizationAnswerWaiters: [(CBManagerAuthorization) -> Void] = []
+    private var authorizationAnswerWatchdog: BleOneShotTimer?
+    private var authorizationAnswerPoller: BleRepeatingTimer?
 
     private var discoveredPeripherals: [String: WritableBlePeripheral] = [:]
     private var discoveredNames: [String: String] = [:]
@@ -492,6 +508,18 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     private var connectPeripheralOverrideForTesting: ((WritableBlePeripheral) -> Void)?
     /// Test-only central state. nil keeps production/dev on the real manager.
     private var centralStateOverrideForTesting: CBManagerState?
+    /// Test-only interception of `CBCentralManager` creation. The XCTest host
+    /// has no bluetooth-central background mode, so a real central with a
+    /// restore identifier would crash it; tests count creations instead. The
+    /// handler runs once per manager, as a real creation does: production
+    /// stores the central and every later call reuses it.
+    private var centralManagerCreationOverrideForTesting: (() -> Void)?
+    /// Whether the creation override has already stood in for this manager's
+    /// one creation. Reset whenever a handler is installed.
+    private var centralCreatedByOverrideForTesting = false
+    /// Test-only interception of the single `scanForPeripherals` call site,
+    /// handed the service filter (nil = unfiltered).
+    private var scanForPeripheralsOverrideForTesting: (([CBUUID]?) -> Void)?
     #endif
 
     private var onScanResult: ((BoardBleScanResult) -> Void)?
@@ -510,15 +538,28 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     /// would register a second `CBCentralManager` with the same restoration
     /// identifier and split connection state across two delegates.
     override private init() {
+        // `CBManager.authorization` is a class property: reading it creates no
+        // manager and shows no alert, so it is safe here at launch.
+        authorizationProvider = { CBManager.authorization }
         super.init()
-        completeInit(createCentralManagerEagerly: true)
+        completeInit(
+            createCentralManagerEagerly: Self.shouldCreateCentralManagerAtLaunch(
+                authorization: authorizationProvider()
+            )
+        )
     }
 
     #if DEBUG || BOARDSESH_TESTS
     /// Test-only isolated instance: a fake scheduler plus
     /// `createCentralManagerEagerly: false` means no CoreBluetooth stack (or
     /// permission prompt) ever spins up. Production must use `.shared`.
-    init(timerScheduler: BleTimerScheduling, createCentralManagerEagerly: Bool) {
+    /// `authorizationProvider` stands in for `CBManager.authorization`.
+    init(
+        timerScheduler: BleTimerScheduling,
+        createCentralManagerEagerly: Bool,
+        authorizationProvider: @escaping () -> CBManagerAuthorization = { .allowedAlways }
+    ) {
+        self.authorizationProvider = authorizationProvider
         super.init()
         // Assign before the lazy `timerScheduler` default (or anything else)
         // can touch it — nothing in completeInit reads the scheduler.
@@ -527,14 +568,151 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     }
     #endif
 
+    /// Whether the singleton creates its central at launch. It does for every
+    /// climber who has already answered the Bluetooth question (allowed, denied
+    /// or restricted), exactly as before, because CoreBluetooth state
+    /// restoration only delivers `willRestoreState` to a central created with
+    /// our restore identifier during launch: that is what lets a connection
+    /// survive the system relaunching the app in the background (Live
+    /// Activity lightbulb, Next/Previous intents).
+    ///
+    /// It does not when the answer is still `.notDetermined`, because creating
+    /// the central then shows the system alert before sign-in, with nothing on
+    /// screen to explain it. Deferring loses nothing: without Bluetooth
+    /// permission this app can never have connected to a board, so there is no
+    /// peripheral for CoreBluetooth to restore, no remembered board for the
+    /// lightbulb, and nothing to keep alive. The first scan creates the central
+    /// (see `centralManagerCreatingIfNeeded`), and from then on the answer is
+    /// known, so every later launch takes the eager path again.
+    static func shouldCreateCentralManagerAtLaunch(authorization: CBManagerAuthorization) -> Bool {
+        authorization != .notDetermined
+    }
+
+    /// The JS name for an authorization value (`getBluetoothAuthorization`).
+    /// JS reads any other string as "can't tell" and keeps the old behaviour.
+    static func authorizationName(_ authorization: CBManagerAuthorization) -> String {
+        switch authorization {
+        case .notDetermined:
+            return "notDetermined"
+        case .allowedAlways:
+            return "allowedAlways"
+        case .denied:
+            return "denied"
+        case .restricted:
+            return "restricted"
+        @unknown default:
+            return "unknown"
+        }
+    }
+
     private func completeInit(createCentralManagerEagerly: Bool) {
         bleQueue.setSpecific(key: bleQueueKey, value: ())
         runOnBleQueueSync {
             configuration = readConfiguration()
             if createCentralManagerEagerly {
-                _ = centralManager
+                centralManagerCreatingIfNeeded()
             }
         }
+    }
+
+    /// The central, created first if nothing has created it yet. On a phone
+    /// whose Bluetooth authorization is `.notDetermined`, creating it shows the
+    /// system alert, so only a path the climber started may call this: a scan
+    /// (`startScanOnBleQueue`), `requestAuthorization`, or the launch-time
+    /// rule above. Returns nil only in the native test target, whose seam
+    /// records the creation without standing up CoreBluetooth. Must run on
+    /// `bleQueue`; the delegate callbacks land there after this returns.
+    @discardableResult
+    private func centralManagerCreatingIfNeeded() -> CBCentralManager? {
+        if let createdCentralManager {
+            return createdCentralManager
+        }
+        #if DEBUG || BOARDSESH_TESTS
+        if let overrideForTesting = centralManagerCreationOverrideForTesting {
+            // Nothing concrete is stored (createdCentralManager stays nil, so
+            // state reads keep peeking), but only the first call counts.
+            if !centralCreatedByOverrideForTesting {
+                centralCreatedByOverrideForTesting = true
+                overrideForTesting()
+            }
+            return nil
+        }
+        #endif
+        let central = CBCentralManager(
+            delegate: self,
+            queue: bleQueue,
+            options: [CBCentralManagerOptionRestoreIdentifierKey: "com.boardsesh.app.board-ble"]
+        )
+        createdCentralManager = central
+        return central
+    }
+
+    /// Ask the climber for Bluetooth, then report their answer. Creates the
+    /// central, which is what makes iOS show the alert while authorization is
+    /// `.notDetermined`, and completes once the answer is in AND the central
+    /// has reported a real state, so a JS `isAvailable` straight after reads
+    /// the outcome rather than `.unknown` (which counts as available). That
+    /// holds even when the question was answered already: a central created a
+    /// moment ago still reads `.unknown` until CoreBluetooth's first update.
+    /// Completes at once only when both are already known. JS calls this at
+    /// the scan or connect tap, never at launch. The completion runs on
+    /// `bleQueue`.
+    func requestAuthorization(completion: @escaping (CBManagerAuthorization) -> Void) {
+        runOnBleQueue { [weak self] in
+            guard let self else {
+                completion(CBManager.authorization)
+                return
+            }
+            self.requestAuthorizationOnBleQueue(completion: completion)
+        }
+    }
+
+    private func requestAuthorizationOnBleQueue(completion: @escaping (CBManagerAuthorization) -> Void) {
+        centralManagerCreatingIfNeeded()
+        let authorization = authorizationProvider()
+        if authorization != .notDetermined, Self.isSettledCentralState(centralStateOnBleQueue) {
+            completion(authorization)
+            return
+        }
+        authorizationAnswerWaiters.append(completion)
+        guard authorizationAnswerWatchdog == nil else { return }
+        authorizationAnswerWatchdog = timerScheduler.scheduleOneShot(
+            after: authorizationAnswerTimeout,
+            label: "authorizationAnswerWatchdog"
+        ) { [weak self] in
+            self?.settleAuthorizationAnswerWaitersOnBleQueue(evenIfUnanswered: true)
+        }
+        let poller = timerScheduler.makeRepeatingTimer()
+        poller.setEventHandler { [weak self] in
+            self?.settleAuthorizationAnswerWaitersOnBleQueue()
+        }
+        poller.schedule(interval: authorizationAnswerPollInterval, leeway: .milliseconds(100))
+        poller.activate()
+        authorizationAnswerPoller = poller
+    }
+
+    /// Whether the central has reported a real state, one that says whether
+    /// Bluetooth can be used.
+    private static func isSettledCentralState(_ state: CBManagerState) -> Bool {
+        state != .unknown && state != .resetting
+    }
+
+    /// Hand the climber's answer to everyone waiting in `requestAuthorization`.
+    /// Waits while the answer is still `.notDetermined`, or while the central
+    /// has not reported its first state yet, unless the watchdog says stop.
+    private func settleAuthorizationAnswerWaitersOnBleQueue(evenIfUnanswered: Bool = false) {
+        guard !authorizationAnswerWaiters.isEmpty else { return }
+        let authorization = authorizationProvider()
+        if !evenIfUnanswered {
+            guard authorization != .notDetermined, Self.isSettledCentralState(centralStateOnBleQueue) else { return }
+        }
+        let waiters = authorizationAnswerWaiters
+        authorizationAnswerWaiters = []
+        authorizationAnswerWatchdog?.cancel()
+        authorizationAnswerWatchdog = nil
+        authorizationAnswerPoller?.cancel()
+        authorizationAnswerPoller = nil
+        waiters.forEach { $0(authorization) }
     }
 
     var isAvailable: Bool {
@@ -742,8 +920,10 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
         await waitUntilReady(timeout: readyTimeout)
         let ready = runOnBleQueueSync { isReadyForWrite }
         if !ready {
+            // Peek, never create: an intent firing on a phone that has never
+            // answered the Bluetooth question must not raise the alert.
             let state = runOnBleQueueSync { (
-                centralState: centralManager.state.rawValue,
+                centralState: centralStateOnBleQueue.rawValue,
                 hasPeripheral: connectedPeripheral != nil,
                 hasWriteChar: writeCharacteristic != nil
             ) }
@@ -801,13 +981,29 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
         }
     }
 
+    /// The central's state, read WITHOUT creating it. A central nobody has
+    /// created yet means the Bluetooth question was unanswered at launch (see
+    /// `completeInit`). If it is still unanswered this reads `.unknown`, which
+    /// keeps `isAvailable` true, as it was for a central that had not reported
+    /// its first state. If the climber has since said no through another
+    /// manager (an older JS bundle's ble-plx asks at launch), it reads
+    /// `.unauthorized`, as a central would, so that bundle's availability gate
+    /// shows its blocked copy instead of scanning a refused radio.
     private var centralStateOnBleQueue: CBManagerState {
         #if DEBUG || BOARDSESH_TESTS
         if let centralStateOverrideForTesting {
             return centralStateOverrideForTesting
         }
         #endif
-        return centralManager.state
+        guard let createdCentralManager else {
+            switch authorizationProvider() {
+            case .denied, .restricted:
+                return .unauthorized
+            default:
+                return .unknown
+            }
+        }
+        return createdCentralManager.state
     }
 
     private func startScanOnBleQueue(serviceUuids: [String], completion: @escaping (Result<Void, Error>) -> Void) {
@@ -820,20 +1016,66 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
         scanRequested = true
         emittedScanResults = [:]
 
+        // The climber asked to scan, so this is where a phone that has never
+        // answered the Bluetooth question gets asked: creating the central
+        // shows the system alert.
+        centralManagerCreatingIfNeeded()
+
+        // A central that has not reported its first state can't say yet
+        // whether the scan can run, and `.unknown` would count as available:
+        // a JS bundle that scans without asking first (one older than
+        // `requestBluetoothAuthorization`) would be told the scan started,
+        // then sit on an empty picker after Don't Allow. Settle the request on
+        // the answer instead, so a refusal rejects the scan promise and that
+        // bundle's existing "Bluetooth unavailable" path shows.
+        // `.resetting` keeps its old meaning (park as available): it only
+        // happens mid-session, after the question was answered.
+        guard centralStateOnBleQueue != .unknown else {
+            requestAuthorizationOnBleQueue { [weak self] _ in
+                self?.settleScanRequestOnBleQueue(completion: completion)
+            }
+            return
+        }
+        settleScanRequestOnBleQueue(completion: completion)
+    }
+
+    /// Start (or park) the requested scan for the central's current state, and
+    /// settle the caller. `.unknown` / `.resetting` park it as available: the
+    /// scan then starts from the next powered-on state update (scanRequested).
+    private func settleScanRequestOnBleQueue(completion: @escaping (Result<Void, Error>) -> Void) {
         guard centralStateOnBleQueue == .poweredOn else {
             if isAvailableOnBleQueue {
                 completion(.success(()))
             } else {
+                // Nothing will start it later, so don't leave it armed.
+                scanRequested = false
                 completion(.failure(BoardBleError.bluetoothUnavailable))
             }
             return
         }
+        // Stopped while waiting for the answer (picker closed): nothing to start.
+        if scanRequested {
+            scanForRequestedPeripheralsOnBleQueue()
+        }
+        completion(.success(()))
+    }
 
-        centralManager.scanForPeripherals(
-            withServices: scanServices.isEmpty ? nil : scanServices,
+    /// The single concrete `scanForPeripherals` call site, for a fresh scan
+    /// and for the restart after the radio powers on. Repeating it while a scan
+    /// runs only restarts that scan with the same parameters.
+    private func scanForRequestedPeripheralsOnBleQueue() {
+        // Empty scanServices = unfiltered scan (see startScanOnBleQueue).
+        let services = scanServices.isEmpty ? nil : scanServices
+        #if DEBUG || BOARDSESH_TESTS
+        if let overrideForTesting = scanForPeripheralsOverrideForTesting {
+            overrideForTesting(services)
+            return
+        }
+        #endif
+        createdCentralManager?.scanForPeripherals(
+            withServices: services,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
-        completion(.success(()))
     }
 
     private func stopScanOnBleQueue() {
@@ -844,8 +1086,10 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
             return
         }
         #endif
-        if centralManager.isScanning {
-            centralManager.stopScan()
+        // Nothing to stop on a central nobody created, and creating one here
+        // would ask for Bluetooth from a teardown path.
+        if let createdCentralManager, createdCentralManager.isScanning {
+            createdCentralManager.stopScan()
         }
     }
 
@@ -1031,6 +1275,9 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
             )
             return
         }
+        // Reads, never creates: an unanswered Bluetooth question means no
+        // board was ever connected, so there is nothing to reconnect to, and a
+        // Live Activity tap must not raise the system alert from the background.
         guard centralStateOnBleQueue == .poweredOn else {
             completion(.failure(BoardBleError.bluetoothUnavailable))
             return
@@ -1045,7 +1292,7 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
 
         // Fast path: the system still has this peripheral cached — connect
         // directly without scanning (works while backgrounded).
-        if let peripheral = centralManager.retrievePeripherals(withIdentifiers: [uuid]).first {
+        if let peripheral = createdCentralManager?.retrievePeripherals(withIdentifiers: [uuid]).first {
             discoveredPeripherals[uuidString] = peripheral
             if let name = peripheral.name {
                 discoveredNames[uuidString] = name
@@ -1425,7 +1672,24 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
     // MARK: - CBCentralManagerDelegate
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        handleCentralStateUpdateOnBleQueue(state: central.state) {
+        handleCentralStateUpdateOnBleQueue(state: central.state)
+    }
+
+    /// Shared state-update body for the real delegate and the native XCTest
+    /// seam. The scan seam keeps the concrete central manager out of tests,
+    /// so both halves run there as in production.
+    private func handleCentralStateUpdateOnBleQueue(state: CBManagerState) {
+        // Answering the Bluetooth alert lands here as the central's first real
+        // state (.poweredOn or .poweredOff on Allow, .unauthorized on Don't
+        // Allow). Settle any requestAuthorization waiter after this update's
+        // own work, so the scan an Allow restarts below is already running.
+        // Ordering contract: on Allow, the powered-on branch below restarts a
+        // parked scan first, then this settles the startScan waiter, whose
+        // settleScanRequestOnBleQueue issues scanForPeripherals once more with
+        // the same services and options. CoreBluetooth treats that as the same
+        // scan with the same parameters, so the repeat is harmless.
+        defer { settleAuthorizationAnswerWaitersOnBleQueue() }
+        if state == .poweredOn {
             // Defensive: during state restoration after an intent-driven
             // background launch, `didDiscoverCharacteristicsFor` (which
             // normally calls `readyWaiters.signalAll()`) can land before
@@ -1437,22 +1701,20 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
             if isReadyForWrite {
                 readyWaiters.signalAll()
             }
+            // A scan parked while the radio was unknown, resetting or off (or
+            // while the Bluetooth alert was up) starts now, so an Allow
+            // carries on without a second tap.
             if scanRequested {
-                // Empty scanServices = unfiltered scan (see startScanOnBleQueue).
-                central.scanForPeripherals(withServices: scanServices.isEmpty ? nil : scanServices, options: [
-                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
-                ])
+                scanForRequestedPeripheralsOnBleQueue()
             }
-        }
-    }
-
-    /// Shared state-update body for the real delegate and the native XCTest
-    /// seam. The powered-on closure keeps the concrete central manager out of
-    /// tests while the unavailable transition exercises the production cleanup.
-    private func handleCentralStateUpdateOnBleQueue(state: CBManagerState, onPoweredOn: () -> Void = {}) {
-        if state == .poweredOn {
-            onPoweredOn()
         } else {
+            // A refusal or a phone without Bluetooth LE can't recover inside
+            // this process (iOS relaunches the app when the Settings switch
+            // moves), so a parked scan must not survive to start later. A
+            // radio switched off keeps it: switching back on resumes the scan.
+            if state == .unauthorized || state == .unsupported {
+                scanRequested = false
+            }
             // Bluetooth went away mid-recovery: the deferred reconnect's
             // didDisconnect may never arrive, so close the write-stall recovery
             // window and reset the budget. Otherwise a later intentional
@@ -3048,7 +3310,8 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
             assertionFailure("WritableBlePeripheral is always CBPeripheral outside tests")
             return
         }
-        centralManager.cancelPeripheralConnection(concretePeripheral)
+        // A concrete peripheral only ever comes from a created central.
+        createdCentralManager?.cancelPeripheralConnection(concretePeripheral)
     }
 
     private func registerManagerCancellationBarrierOnBleQueue(peripheralId: UUID) -> Bool {
@@ -3107,7 +3370,12 @@ final class BoardBleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDel
             assertionFailure("WritableBlePeripheral is always CBPeripheral outside tests")
             return
         }
-        centralManager.connect(concretePeripheral, options: [
+        // A concrete peripheral only ever comes from a created central.
+        guard let central = createdCentralManager else {
+            logger.error("connectPeripheral: no central manager for a discovered peripheral")
+            return
+        }
+        central.connect(concretePeripheral, options: [
             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
         ])
     }
@@ -3239,6 +3507,31 @@ extension BoardBleManager {
             manager.centralStateOverrideForTesting = state
         }
 
+        /// Count `CBCentralManager` creations instead of performing them. The
+        /// handler runs on the first `centralManagerCreatingIfNeeded` call only,
+        /// matching production, where later calls reuse the stored central: a
+        /// count of 1 means a path created the central (and with it showed the
+        /// Bluetooth alert), 0 means nothing did. Installing a handler resets
+        /// the "already created" flag.
+        func setCentralManagerCreationOverride(_ handler: (() -> Void)?) {
+            manager.centralManagerCreationOverrideForTesting = handler
+            manager.centralCreatedByOverrideForTesting = false
+        }
+
+        /// Whether a `requestAuthorization` completion is still waiting for
+        /// the climber's answer.
+        var hasPendingAuthorizationAnswer: Bool { !manager.authorizationAnswerWaiters.isEmpty }
+
+        /// Intercept the concrete `scanForPeripherals` call (fresh scans and
+        /// the powered-on restart), with its service filter.
+        func setScanForPeripheralsOverride(_ handler: (([CBUUID]?) -> Void)?) {
+            manager.scanForPeripheralsOverrideForTesting = handler
+        }
+
+        /// Whether a scan is requested (running, or parked until the radio
+        /// powers on).
+        var isScanRequested: Bool { manager.scanRequested }
+
         /// Make a fake peripheral discoverable by the production connect path.
         func setDiscoveredPeripheral(_ peripheral: WritableBlePeripheral) {
             manager.discoveredPeripherals[peripheral.identifier.uuidString] = peripheral
@@ -3287,7 +3580,9 @@ extension BoardBleManager {
             }
         }
 
-        /// Fire the unavailable half of `centralManagerDidUpdateState`.
+        /// Fire `centralManagerDidUpdateState`'s body, both halves: the scan
+        /// seam (`setScanForPeripheralsOverride`) stands in for the concrete
+        /// central in the powered-on restart.
         func fireCentralStateUpdate(_ state: CBManagerState) {
             manager.runOnBleQueueSync {
                 let previousStateOverride = manager.centralStateOverrideForTesting
