@@ -345,6 +345,18 @@ describe('buildWorkoutRun', () => {
     });
   });
 
+  it('lets a known stage claim a uuid an unknown stage named first', () => {
+    const run = buildWorkoutRun(
+      [
+        { uuid: 'p1', stageId: 'gone' },
+        { uuid: 'p1', stageId: 'stage-1' },
+      ],
+      PLAN,
+    );
+
+    expect(run).toEqual({ stages: [{ id: 'stage-1', kind: 'pyramid', itemUuids: ['p1'] }] });
+  });
+
   it('skips stages with no items and entries for unknown stages', () => {
     const run = buildWorkoutRun(
       [
