@@ -14,3 +14,26 @@ export {
 export type { GroupedSlots } from './generate';
 export { summarizePlanFill } from './plan-summary';
 export type { PlanFillSummary, PlanSectionCount } from './plan-summary';
+export {
+  planFromGeneratorOptions,
+  generateStagedPlan,
+  isWarmUpStage,
+  buildWorkoutRun,
+  appendStageToRun,
+  pruneRun,
+  locateInRun,
+} from './stages';
+export type {
+  WorkoutStageKind,
+  WarmUpStageType,
+  WarmUpStage,
+  StageGeneratorOptions,
+  WorkoutMainStage,
+  WorkoutStage,
+  WorkoutPlan,
+  StagedSlot,
+  StageIdFactory,
+  WorkoutRunStage,
+  WorkoutRun,
+  WorkoutRunPosition,
+} from './stages';

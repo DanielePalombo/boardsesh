@@ -30,7 +30,7 @@ const getPyramidGrade = (targetGrade: number, distanceFromPeak: number, grades: 
   return grades[gradeIndex].difficulty_id;
 };
 
-const generateWarmUp = (
+export const generateWarmUp = (
   targetGrade: number,
   warmUpType: WarmUpType,
   grades: GeneratorGradeScale,
