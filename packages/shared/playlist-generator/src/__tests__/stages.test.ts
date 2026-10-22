@@ -114,7 +114,7 @@ describe('generateStagedPlan matches generateWorkoutPlan', () => {
     expect(generateStagedPlan(plan, DENSE_GRADES)).toEqual([]);
   });
 
-  it('generates nothing for a warm-up followed by another warm-up', () => {
+  it('leaves the first of two back-to-back warm-ups empty', () => {
     const plan: WorkoutPlan = {
       stages: [
         { id: 'first', kind: 'warmUp', warmUpType: 'standard' },
@@ -312,6 +312,24 @@ describe('buildWorkoutRun', () => {
       stages: [
         { id: 'stage-0', kind: 'warmUp', itemUuids: ['w1', 'w2'] },
         { id: 'stage-1', kind: 'pyramid', itemUuids: ['p1', 'p2'] },
+      ],
+    });
+  });
+
+  it('keeps a uuid in the first stage that claims it', () => {
+    const run = buildWorkoutRun(
+      [
+        { uuid: 'w1', stageId: 'stage-0' },
+        { uuid: 'w1', stageId: 'stage-1' },
+        { uuid: 'p1', stageId: 'stage-1' },
+      ],
+      PLAN,
+    );
+
+    expect(run).toEqual({
+      stages: [
+        { id: 'stage-0', kind: 'warmUp', itemUuids: ['w1'] },
+        { id: 'stage-1', kind: 'pyramid', itemUuids: ['p1'] },
       ],
     });
   });

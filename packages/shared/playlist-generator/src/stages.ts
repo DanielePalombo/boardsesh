@@ -137,8 +137,13 @@ export const buildWorkoutRun = (
   entries: ReadonlyArray<{ uuid: string; stageId: string }>,
   plan: WorkoutPlan,
 ): WorkoutRun => {
+  // Each uuid belongs to one stage: the first entry that claims it wins, so a
+  // replayed or corrupted entry can't leave one climb in two stages.
   const uuidsByStageId = new Map<string, string[]>();
+  const claimedUuids = new Set<string>();
   for (const { uuid, stageId } of entries) {
+    if (claimedUuids.has(uuid)) continue;
+    claimedUuids.add(uuid);
     const stageUuids = uuidsByStageId.get(stageId);
     if (stageUuids) {
       stageUuids.push(uuid);
