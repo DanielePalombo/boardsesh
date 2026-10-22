@@ -184,8 +184,12 @@ export const appendStageToRun = (
     );
   }
 
-  const uuidsInRun = new Set(run.stages.flatMap((runStage) => runStage.itemUuids));
-  const newUuids = uuids.filter((uuid, position) => !uuidsInRun.has(uuid) && uuids.indexOf(uuid) === position);
+  const seenUuids = new Set(run.stages.flatMap((runStage) => runStage.itemUuids));
+  const newUuids = uuids.filter((uuid) => {
+    if (seenUuids.has(uuid)) return false;
+    seenUuids.add(uuid);
+    return true;
+  });
   if (newUuids.length === 0) return run;
 
   if (existingPosition < 0) {
