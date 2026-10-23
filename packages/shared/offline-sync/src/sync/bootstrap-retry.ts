@@ -516,7 +516,8 @@ export function evaluateBootstrapEligibility(input: {
 }): BootstrapEligibility {
   const { retryState, hasBoardCheckpoint, isScopeComplete, isBootstrapDone, now } = input;
   if (isScopeComplete) return { eligible: false, reason: 'scope-complete', canRearm: false };
-  if (isBootstrapDone) return { eligible: false, reason: 'bootstrap-done', canRearm: false };
+  if (isBootstrapDone && !retryState.userRequested)
+    return { eligible: false, reason: 'bootstrap-done', canRearm: false };
   if (isTerminal(retryState)) {
     return { eligible: false, reason: 'terminal', canRearm: canRearmOnNewArtifact(retryState) };
   }
@@ -788,4 +789,12 @@ export async function restoreBootstrapRetryBudget(
   const written = await writeBootstrapRetryState(db, scopeKey, clearRetryStateForUserRequest(state));
   await clearBootstrapPagedFallback(db, scopeKey);
   return written;
+}
+
+/** Cheap page-boundary check; a retry never needs to reset or remove downloaded rows. */
+export async function hasUserRequestedBootstrapRetry(db: SqlExecutor, scopeKey: string): Promise<boolean> {
+  const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM sync_meta WHERE key = ?', [
+    `${BOOTSTRAP_RETRY_PREFIX}${scopeKey}`,
+  ]);
+  return row !== null && parseBootstrapRetryState(row.value)?.userRequested === true;
 }
