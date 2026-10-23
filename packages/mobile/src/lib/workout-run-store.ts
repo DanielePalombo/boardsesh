@@ -18,10 +18,16 @@
 //
 // Schema note: bump the key suffix if `WorkoutRun`'s shape changes, so a stale
 // value is ignored rather than misread. An added OPTIONAL field (a stage's
-// `targetGrade`) needs no bump: a stored run without it still reads correctly.
+// `targetGrade` or `filters`) needs no bump: a stored run without it still
+// reads correctly.
 
 import { useCallback, useSyncExternalStore } from 'react';
-import type { WorkoutRun } from '@boardsesh/playlist-generator';
+import {
+  CLIMB_BIAS_OPTIONS,
+  type WorkoutRun,
+  type WorkoutRunStage,
+  type WorkoutStageFilters,
+} from '@boardsesh/playlist-generator';
 import { getPreference, removePreference, setPreference } from './preference-store';
 
 export const WORKOUT_RUN_STORAGE_KEY = 'boardsesh_workout_run_v1';
@@ -53,24 +59,54 @@ function clearStoredWorkoutRun(): Promise<void> {
   return removePreference(WORKOUT_RUN_STORAGE_KEY);
 }
 
-function isWorkoutRunRecord(candidate: unknown): candidate is WorkoutRunRecord {
+function isStageFilters(candidate: unknown): candidate is WorkoutStageFilters {
   if (typeof candidate !== 'object' || candidate === null) return false;
-  const record = candidate as Partial<WorkoutRunRecord>;
-  if (typeof record.sessionId !== 'string' || typeof record.run !== 'object' || record.run === null) return false;
+  const filters = candidate as Partial<Record<keyof WorkoutStageFilters, unknown>>;
   return (
-    Array.isArray(record.run.stages) &&
-    record.run.stages.every(
-      (stage) =>
-        typeof stage === 'object' &&
-        stage !== null &&
-        typeof stage.id === 'string' &&
-        typeof stage.kind === 'string' &&
-        Array.isArray(stage.itemUuids) &&
-        stage.itemUuids.every((uuid) => typeof uuid === 'string') &&
-        // Optional and newer than the key: an older run without it still loads.
-        (stage.targetGrade === undefined || typeof stage.targetGrade === 'number'),
-    )
+    CLIMB_BIAS_OPTIONS.some((climbBias) => climbBias === filters.climbBias) &&
+    typeof filters.minAscents === 'number' &&
+    typeof filters.minRating === 'number' &&
+    typeof filters.onlyTallClimbs === 'boolean' &&
+    typeof filters.onlyWideClimbs === 'boolean'
   );
+}
+
+/**
+ * One stored stage, or null when a field the readout needs is wrong. Unreadable
+ * `filters` are dropped rather than failing the stage: losing them only costs a
+ * mid-session block its starting filters, while dropping the run would let the
+ * next "Add a block" overwrite the stages queued at Start.
+ */
+function readStage(candidate: unknown): WorkoutRunStage | null {
+  if (typeof candidate !== 'object' || candidate === null) return null;
+  const stage = candidate as Partial<Record<keyof WorkoutRunStage, unknown>>;
+  if (
+    typeof stage.id !== 'string' ||
+    typeof stage.kind !== 'string' ||
+    !Array.isArray(stage.itemUuids) ||
+    !stage.itemUuids.every((uuid) => typeof uuid === 'string') ||
+    // Optional and newer than the key: an older run without it still loads.
+    (stage.targetGrade !== undefined && typeof stage.targetGrade !== 'number')
+  ) {
+    return null;
+  }
+  const { filters, ...rest } = candidate as WorkoutRunStage;
+  return filters === undefined || isStageFilters(filters) ? (candidate as WorkoutRunStage) : rest;
+}
+
+/** The stored record, or null when it is not one. Only a stage's bad `filters` are repaired. */
+function readWorkoutRunRecord(candidate: unknown): WorkoutRunRecord | null {
+  if (typeof candidate !== 'object' || candidate === null) return null;
+  const record = candidate as Partial<WorkoutRunRecord>;
+  if (typeof record.sessionId !== 'string' || typeof record.run !== 'object' || record.run === null) return null;
+  if (!Array.isArray(record.run.stages)) return null;
+  const stages: WorkoutRunStage[] = [];
+  for (const storedStage of record.run.stages) {
+    const stage = readStage(storedStage);
+    if (!stage) return null;
+    stages.push(stage);
+  }
+  return { sessionId: record.sessionId, run: { stages } };
 }
 
 export function subscribeWorkoutRun(listener: () => void): () => void {
@@ -111,8 +147,9 @@ export async function hydrateWorkoutRun(sessionId: string): Promise<void> {
     return;
   }
   if (generationAtRead !== writeGeneration) return;
-  if (!isWorkoutRunRecord(stored) || stored.sessionId !== sessionId) return;
-  setState(stored);
+  const record = readWorkoutRunRecord(stored);
+  if (!record || record.sessionId !== sessionId) return;
+  setState(record);
 }
 
 /** Forget the run, in memory and on disk. */
@@ -138,7 +175,7 @@ export async function clearWorkoutRunForSession(sessionId: string): Promise<void
     const stored = await getPreference<unknown>(WORKOUT_RUN_STORAGE_KEY);
     // A run written while this read was in flight is newer and stays.
     if (generationAtRead !== writeGeneration) return;
-    if (isWorkoutRunRecord(stored) && stored.sessionId === sessionId) await clearStoredWorkoutRun();
+    if (readWorkoutRunRecord(stored)?.sessionId === sessionId) await clearStoredWorkoutRun();
   } catch {
     ignoreStorageError();
   }

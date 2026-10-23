@@ -19,16 +19,20 @@ import { useToast } from '../../../providers/toast-provider';
 import { screenshotModeRandom } from '../../../lib/screenshot-mode';
 import { fetchGradePool } from './select-climbs-for-plan';
 import {
-  buildPools,
+  buildPoolsReusing,
+  fetchFilters,
+  filtersSignature,
   refreshSlotInState,
   reshufflePools,
+  NO_AVOIDED_CLIMBS,
   selectItemsFromPools,
   type FetchGradePool,
   type PreviewFetchContext,
   type PreviewItem,
+  type PreviewSlot,
   type WorkoutPreviewData,
 } from './workout-preview-pool';
-import { hasWorkoutBlocks, type GeneratorSelection, type WorkoutFilters } from './workout-blocks';
+import { hasWorkoutBlocks, type GeneratorSelection, type WorkoutBlock } from './workout-blocks';
 
 const DEBOUNCE_MS = 300;
 
@@ -68,6 +72,67 @@ const EMPTY_STAGED_QUEUE_ITEMS: StagedQueueItems = { items: [], run: null };
 /** Stage ids are uuids so a stage added mid-session can never collide with one already in the run. */
 const makeStageId = () => randomUUID();
 
+/** A planned slot, with the filters its stage's climbs are fetched with. */
+type FilteredStagedSlot = StagedSlot & Pick<PreviewSlot, 'filters'>;
+
+/**
+ * Stamps every slot with the filters its stage's climbs can be fetched with, so
+ * the pools can key and fetch by them. The run keeps the stage's own filters.
+ */
+function withStageFilters(
+  slots: readonly StagedSlot[],
+  workoutPlan: WorkoutPlan,
+  isAuthenticated: boolean,
+): FilteredStagedSlot[] {
+  const filtersByStageId = new Map(
+    workoutPlan.stages.map((stage) => [stage.id, fetchFilters(stage.filters, isAuthenticated)]),
+  );
+  return slots.map((slot) => ({ ...slot, filters: filtersByStageId.get(slot.stageId) }));
+}
+
+/** Each slot's place within its own stage, by slot index: 0 for the stage's first slot. */
+function positionsInStage(slots: readonly StagedSlot[]): Map<number, number> {
+  const countByStageId = new Map<string, number>();
+  const positionBySlotIndex = new Map<number, number>();
+  for (const slot of slots) {
+    const position = countByStageId.get(slot.stageId) ?? 0;
+    countByStageId.set(slot.stageId, position + 1);
+    positionBySlotIndex.set(slot.index, position);
+  }
+  return positionBySlotIndex;
+}
+
+/** Names a block with its settings and filters: equal names plan the same climbs. */
+function blockRowKey(block: WorkoutBlock): string {
+  return `${block.id}|${getBlockGenerationKey(block)}`;
+}
+
+/**
+ * The rows a rebuild can keep: for each new slot, the row the same slot of the
+ * same unchanged block showed before (`selectItemsFromPools` checks it still fits).
+ */
+function keptRowsFor(
+  plan: readonly StagedSlot[],
+  rowKeyByStageId: ReadonlyMap<string, string>,
+  previousPlan: readonly StagedSlot[],
+  previousRowKeyByStageId: ReadonlyMap<string, string>,
+  previousItems: readonly PreviewItem[],
+): Array<ClimbQueueItem | undefined> {
+  const previousPositions = positionsInStage(previousPlan);
+  const previousByRowSlot = new Map<string, ClimbQueueItem>();
+  for (const { slot, item } of previousItems) {
+    const rowKey = slot.stageId === undefined ? undefined : previousRowKeyByStageId.get(slot.stageId);
+    const position = previousPositions.get(slot.index);
+    if (rowKey !== undefined && position !== undefined) previousByRowSlot.set(`${rowKey}#${position}`, item);
+  }
+  const positions = positionsInStage(plan);
+  return plan.map((slot) => {
+    const rowKey = rowKeyByStageId.get(slot.stageId);
+    const position = positions.get(slot.index);
+    return rowKey === undefined || position === undefined ? undefined : previousByRowSlot.get(`${rowKey}#${position}`);
+  });
+}
+
 type UseWorkoutPreviewDeps = {
   /** Injectable fetcher (tests pass a fake; production defaults to the GraphQL one). */
   fetchPool?: FetchGradePool;
@@ -85,13 +150,12 @@ export type UseWorkoutPreviewOptions = {
   getAvoidedClimbUuids?: () => ReadonlySet<string>;
 };
 
-const NO_AVOIDED_CLIMBS: ReadonlySet<string> = new Set();
-
 const EMPTY_DATA = (): WorkoutPreviewData => ({ items: [], pools: new Map(), usedUuids: new Set() });
 const EMPTY_STAGES: readonly WorkoutStage[] = [];
 
-// A block's own filter fields are left out: the selection's filters apply to every block.
-function getBlockGenerationKey(block: WorkoutBlockSpec): string {
+// The filter copies inside a workout block's options are left out: the block's
+// own `filters` are the ones its climbs are fetched with.
+function getBlockSettingsKey(block: WorkoutBlockSpec): string {
   if (block.kind === 'warmUp') return `warmUp:${block.warmUpType}`;
   const { options } = block;
   const commonKey = `${options.type}:${options.targetGrade}`;
@@ -107,20 +171,15 @@ function getBlockGenerationKey(block: WorkoutBlockSpec): string {
   }
 }
 
-function getFiltersGenerationKey(filters: WorkoutFilters): string {
-  return [
-    filters.minAscents,
-    filters.minRating,
-    filters.onlyTallClimbs,
-    filters.onlyWideClimbs,
-    filters.climbBias,
-  ].join(':');
+function getBlockGenerationKey(block: WorkoutBlock): string {
+  return `${getBlockSettingsKey(block)}/${filtersSignature(block.filters)}`;
 }
 
 function getSelectionGenerationKey(selection: GeneratorSelection): string {
   if (!hasWorkoutBlocks(selection)) return 'off';
-  // Every block in run order: adding, removing or moving one rebuilds the preview.
-  return `${selection.blocks.map(getBlockGenerationKey).join('+')}|${getFiltersGenerationKey(selection.filters)}`;
+  // Every block in run order: adding, removing or moving one, or changing its
+  // filters, rebuilds the preview.
+  return selection.blocks.map(getBlockGenerationKey).join('+');
 }
 
 function getBoardGenerationKey(board: UserBoard | null): string {
@@ -164,7 +223,12 @@ export function useWorkoutPreview(
   const dataRef = useRef<WorkoutPreviewData>(EMPTY_DATA());
   // The committed plan, for a shuffle to re-fill without regenerating it. Its
   // slots carry their stage id; `workoutPlanRef` is the stage list they came from.
-  const planRef = useRef<readonly StagedSlot[]>([]);
+  const planRef = useRef<readonly FilteredStagedSlot[]>([]);
+  // What the committed preview was built from, so a rebuild on the same board
+  // and sign-in can reuse its pools and keep the rows of blocks that did not
+  // change: the board and auth it was fetched for, and each stage's block.
+  const committedFetchKeyRef = useRef<string | null>(null);
+  const rowKeyByStageIdRef = useRef<ReadonlyMap<string, string>>(new Map());
   const workoutPlanRef = useRef<WorkoutPlan | null>(null);
   // Monotonic token: a build/clear only commits if it's still the latest.
   const genTokenRef = useRef(0);
@@ -199,8 +263,8 @@ export function useWorkoutPreview(
     const currentBoard = boardRef.current;
     const currentSelection = selectionRef.current;
     if (!currentBoard || !hasWorkoutBlocks(currentSelection)) return null;
-    // One set of filters for every block's pool.
-    return { board: currentBoard, isAuthenticated: isAuthRef.current, filters: currentSelection.filters };
+    // No filters here: each fetch takes the filters of the slot it fills.
+    return { board: currentBoard, isAuthenticated: isAuthRef.current };
   }, []);
 
   const resolveGrades = useCallback((targetBoard: UserBoard): GeneratorGradeScale | null => {
@@ -216,6 +280,7 @@ export function useWorkoutPreview(
       dataRef.current = EMPTY_DATA();
       planRef.current = [];
       workoutPlanRef.current = null;
+      committedFetchKeyRef.current = null;
       setCommittedPreviewKey(null);
       setItems([]);
       setPlannedCount(0);
@@ -226,66 +291,101 @@ export function useWorkoutPreview(
     [setCommittedPreviewKey],
   );
 
-  const regenerate = useCallback(async () => {
-    const currentSelection = selectionRef.current;
-    const currentBoard = boardRef.current;
-    if (!hasWorkoutBlocks(currentSelection) || !currentBoard) {
-      clearPreview('idle');
-      return;
-    }
-    const grades = resolveGrades(currentBoard);
-    if (!grades || grades.length === 0) {
-      clearPreview('idle');
-      return;
-    }
-
-    const nextPreviewKey = getPreviewGenerationKey(currentSelection, currentBoard, isAuthRef.current);
-    const nextBoardKey = getBoardGenerationKey(currentBoard);
-    const token = ++genTokenRef.current;
-    setStatus('loading'); // keep prior items mounted so the list doesn't jump
-    try {
-      // One stage per block, warm-ups included. Every stage shares the pools
-      // below: they are fetched once per unique grade with the shared filters,
-      // so a second block at another grade only adds the grades it needs, and
-      // one climb never fills two slots across stages.
-      const workoutPlan = planFromBlocks(currentSelection.blocks, makeStageId);
-      // Start can never queue more than the party backend's setQueue accepts.
-      const plan = generateStagedPlan(workoutPlan, grades).slice(0, MAX_SYNCED_QUEUE_ITEMS);
-      const ctx = buildCtx();
-      if (!ctx || token !== genTokenRef.current) return; // selection/board changed underneath
-      if (plan.length === 0) {
-        dataRef.current = EMPTY_DATA();
-        planRef.current = [];
-        workoutPlanRef.current = null;
-        setCommittedPreviewKey(nextPreviewKey, nextBoardKey);
-        setItems([]);
-        setPlannedCount(0);
-        setPlannedSlots([]);
-        setPlannedStages(EMPTY_STAGES);
-        setStatus('ready');
+  // `reuse`: keep the pools and untouched blocks' rows the committed preview
+  // already has, when it was built on the same board and sign-in. The live
+  // rebuild after an edit reuses; an explicit regenerate starts fresh.
+  const rebuild = useCallback(
+    async (reuse: boolean) => {
+      const currentSelection = selectionRef.current;
+      const currentBoard = boardRef.current;
+      if (!hasWorkoutBlocks(currentSelection) || !currentBoard) {
+        clearPreview('idle');
         return;
       }
-      const pools = await buildPools(plan, ctx, fetchPoolRef.current);
-      if (token !== genTokenRef.current) return; // superseded by a newer build
-      const avoided = getAvoidedClimbUuidsRef.current?.() ?? NO_AVOIDED_CLIMBS;
-      const { items: nextItems, usedUuids } = selectItemsFromPools(plan, pools, avoided);
-      dataRef.current = { items: nextItems, pools, usedUuids };
-      planRef.current = plan;
-      workoutPlanRef.current = workoutPlan;
-      setCommittedPreviewKey(nextPreviewKey, nextBoardKey);
-      setItems(nextItems);
-      setPlannedCount(plan.length);
-      setPlannedSlots(plan);
-      // The queue cap can cut a late stage off entirely; it gets no heading.
-      const stageIdsWithSlots = new Set(plan.map((slot) => slot.stageId));
-      setPlannedStages(workoutPlan.stages.filter((stage) => stageIdsWithSlots.has(stage.id)));
-      setStatus('ready');
-    } catch {
-      if (token !== genTokenRef.current) return;
-      setStatus('error'); // leave previous items in place
-      toastRef.current.showToast(toastRef.current.t('mobile.session.preWorkoutPreviewError'), 'error');
-    }
-  }, [buildCtx, clearPreview, resolveGrades]);
+      const grades = resolveGrades(currentBoard);
+      if (!grades || grades.length === 0) {
+        clearPreview('idle');
+        return;
+      }
+
+      const nextPreviewKey = getPreviewGenerationKey(currentSelection, currentBoard, isAuthRef.current);
+      const nextBoardKey = getBoardGenerationKey(currentBoard);
+      const fetchKey = `${nextBoardKey}|${isAuthRef.current ? 'authenticated' : 'anonymous'}`;
+      const canReuse = reuse && committedFetchKeyRef.current === fetchKey;
+      // Read now: a refresh landing during the fetch below must not change what this build keeps.
+      const previous = {
+        data: dataRef.current,
+        plan: planRef.current,
+        rowKeyByStageId: rowKeyByStageIdRef.current,
+      };
+      const token = ++genTokenRef.current;
+      setStatus('loading'); // keep prior items mounted so the list doesn't jump
+      try {
+        // One stage per block, warm-ups included, each carrying its block's
+        // filters. The pools below are fetched once per grade and filter set:
+        // blocks with equal filters share them, a block with its own filters gets
+        // its own, and one climb never fills two slots across any of them.
+        const workoutPlan = planFromBlocks(currentSelection.blocks, makeStageId);
+        // Start can never queue more than the party backend's setQueue accepts.
+        const plan = withStageFilters(
+          generateStagedPlan(workoutPlan, grades).slice(0, MAX_SYNCED_QUEUE_ITEMS),
+          workoutPlan,
+          isAuthRef.current,
+        );
+        // planFromBlocks makes one stage per block, in block order.
+        const rowKeyByStageId = new Map(
+          workoutPlan.stages.map((stage, position) => [stage.id, blockRowKey(currentSelection.blocks[position])]),
+        );
+        const ctx = buildCtx();
+        if (!ctx || token !== genTokenRef.current) return; // selection/board changed underneath
+        if (plan.length === 0) {
+          dataRef.current = EMPTY_DATA();
+          planRef.current = [];
+          workoutPlanRef.current = null;
+          committedFetchKeyRef.current = null;
+          setCommittedPreviewKey(nextPreviewKey, nextBoardKey);
+          setItems([]);
+          setPlannedCount(0);
+          setPlannedSlots([]);
+          setPlannedStages(EMPTY_STAGES);
+          setStatus('ready');
+          return;
+        }
+        const { pools, poolDemands } = await buildPoolsReusing(
+          plan,
+          ctx,
+          fetchPoolRef.current,
+          canReuse ? previous.data : undefined,
+        );
+        if (token !== genTokenRef.current) return; // superseded by a newer build
+        const avoided = getAvoidedClimbUuidsRef.current?.() ?? NO_AVOIDED_CLIMBS;
+        const keptItems = canReuse
+          ? keptRowsFor(plan, rowKeyByStageId, previous.plan, previous.rowKeyByStageId, previous.data.items)
+          : [];
+        const { items: nextItems, usedUuids } = selectItemsFromPools(plan, pools, avoided, keptItems);
+        dataRef.current = { items: nextItems, pools, usedUuids, poolDemands };
+        planRef.current = plan;
+        workoutPlanRef.current = workoutPlan;
+        committedFetchKeyRef.current = fetchKey;
+        rowKeyByStageIdRef.current = rowKeyByStageId;
+        setCommittedPreviewKey(nextPreviewKey, nextBoardKey);
+        setItems(nextItems);
+        setPlannedCount(plan.length);
+        setPlannedSlots(plan);
+        // The queue cap can cut a late stage off entirely; it gets no heading.
+        const stageIdsWithSlots = new Set(plan.map((slot) => slot.stageId));
+        setPlannedStages(workoutPlan.stages.filter((stage) => stageIdsWithSlots.has(stage.id)));
+        setStatus('ready');
+      } catch {
+        if (token !== genTokenRef.current) return;
+        setStatus('error'); // leave previous items in place
+        toastRef.current.showToast(toastRef.current.t('mobile.session.preWorkoutPreviewError'), 'error');
+      }
+    },
+    [buildCtx, clearPreview, resolveGrades],
+  );
+  const regenerate = useCallback(() => rebuild(false), [rebuild]);
+  const rebuildForEdit = useCallback(() => rebuild(true), [rebuild]);
 
   const refreshSlot = useCallback(
     async (itemUuid: string) => {
@@ -330,7 +430,7 @@ export function useWorkoutPreview(
     const pools = reshufflePools(dataRef.current.pools, screenshotModeRandom());
     const avoided = getAvoidedClimbUuidsRef.current?.() ?? NO_AVOIDED_CLIMBS;
     const { items: nextItems, usedUuids } = selectItemsFromPools(planRef.current, pools, avoided);
-    dataRef.current = { items: nextItems, pools, usedUuids };
+    dataRef.current = { items: nextItems, pools, usedUuids, poolDemands: dataRef.current.poolDemands };
     setItems(nextItems);
   }, []);
 
@@ -363,14 +463,14 @@ export function useWorkoutPreview(
 
   useEffect(() => {
     if (generationKey === 'off' || boardKey === 'none') {
-      void regenerate(); // synchronous clear to idle (reads refs)
+      void rebuildForEdit(); // synchronous clear to idle (reads refs)
       return undefined;
     }
     genTokenRef.current++; // mark existing preview/row refreshes stale during the debounce window
     setStatus('loading');
-    const handle = setTimeout(() => void regenerate(), DEBOUNCE_MS);
+    const handle = setTimeout(() => void rebuildForEdit(), DEBOUNCE_MS);
     return () => clearTimeout(handle);
-  }, [generationKey, boardKey, authKey, regenerate]);
+  }, [generationKey, boardKey, authKey, rebuildForEdit]);
 
   const regenerateVoid = useCallback(() => void regenerate(), [regenerate]);
   const refreshSlotVoid = useCallback((itemUuid: string) => void refreshSlot(itemUuid), [refreshSlot]);

@@ -1,6 +1,6 @@
 // One workout block on the Record tab: a header with its number, its type, a
-// ⋯ menu to move or remove it and a disclosure chevron, then its fields while
-// open. Warm-ups and workouts share this card, so every block reads the same.
+// ⋯ menu to move or remove it and a disclosure chevron, then its fields and its
+// own climb filters while open. Warm-ups and workouts share this card, so every block reads the same.
 
 import { memo, useCallback, useMemo, useRef } from 'react';
 import { StyleSheet, View, type AccessibilityActionEvent } from 'react-native';
@@ -18,7 +18,15 @@ import { workoutStageName } from '../../../lib/workout-run-readout';
 import { useTheme } from '../../../providers/theme-provider';
 import { spacing } from '../../../theme/tokens';
 import { WorkoutBlockFields, warmUpLengthLabel } from './WorkoutBlockFields';
-import { blockType, type WorkoutBlock, type WorkoutBlockType } from './workout-blocks';
+import {
+  DEFAULT_WORKOUT_FILTERS,
+  blockType,
+  sameFilters,
+  type SizeFilterAvailability,
+  type WorkoutBlock,
+  type WorkoutBlockType,
+  type WorkoutFilters,
+} from './workout-blocks';
 
 type Translate = (key: string, options?: Record<string, string | number>) => string;
 type MoveDirection = 'up' | 'down';
@@ -26,20 +34,33 @@ type BlockAction = 'moveUp' | 'moveDown' | 'remove';
 
 /**
  * The one-line summary under a closed card's type: `V6 · 20 climbs · spread 0`
- * for a workout, `Standard · ramps to V6` for a warm-up.
+ * for a workout, `Standard · ramps to V6` for a warm-up. `filtered` adds a
+ * `· filtered` marker, for a block whose climb filters are not the defaults.
  */
 export function blockSummary(
   block: WorkoutBlockSpec,
   formatGrade: (difficultyId: number) => string,
   warmUpTargetGrade: number | null,
   t: Translate,
+  filtered = false,
 ): string {
+  const parts = blockSettingsSummary(block, formatGrade, warmUpTargetGrade, t);
+  if (filtered) parts.push(t('mobile.session.preGeneratorBlockSummaryFiltered'));
+  return parts.join(' · ');
+}
+
+function blockSettingsSummary(
+  block: WorkoutBlockSpec,
+  formatGrade: (difficultyId: number) => string,
+  warmUpTargetGrade: number | null,
+  t: Translate,
+): string[] {
   if (block.kind === 'warmUp') {
     const target =
       warmUpTargetGrade != null
         ? t('mobile.session.preGeneratorWarmUpSummaryRamps', { grade: formatGrade(warmUpTargetGrade) })
         : t('mobile.session.preGeneratorWarmUpSummaryNoTarget');
-    return [warmUpLengthLabel(block.warmUpType, t), target].join(' · ');
+    return [warmUpLengthLabel(block.warmUpType, t), target];
   }
   const { options } = block;
   const parts = [formatGrade(options.targetGrade)];
@@ -61,7 +82,7 @@ export function blockSummary(
       parts.push(t('mobile.session.preGeneratorBlockSummaryClimbs', { count: options.numberOfClimbs }));
       break;
   }
-  return parts.join(' · ');
+  return parts;
 }
 
 type WorkoutBlockCardProps = {
@@ -77,9 +98,12 @@ type WorkoutBlockCardProps = {
   warmUpTargetBlockNumber: number | null;
   boardName: BoardName | null;
   railGrades: readonly Grade[];
+  /** Which size filters the board offers. Keep its identity stable: the card is memoised. */
+  sizeFilters: SizeFilterAvailability;
   onToggle: (blockId: string) => void;
   onTypeChange: (blockId: string, type: WorkoutBlockType) => void;
   onBlockChange: (blockId: string, spec: WorkoutBlockSpec) => void;
+  onFiltersChange: (blockId: string, patch: Partial<WorkoutFilters>) => void;
   onMove: (blockId: string, direction: MoveDirection) => void;
   onRemove: (blockId: string) => void;
   /** Fires on every layout of the card, so the list can scroll a freshly opened card into view. */
@@ -96,9 +120,11 @@ export const WorkoutBlockCard = memo(function WorkoutBlockCard({
   warmUpTargetBlockNumber,
   boardName,
   railGrades,
+  sizeFilters,
   onToggle,
   onTypeChange,
   onBlockChange,
+  onFiltersChange,
   onMove,
   onRemove,
   onCardLayout,
@@ -118,6 +144,7 @@ export const WorkoutBlockCard = memo(function WorkoutBlockCard({
         (difficultyId) => formatGradeByDifficultyId(difficultyId, boardName) ?? String(difficultyId),
         warmUpTargetGrade,
         t,
+        !sameFilters(block.filters, DEFAULT_WORKOUT_FILTERS),
       ),
     [block, formatGradeByDifficultyId, boardName, warmUpTargetGrade, t],
   );
@@ -134,6 +161,10 @@ export const WorkoutBlockCard = memo(function WorkoutBlockCard({
   const handleBlockChange = useCallback(
     (spec: WorkoutBlockSpec) => onBlockChange(blockId, spec),
     [onBlockChange, blockId],
+  );
+  const handleFiltersChange = useCallback(
+    (patch: Partial<WorkoutFilters>) => onFiltersChange(blockId, patch),
+    [onFiltersChange, blockId],
   );
   const handleLayout = useCallback(() => {
     if (cardRef.current) onCardLayout(blockId, cardRef.current);
@@ -266,8 +297,11 @@ export const WorkoutBlockCard = memo(function WorkoutBlockCard({
               groupLabel={title}
               warmUpTargetGrade={warmUpTargetGrade}
               warmUpTargetBlockNumber={warmUpTargetBlockNumber}
+              filters={block.filters}
+              sizeFilters={sizeFilters}
               onTypeChange={handleTypeChange}
               onBlockChange={handleBlockChange}
+              onFiltersChange={handleFiltersChange}
             />
           </View>
         ) : null}
