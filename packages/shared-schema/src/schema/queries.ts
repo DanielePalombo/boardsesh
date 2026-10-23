@@ -333,6 +333,15 @@ export const queriesTypeDefs = /* GraphQL */ `
     """
     playlistClimbs(input: GetPlaylistClimbsInput!): PlaylistClimbsResult!
 
+    """
+    Setters of the climbs in a playlist, or a logbook smart list, that the viewer
+    can see: the same climbs as playlistClimbs or smartPlaylist without a view.
+    Most climbs first, then by username. Capped at the 200 with the most climbs,
+    with no sign that the list was cut; search by username prefix reaches the
+    rest. Powers the setter picker in a playlist's filter sheet.
+    """
+    playlistSetters(input: PlaylistSettersInput!): [PlaylistSetter!]!
+
     # ============================================
     # Playlist Discovery Queries (no auth required)
     # ============================================
