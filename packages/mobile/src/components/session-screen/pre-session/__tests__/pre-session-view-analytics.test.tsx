@@ -2,8 +2,9 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_VOLUME_OPTIONS } from '@boardsesh/playlist-generator';
+import { DEFAULT_PYRAMID_OPTIONS, DEFAULT_VOLUME_OPTIONS, type WorkoutRun } from '@boardsesh/playlist-generator';
 import type { GeneratorSelection } from '../GeneratorPickerCard';
+import { NO_WORKOUT, singleBlockSelection } from '../workout-blocks';
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), navigate: vi.fn() }));
@@ -39,8 +40,8 @@ const previewRows = vi.hoisted(() =>
     slot: { grade: 10, section: 'main', index },
   })),
 );
-const previewRun = vi.hoisted(() => ({
-  stages: [{ id: 'stage-main', kind: 'volume' as const, itemUuids: ['c1', 'c2'] }],
+const previewRun = vi.hoisted((): WorkoutRun => ({
+  stages: [{ id: 'stage-main', kind: 'volume', itemUuids: ['c1', 'c2'] }],
 }));
 const workoutRunStore = vi.hoisted(() => ({ setWorkoutRun: vi.fn() }));
 vi.mock('../../../../lib/workout-run-store', () => workoutRunStore);
@@ -260,8 +261,22 @@ beforeEach(() => {
   visibilityRow.onChange = null;
 });
 
+// One Volume block on loose filters, as the generator-on Start path needs.
+function volumeSelection(): GeneratorSelection {
+  return singleBlockSelection(
+    {
+      ...DEFAULT_VOLUME_OPTIONS,
+      targetGrade: 10,
+      minAscents: 0,
+      minRating: 0,
+      climbBias: 'any',
+    },
+    'block-volume',
+  );
+}
+
 function selectWorkout() {
-  act(() => picker.onChange?.({ type: 'on', options: { ...DEFAULT_VOLUME_OPTIONS, targetGrade: 10 } }));
+  act(() => picker.onChange?.(singleBlockSelection({ ...DEFAULT_VOLUME_OPTIONS, targetGrade: 10 }, 'block-volume')));
 }
 
 describe('PreSessionView Shuffle during Start', () => {
@@ -341,21 +356,7 @@ describe('PreSessionView analytics', () => {
 
     // Flip the generator on so handleStart takes the generate branch.
     act(() => {
-      picker.onChange?.({
-        type: 'on',
-        options: {
-          type: 'volume',
-          targetGrade: 10,
-          warmUp: 'none',
-          mainSetClimbs: 20,
-          mainSetVariability: 0,
-          minAscents: 0,
-          minRating: 0,
-          onlyTallClimbs: false,
-          onlyWideClimbs: false,
-          climbBias: 'any',
-        },
-      });
+      picker.onChange?.(volumeSelection());
     });
 
     await act(async () => {
@@ -368,6 +369,7 @@ describe('PreSessionView analytics', () => {
     await waitFor(() =>
       expect(analytics.track).toHaveBeenCalledWith('Session Queue Generated', {
         workoutType: 'volume',
+        workoutTypes: 'volume',
         boardName: 'kilter',
         angle: 40,
         // 2 climbs queued out of a 3-slot plan → 1 short.
@@ -387,6 +389,7 @@ describe('PreSessionView analytics', () => {
     );
     expect(analytics.track).toHaveBeenCalledWith('Session Queue Generated', {
       workoutType: 'volume',
+      workoutTypes: 'volume',
       boardName: 'kilter',
       angle: 40,
       // 2 climbs queued out of a 3-slot plan → 1 short.
@@ -396,6 +399,47 @@ describe('PreSessionView analytics', () => {
     });
     // The run is kept on the phone for the session that just started.
     expect(workoutRunStore.setWorkoutRun).toHaveBeenCalledExactlyOnceWith('session-1', previewRun);
+  });
+
+  it('reports every block of a multi-block workout and stores its multi-stage run', async () => {
+    const multiStageRun: WorkoutRun = {
+      stages: [
+        { id: 'stage-warm', kind: 'warmUp', itemUuids: ['c1'] },
+        { id: 'stage-pyramid', kind: 'pyramid', itemUuids: ['c2'] },
+      ],
+    };
+    const singleStageQueueItems = preview.result.toStagedQueueItems;
+    preview.result.toStagedQueueItems = () => ({ items: previewItems, run: multiStageRun });
+    try {
+      render(createElement(PreSessionView));
+      act(() =>
+        picker.onChange?.({
+          ...NO_WORKOUT,
+          blocks: [
+            { id: 'block-warm', kind: 'warmUp', warmUpType: 'standard' },
+            { id: 'block-1', kind: 'workout', options: { ...DEFAULT_PYRAMID_OPTIONS, targetGrade: 10 } },
+            { id: 'block-2', kind: 'workout', options: { ...DEFAULT_VOLUME_OPTIONS, targetGrade: 8 } },
+            { id: 'block-3', kind: 'workout', options: { ...DEFAULT_PYRAMID_OPTIONS, targetGrade: 12 } },
+          ],
+        }),
+      );
+
+      await act(async () => startButton.onPress?.());
+
+      expect(analytics.track).toHaveBeenCalledWith('Session Queue Generated', {
+        // The first workout block's type stays the headline type; the list keeps the warm-up.
+        workoutType: 'pyramid',
+        workoutTypes: 'warmUp,pyramid,volume,pyramid',
+        boardName: 'kilter',
+        angle: 40,
+        savedCount: 2,
+        failedCount: 1,
+        stageCount: 2,
+      });
+      expect(workoutRunStore.setWorkoutRun).toHaveBeenCalledExactlyOnceWith('session-1', multiStageRun);
+    } finally {
+      preview.result.toStagedQueueItems = singleStageQueueItems;
+    }
   });
 
   it('does not replace the queue or fire when the generator is off', async () => {
@@ -416,21 +460,7 @@ describe('PreSessionView analytics', () => {
     render(createElement(PreSessionView));
 
     act(() => {
-      picker.onChange?.({
-        type: 'on',
-        options: {
-          type: 'volume',
-          targetGrade: 10,
-          warmUp: 'none',
-          mainSetClimbs: 20,
-          mainSetVariability: 0,
-          minAscents: 0,
-          minRating: 0,
-          onlyTallClimbs: false,
-          onlyWideClimbs: false,
-          climbBias: 'any',
-        },
-      });
+      picker.onChange?.(volumeSelection());
     });
 
     await act(async () => {
@@ -527,23 +557,7 @@ describe('SessionScreen Start handoff', () => {
       throw new Error('Queue unavailable');
     });
     const screen = render(createElement(SessionScreen));
-    act(() =>
-      picker.onChange?.({
-        type: 'on',
-        options: {
-          type: 'volume',
-          targetGrade: 10,
-          warmUp: 'none',
-          mainSetClimbs: 20,
-          mainSetVariability: 0,
-          minAscents: 0,
-          minRating: 0,
-          onlyTallClimbs: false,
-          onlyWideClimbs: false,
-          climbBias: 'any',
-        },
-      }),
-    );
+    act(() => picker.onChange?.(volumeSelection()));
     await act(async () => startButton.onPress?.());
     screenState.sessionId = 'session-1';
     screen.rerender(createElement(SessionScreen));

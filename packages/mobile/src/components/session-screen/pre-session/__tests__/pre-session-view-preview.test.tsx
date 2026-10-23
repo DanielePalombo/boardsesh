@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClimbQueueItem } from '@boardsesh/queue';
 import { DEFAULT_VOLUME_OPTIONS } from '@boardsesh/playlist-generator';
 import type { GeneratorSelection } from '../GeneratorPickerCard';
+import { singleBlockSelection } from '../workout-blocks';
 
 // The preview hook is mocked; the test mutates `preview.result.items` /
 // `refreshingUuids` and rerenders to drive the view's row props.
@@ -18,6 +19,7 @@ const preview = vi.hoisted(() => ({
     refreshingUuids: new Set<string>(),
     plannedCount: 0,
     plannedSlots: [] as unknown[],
+    plannedStages: [] as unknown[],
     regenerate: vi.fn(),
     shuffle: vi.fn(),
     refreshSlot: vi.fn(),
@@ -46,6 +48,9 @@ const picker = vi.hoisted(() => ({ onChange: null as ((selection: GeneratorSelec
 
 // Every section heading row the list rendered, in order.
 const headings = vi.hoisted(() => ({ rendered: [] as Array<{ section: string; count: number }> }));
+// Every stage heading row, in order, interleaved into `headings.order` with the section ones.
+const stageHeadings = vi.hoisted(() => ({ rendered: [] as Array<{ stageKind: string; count: number }> }));
+const headingOrder = vi.hoisted(() => ({ labels: [] as string[] }));
 
 const list = vi.hoisted(() => ({
   props: [] as Array<{
@@ -207,6 +212,14 @@ vi.mock('../WorkoutPreviewSummary', () => ({
 vi.mock('../WorkoutPreviewSectionHeading', () => ({
   WorkoutPreviewSectionHeading: ({ section, count }: { section: string; count: number }) => {
     headings.rendered.push({ section, count });
+    headingOrder.labels.push(`${section}:${count}`);
+    return null;
+  },
+}));
+vi.mock('../WorkoutPreviewStageHeading', () => ({
+  WorkoutPreviewStageHeading: ({ stageKind, count }: { stageKind: string; count: number }) => {
+    stageHeadings.rendered.push({ stageKind, count });
+    headingOrder.labels.push(`STAGE ${stageKind}:${count}`);
     return null;
   },
 }));
@@ -245,15 +258,15 @@ import { PreSessionView } from '../PreSessionView';
 function renderWithWorkout() {
   const view = render(createElement(PreSessionView));
   act(() => {
-    picker.onChange?.({ type: 'on', options: { ...DEFAULT_VOLUME_OPTIONS, targetGrade: 10 } });
+    picker.onChange?.(singleBlockSelection({ ...DEFAULT_VOLUME_OPTIONS, targetGrade: 10 }, 'block-volume'));
   });
   return view;
 }
 
-function makeRow(uuid: string, section = 'main', index = 0) {
+function makeRow(uuid: string, section = 'main', index = 0, stageId?: string) {
   return {
     item: { uuid, climb: { uuid: `${uuid}-climb`, name: uuid } },
-    slot: { grade: 10, section, index },
+    slot: { grade: 10, section, index, ...(stageId === undefined ? {} : { stageId }) },
   };
 }
 
@@ -265,6 +278,9 @@ beforeEach(() => {
   list.props = [];
   summaryLine.props = null;
   headings.rendered = [];
+  stageHeadings.rendered = [];
+  headingOrder.labels = [];
+  preview.result.plannedStages = [];
   bottomChrome.metrics = {
     insideTabs: true,
     scrollBottomPadding: 200,
@@ -369,6 +385,39 @@ describe('PreSessionView preview rows', () => {
       { section: 'main', count: 1 },
     ]);
     expect(rows.rendered.map((row) => row.uuid)).toEqual(['w1', 'w2', 'm1']);
+  });
+
+  it('heads each block of a multi-block workout above its own sections', () => {
+    preview.result.items = [
+      makeRow('w1', 'warmUp', 0, 'warm'),
+      makeRow('u1', 'increasing', 1, 'pyramid'),
+      makeRow('p1', 'peak', 2, 'pyramid'),
+      makeRow('v1', 'main', 3, 'volume'),
+      makeRow('v2', 'main', 4, 'volume'),
+    ] as unknown[];
+    preview.result.plannedSlots = (preview.result.items as Array<ReturnType<typeof makeRow>>).map((row) => row.slot);
+    preview.result.plannedStages = [
+      { id: 'warm', kind: 'warmUp', warmUpType: 'standard' },
+      { id: 'pyramid', kind: 'pyramid', options: { ...DEFAULT_VOLUME_OPTIONS, type: 'pyramid' } },
+      { id: 'volume', kind: 'volume', options: DEFAULT_VOLUME_OPTIONS },
+    ];
+
+    render(createElement(PreSessionView));
+
+    expect(headingOrder.labels).toEqual([
+      'STAGE warmUp:1',
+      'STAGE pyramid:2',
+      'increasing:1',
+      'peak:1',
+      'STAGE volume:2',
+    ]);
+    expect(rows.rendered.map((row) => row.uuid)).toEqual(['w1', 'u1', 'p1', 'v1', 'v2']);
+
+    // The summary line counts every block's climbs.
+    act(() => {
+      picker.onChange?.(singleBlockSelection({ ...DEFAULT_VOLUME_OPTIONS, targetGrade: 10 }, 'block-volume'));
+    });
+    expect(summaryLine.props?.summary).toMatchObject({ planned: 5, filled: 5, missing: 0 });
   });
 
   it('tells the summary how many planned climbs the preview could not fill', () => {
