@@ -1,9 +1,9 @@
 import { useNativeRootHeader } from '../../../hooks/use-native-root-header';
 import { usePrivacySettings } from '../../../lib/graphql/hooks/use-privacy';
 import { AudiencePicker, SESSION_AUDIENCES } from '../../privacy/AudiencePicker';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
@@ -32,18 +32,21 @@ import { BoardSummaryCard } from '../../boards/BoardSummaryCard';
 import { useBoardShortcutNavigation } from '../../../lib/boards/use-board-shortcut-navigation';
 import { RestTimerArmRow } from '../RestTimerArmRow';
 import { SessionVisibilityRow } from '../SessionVisibilityRow';
-import {
-  DEFAULT_GRADE_FOCUS_OPTIONS,
-  DEFAULT_LADDER_OPTIONS,
-  DEFAULT_PYRAMID_OPTIONS,
-  DEFAULT_VOLUME_OPTIONS,
-  summarizePlanFill,
-} from '@boardsesh/playlist-generator';
-import { assertNever } from '../../../lib/assert-never';
+import { summarizePlanFill } from '@boardsesh/playlist-generator';
 import { SCREENSHOT_WORKOUT } from '../../../lib/screenshot-mode';
-import { GeneratorPickerCard, type GeneratorSelection } from './GeneratorPickerCard';
+import { GeneratorPickerCard } from './GeneratorPickerCard';
+import {
+  NO_WORKOUT,
+  buildDefaultOptions,
+  firstWorkoutType,
+  hasWorkoutBlocks,
+  selectionWorkoutTypes,
+  singleBlockSelection,
+  type GeneratorSelection,
+} from './workout-blocks';
 import { WorkoutPreviewRow } from './WorkoutPreviewRow';
 import { WorkoutPreviewSectionHeading } from './WorkoutPreviewSectionHeading';
+import { WorkoutPreviewStageHeading } from './WorkoutPreviewStageHeading';
 import { WorkoutPreviewSummary } from './WorkoutPreviewSummary';
 import { useWorkoutPreview } from './use-workout-preview';
 import { buildPreviewListRows, type PreviewListRow } from './workout-preview-sections';
@@ -51,29 +54,14 @@ import { OnboardingTipBanner } from '../../onboarding/OnboardingTipBanner';
 import { hasSeenTip, markTipSeen } from '../../../lib/onboarding/onboarding-storage';
 import { ONBOARDING_TIP_CREW_KEY, ONBOARDING_TIP_WORKOUT_KEY } from '@boardsesh/key-value-storage';
 
-// Screenshot mode pre-selects a workout so the Record screen renders the
-// generator (chart + generated preview) on load. The workout shelf is a
-// react-native-gesture-handler ScrollView that Maestro can't tap, so baking the
-// initial selection is the only reliable way to capture it. Off in normal builds.
-// The DEFAULT_*_OPTIONS omit `targetGrade` (see playlist-generator types), so each
-// branch adds a mid-grade default — mirroring buildDefaultOptions in GeneratorPickerCard.
+// Screenshot mode starts with one open block of the preset type, so the Record
+// screen renders a block card and its generated preview on load without
+// Maestro driving the picker. No blocks in normal builds. A mid-grade target, as
+// the DEFAULT_*_OPTIONS leave `targetGrade` out. Blocks added later get uuids,
+// so this fixed id can't collide.
 function initialGeneratorSelection(): GeneratorSelection {
-  if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !SCREENSHOT_WORKOUT) return { type: 'off' };
-  const targetGrade = 15;
-  switch (SCREENSHOT_WORKOUT) {
-    case 'volume':
-      return { type: 'on', options: { ...DEFAULT_VOLUME_OPTIONS, targetGrade } };
-    case 'pyramid':
-      return { type: 'on', options: { ...DEFAULT_PYRAMID_OPTIONS, targetGrade } };
-    case 'ladder':
-      return { type: 'on', options: { ...DEFAULT_LADDER_OPTIONS, targetGrade } };
-    case 'gradeFocus':
-      return { type: 'on', options: { ...DEFAULT_GRADE_FOCUS_OPTIONS, targetGrade } };
-    default:
-      // A new ScreenshotWorkout variant must add a case above; otherwise this
-      // turns into a compile error instead of silently returning undefined.
-      return assertNever(SCREENSHOT_WORKOUT);
-  }
+  if (process.env.EXPO_PUBLIC_SCREENSHOT_MODE !== '1' || !SCREENSHOT_WORKOUT) return NO_WORKOUT;
+  return singleBlockSelection(buildDefaultOptions(SCREENSHOT_WORKOUT, 15), 'screenshot-block');
 }
 
 type PreSessionViewProps = {
@@ -195,13 +183,14 @@ export function PreSessionView({
     refreshingUuids,
     plannedCount,
     plannedSlots,
+    plannedStages,
     refreshSlot,
     shuffle,
     toStagedQueueItems,
   } = preview;
-  // Section headings interleaved with the climbs, in the order the session runs them.
-  const previewRows = useMemo(() => buildPreviewListRows(previewItems), [previewItems]);
-  // What Start will queue: the planned slots that found a climb.
+  // Stage and section headings interleaved with the climbs, in the order the session runs them.
+  const previewRows = useMemo(() => buildPreviewListRows(previewItems, plannedStages), [previewItems, plannedStages]);
+  // What Start will queue: the planned slots that found a climb, across every stage.
   const planSummary = useMemo(
     () =>
       summarizePlanFill(
@@ -254,6 +243,7 @@ export function PreSessionView({
 
   const renderPreviewRow = useCallback(
     ({ item: row }: { item: PreviewListRow }) => {
+      if (row.kind === 'stage') return <WorkoutPreviewStageHeading stageKind={row.stageKind} count={row.count} />;
       if (row.kind === 'section') return <WorkoutPreviewSectionHeading section={row.section} count={row.count} />;
       if (!previewBoard) return null;
       const previewItem = row.preview;
@@ -275,9 +265,9 @@ export function PreSessionView({
 
   const handleStart = useCallback(async () => {
     if (!activeBoard || isStartPending) return;
-    const { items: generatedItems, run: generatedRun } =
-      selection.type === 'on' ? toStagedQueueItems() : { items: [], run: null };
-    if (selection.type === 'on' && (status !== 'ready' || refreshingUuids.size > 0 || generatedItems.length === 0)) {
+    const hasWorkout = hasWorkoutBlocks(selection);
+    const { items: generatedItems, run: generatedRun } = hasWorkout ? toStagedQueueItems() : { items: [], run: null };
+    if (hasWorkout && (status !== 'ready' || refreshingUuids.size > 0 || generatedItems.length === 0)) {
       return;
     }
 
@@ -294,7 +284,7 @@ export function PreSessionView({
         return;
       }
 
-      if (selection.type === 'on') {
+      if (hasWorkout) {
         // Queue the reviewed preview behind whatever's already going, leaving
         // the current climb alone so the wall doesn't repaint and hand-queued
         // climbs survive. `activateFirstWhenIdle` opts this path — and only this
@@ -307,7 +297,10 @@ export function PreSessionView({
         // queue-item uuids just appended; it never goes over the wire.
         if (generatedRun) setWorkoutRun(newSessionId, generatedRun);
         track(SHARED_EVENTS.SessionQueueGenerated, {
-          workoutType: selection.options.type,
+          // The first workout block's type, so single-workout funnels keep their
+          // meaning. Never a warm-up: null if a queue ever starts with no workout block.
+          workoutType: firstWorkoutType(selection),
+          workoutTypes: selectionWorkoutTypes(selection),
           boardName: activeBoard.boardType,
           angle: activeBoard.angle,
           savedCount: generatedItems.length,
@@ -345,7 +338,7 @@ export function PreSessionView({
   ]);
 
   const generatorPreviewReady =
-    selection.type !== 'on' || (status === 'ready' && previewItems.length > 0 && refreshingUuids.size === 0);
+    !hasWorkoutBlocks(selection) || (status === 'ready' && previewItems.length > 0 && refreshingUuids.size === 0);
   const canStart = activeBoard != null && !isStartPending && generatorPreviewReady;
   // The single source of the Start capsule's bottom offset: passed to SessionStartFab
   // AND used for the list reservation, so the FAB position and the last-row clearance
@@ -358,8 +351,9 @@ export function PreSessionView({
 
   // Inline status copy shown above an empty preview (loading / no results /
   // error). When rows are already present a rebuild keeps them mounted, so these
-  // only render while the preview is empty.
-  const showPreviewSection = selection.type === 'on';
+  // only render while the preview is empty. A plan with no slots at all is only
+  // warm-ups with nothing after them: say so instead of blaming the filters.
+  const showPreviewSection = hasWorkoutBlocks(selection);
   const previewStateMessage =
     previewItems.length > 0
       ? null
@@ -368,8 +362,37 @@ export function PreSessionView({
         : status === 'error'
           ? t('mobile.session.preWorkoutPreviewError')
           : status === 'ready'
-            ? t('mobile.session.preWorkoutPreviewEmpty')
+            ? plannedCount === 0
+              ? t('mobile.session.preWorkoutPreviewNothingPlanned')
+              : t('mobile.session.preWorkoutPreviewEmpty')
             : null;
+
+  // Tab mode insets the list top by the measured floating-chrome height; the
+  // overlay host renders its own header strip above, so no inset there.
+  const listPaddingTop = showChrome ? chromeHeight : spacing[2];
+
+  // Scrolls a block card that was just added or opened until its bottom clears
+  // the Start capsule and the tab bar, without pushing its header off the top.
+  const listRef = useRef<FlashListRef<PreviewListRow>>(null);
+  const screenRef = useRef<View>(null);
+  const revealInsetsRef = useRef({ top: 0, bottom: 0 });
+  revealInsetsRef.current = { top: listPaddingTop, bottom: footerHeight + footerBottom + spacing[4] };
+  const revealBlock = useCallback((cardView: View) => {
+    const screen = screenRef.current;
+    if (!screen) return;
+    screen.measureInWindow((_screenX, screenY, _screenWidth, screenHeight) => {
+      cardView.measureInWindow((_cardX, cardY, _cardWidth, cardHeight) => {
+        const list = listRef.current;
+        if (!list) return;
+        const { top, bottom } = revealInsetsRef.current;
+        const hiddenBelow = cardY + cardHeight - (screenY + screenHeight - bottom);
+        const roomAbove = cardY - (screenY + top);
+        const scrollBy = Math.min(hiddenBelow, roomAbove);
+        if (scrollBy <= 0) return;
+        list.scrollToOffset({ offset: list.getAbsoluteLastScrollOffset() + scrollBy, animated: true });
+      });
+    });
+  }, []);
 
   const listHeader = useMemo(
     () => (
@@ -440,6 +463,7 @@ export function PreSessionView({
           angle={activeBoard?.angle ?? null}
           selection={selection}
           onChange={setSelection}
+          onRevealBlock={revealBlock}
         />
 
         {showPreviewSection ? (
@@ -489,6 +513,7 @@ export function PreSessionView({
       isRefreshingAnyRow,
       selection,
       setSelection,
+      revealBlock,
       showPreviewSection,
       showChrome,
       nativeRootHeader,
@@ -499,13 +524,10 @@ export function PreSessionView({
     ],
   );
 
-  // Tab mode insets the list top by the measured floating-chrome height; the
-  // overlay host renders its own header strip above, so no inset there.
-  const listPaddingTop = showChrome ? chromeHeight : spacing[2];
-
   return (
-    <View style={styles.container}>
+    <View ref={screenRef} style={styles.container}>
       <FlashList
+        ref={listRef}
         style={styles.scroll}
         data={previewRows}
         renderItem={renderPreviewRow}
