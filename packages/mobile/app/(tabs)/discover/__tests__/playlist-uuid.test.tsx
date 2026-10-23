@@ -266,6 +266,7 @@ const filterSession = vi.hoisted(() => ({
     liveCount: number | null;
     scopeKey: string | null;
     onSortCommit?: (sort: { sortBy: string; sortOrder: string }) => void;
+    pickers?: unknown;
   },
   pauseView: vi.fn(),
   resumeView: vi.fn(),
@@ -867,6 +868,17 @@ describe('PlaylistDetail owner overflow menu', () => {
     expect(detailViewProps.current?.emptyAction).toBeNull();
   });
 
+  it('gives a signed-out viewer no header actions at all, so no empty glass item shows', async () => {
+    authMock.isAuthenticated = false;
+    requestMock.mockResolvedValue({ playlist: makePlaylist({ userRole: 'viewer', isPublic: true }) });
+
+    const { container } = renderDetail();
+
+    await waitFor(() => expect(container.querySelector('[data-detail-view="true"]')).not.toBeNull());
+    expect(container.querySelector('[data-actions-expanded="true"]')?.childElementCount).toBe(0);
+    expect(container.querySelector('[data-actions-collapsed="true"]')?.childElementCount).toBe(0);
+  });
+
   it('forwards the bulk add-to-queue handler and its in-flight flag to the detail view', async () => {
     // A non-owner is the case the issue names — a crew member queueing someone
     // else's playlist — and it is exactly the population the overflow menu can't
@@ -1095,11 +1107,23 @@ describe('PlaylistDetail sort and filters', () => {
     expect(detailViewProps.current?.climbs.map((climb) => climb.uuid)).toEqual(['plain-1', 'plain-2']);
     expect(detailViewProps.current?.onReorderClimb).toBeDefined();
 
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     fireEvent.click(container.querySelector('[data-edit-done="true"]') as HTMLButtonElement);
 
     expect(detailViewProps.current?.editMode).toBe(false);
     expect(filterSession.resumeView).toHaveBeenCalledTimes(1);
     expect(playlistMocks.views.at(-1)).toEqual({ sortBy: 'difficulty', sortOrder: 'asc' });
+    // A removed climb can take its setter off the sheet's Setters picker.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['playlistSetters', 'p-1'] });
+  });
+
+  it("opens the sheet's pickers on the Discover stack, with this playlist's setters and no heatmap", async () => {
+    await renderPlaylist();
+    expect(filterSession.options?.pickers).toEqual({
+      stack: 'discover',
+      heatmap: false,
+      setterList: { kind: 'playlist', playlistId: 'p-1' },
+    });
   });
 
   it('gives the view back when the playlist order fails to load for the editor', async () => {
