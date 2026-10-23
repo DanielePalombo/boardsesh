@@ -5,7 +5,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { GetPlaylistClimbsInput } from '@boardsesh/graphql/operations/playlists';
 import { PlaylistsAdapterProvider, type ExecutePlaylistsGraphQL, type PlaylistsAdapter } from '../adapter';
 import { noopRecentsAdapter } from '../recents-adapter';
-import { keepPreviousViewResults, usePlaylistClimbs, type PlaylistClimbsView } from '../use-playlist-climbs';
+import {
+  keepPreviousViewResults,
+  playlistClimbsGeometryKey,
+  playlistClimbsQueryKey,
+  playlistClimbsQueryKeyFor,
+  usePlaylistClimbs,
+  type PlaylistClimbsView,
+} from '../use-playlist-climbs';
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => {};
@@ -72,7 +79,36 @@ describe('usePlaylistClimbs', () => {
       .getQueryCache()
       .findAll({ queryKey: ['playlistClimbs', 'p-1'] })
       .map((query) => query.queryKey);
-    expect(cachedKeys).toEqual([['playlistClimbs', 'p-1', 'all', null, view, 0]]);
+    expect(cachedKeys).toEqual([['playlistClimbs', 'p-1', 'all', null, null, view, 0]]);
+    client.clear();
+  });
+
+  it('builds the same key the hook caches under, so one view can be invalidated on its own', async () => {
+    const execute = vi.fn(async () => climbPage(['a']));
+    const { client, wrapper } = renderWithAdapter(execute);
+    const view: PlaylistClimbsView = { sortBy: 'name', sortOrder: 'asc' };
+    const { result } = renderHook(
+      () =>
+        usePlaylistClimbs({
+          playlistUuid: 'p-1',
+          boardUuid: 'board-1',
+          boardInput: { activeBoardName: 'kilter', activeAngle: 40 },
+          view,
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.query.isSuccess).toBe(true));
+    const key = playlistClimbsQueryKey({ playlistUuid: 'p-1', boardUuid: 'board-1', angle: 40, view: { ...view } });
+    expect(client.getQueryCache().find({ queryKey: key, exact: true })).toBeDefined();
+    expect(playlistClimbsQueryKey({ playlistUuid: 'p-1' })).toEqual([
+      'playlistClimbs',
+      'p-1',
+      'all',
+      null,
+      null,
+      'default',
+      0,
+    ]);
     client.clear();
   });
 
@@ -101,21 +137,94 @@ describe('usePlaylistClimbs', () => {
 });
 
 describe('keepPreviousViewResults', () => {
-  const current = ['playlistClimbs', 'p-1', 'all', 40, { sortBy: 'name' }, 0];
+  const GEOMETRY = 'kilter|1|10|1,20';
+  const current = ['playlistClimbs', 'p-1', 'all', 40, GEOMETRY, { sortBy: 'name' }, 0];
 
   it('keeps rows when only the view changed', () => {
-    expect(keepPreviousViewResults(current, 'rows', ['playlistClimbs', 'p-1', 'all', 40, 'default', 0])).toBe('rows');
+    expect(keepPreviousViewResults(current, 'rows', ['playlistClimbs', 'p-1', 'all', 40, GEOMETRY, 'default', 0])).toBe(
+      'rows',
+    );
   });
 
-  it('drops rows from another playlist, board, angle or refresh', () => {
+  it('keeps rows across a view turning on or off, where only one request sends the geometry', () => {
+    expect(keepPreviousViewResults(current, 'rows', ['playlistClimbs', 'p-1', 'all', 40, null, 'default', 0])).toBe(
+      'rows',
+    );
+  });
+
+  it('drops rows from another playlist, board, angle, geometry or refresh', () => {
     for (const previous of [
-      ['playlistClimbs', 'p-2', 'all', 40, 'default', 0],
-      ['playlistClimbs', 'p-1', 'board-2', 40, 'default', 0],
-      ['playlistClimbs', 'p-1', 'all', 45, 'default', 0],
-      ['playlistClimbs', 'p-1', 'all', 40, 'default', 1],
-      ['smartPlaylist', 'p-1', 'all', 40, 'default', 0],
+      ['playlistClimbs', 'p-2', 'all', 40, GEOMETRY, 'default', 0],
+      ['playlistClimbs', 'p-1', 'board-2', 40, GEOMETRY, 'default', 0],
+      ['playlistClimbs', 'p-1', 'all', 45, GEOMETRY, 'default', 0],
+      ['playlistClimbs', 'p-1', 'all', 40, 'kilter|1|12|1,20', 'default', 0],
+      ['playlistClimbs', 'p-1', 'all', 40, GEOMETRY, 'default', 1],
+      ['smartPlaylist', 'p-1', 'all', 40, GEOMETRY, 'default', 0],
     ]) {
       expect(keepPreviousViewResults(current, 'rows', previous)).toBeUndefined();
     }
+  });
+});
+
+describe('playlist climbs board geometry', () => {
+  it('keys the geometry a request sends, in either board mode, and none for a plain request', () => {
+    expect(playlistClimbsGeometryKey(undefined)).toBeNull();
+    expect(playlistClimbsGeometryKey({ activeBoardName: 'kilter', activeAngle: 40 })).toBeNull();
+    expect(
+      playlistClimbsGeometryKey({
+        activeBoardName: 'kilter',
+        activeAngle: 40,
+        activeLayoutId: 1,
+        activeSizeId: 10,
+        activeSetIds: '1,20',
+      }),
+    ).toBe('kilter|1|10|1,20');
+    expect(playlistClimbsGeometryKey({ boardName: 'tension', layoutId: 9, sizeId: 1, setIds: '8,9', angle: 40 })).toBe(
+      'tension|9|1|8,9',
+    );
+  });
+
+  it('refetches, with no stale rows, when the active board keeps its uuid but changes size, and sends the same body', async () => {
+    const nextPage = deferred<ReturnType<typeof climbPage>>();
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce(climbPage(['fits-10x10']))
+      .mockReturnValueOnce(nextPage.promise);
+    const { client, wrapper } = renderWithAdapter(execute);
+    const view: PlaylistClimbsView = { sortBy: 'position', sortOrder: 'asc', onlyActiveBoard: true };
+    const boardInputFor = (sizeId: number) => ({
+      activeBoardName: 'kilter',
+      activeAngle: 40,
+      activeLayoutId: 1,
+      activeSizeId: sizeId,
+      activeSetIds: '1,20',
+    });
+    const { result, rerender } = renderHook(
+      ({ sizeId }: { sizeId: number }) =>
+        usePlaylistClimbs({ playlistUuid: 'p-1', boardUuid: 'board-1', boardInput: boardInputFor(sizeId), view }),
+      { wrapper, initialProps: { sizeId: 10 } },
+    );
+    await waitFor(() => expect(result.current.allClimbs.map((climb) => climb.uuid)).toEqual(['fits-10x10']));
+
+    rerender({ sizeId: 12 });
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    expect(result.current.query.isPlaceholderData).toBe(false);
+    expect(result.current.allClimbs).toEqual([]);
+    expect(sentInput(execute, 1)).toEqual({ playlistId: 'p-1', page: 0, pageSize: 20, ...boardInputFor(12), view });
+
+    nextPage.resolve(climbPage(['fits-12x12']));
+    await waitFor(() => expect(result.current.allClimbs.map((climb) => climb.uuid)).toEqual(['fits-12x12']));
+    expect(
+      client.getQueryCache().find({
+        queryKey: playlistClimbsQueryKeyFor({
+          playlistUuid: 'p-1',
+          boardUuid: 'board-1',
+          boardInput: boardInputFor(12),
+          view,
+        }),
+        exact: true,
+      }),
+    ).toBeDefined();
+    client.clear();
   });
 });
