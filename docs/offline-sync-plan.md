@@ -1787,3 +1787,50 @@ without requiring another download-completed event.
 These progress and transfer changes use the existing single-cursor sync and
 snapshot compatibility rules. They introduce no privacy-event subscription, and
 the app has had no catalogue revalidation path since #6545.
+
+
+### Download progress and faster retry (#6653)
+
+Snapshot-backed downloads fetch omitted authorized content once before ordinary
+delta sync, as described in `docs/board-snapshots.md`. Paged finishing has no known
+denominator: it reports an indeterminate bar and the number of processed items
+instead of remaining at 98%. Completion is published only after committed tails.
+
+The floating download card has a Hide control in active, waiting, failed, and
+completed states. Hiding changes only `offlineDownloadIndicatorHidden`, a
+persisted preference; My Boards keeps its progress and the download continues.
+Progress frames, queued-board promotion, and reopening do not restore the card.
+A person starting or retrying a download clears the preference. An unfinished
+board that already imported a snapshot can also offer the existing faster-retry
+confirmation, preserving completed boards and the imported-watermark guard.
+
+
+Simulator evidence for the reported MoonBoard layout 5 / size 1 at 40°:
+
+| Before | After |
+| --- | --- |
+| ![Download remains at 98 percent during repeated grade paging](images/issue-6653-before.png) | ![Download shows live processed items and an accessible Hide control](images/issue-6653-after.png) |
+
+An explicit faster retry yields an active crawl after its current committed page,
+then releases the scheduler so the queued verified-snapshot retry can begin. A
+retry arriving on the final page is checked inside the completion transaction.
+Already-attempted retries with no artifact still use ordinary paging.
+
+
+The feedback keyboard report did not reproduce on the current iOS branch: the
+existing sheet expands on focus and keeps multiline text and its submit control
+above the keyboard. [Simulator capture](images/issue-6653-feedback-keyboard.png).
+The unsent-report discard confirmation also remains reachable; no report was
+submitted. Android keyboard behavior remains a device QA check.
+
+
+The iOS faster-retry check used a backed-up simulator-only unfinished-checkpoint
+fixture after the original crawl had completed. No climbs or queued writes were
+removed. The retry imported 695,445 grade rows from the verified artifact, then
+pulled zero grade rows in its final catch-up (715 ms). Both snapshot transfers
+took under one second; these phase timings are not an end-to-end benchmark.
+A completion marker was committed, all 59,594 local climbs remained, and My Boards
+showed the board available offline. Hiding persisted through relaunch while an
+unfinished checkpoint kept advancing. With Offline mode enabled, a cold launch
+still displayed the downloaded MoonBoard climbs:
+[cold-start simulator capture](images/issue-6653-offline-cold-start.png).

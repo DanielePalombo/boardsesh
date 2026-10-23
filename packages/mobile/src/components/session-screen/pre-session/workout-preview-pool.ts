@@ -1,6 +1,6 @@
 import type { Climb, UserBoard } from '@boardsesh/shared-schema';
 import type { ClimbQueueItem } from '@boardsesh/queue';
-import type { GeneratorOptions, PlannedClimbSlot } from '@boardsesh/playlist-generator';
+import type { PlannedClimbSlot, WorkoutStageFilters } from '@boardsesh/playlist-generator';
 import { climbToQueueItem } from '../../../lib/climb-to-queue-item';
 import { screenshotModeRandom } from '../../../lib/screenshot-mode';
 import type { RandomSource } from '../../../lib/seeded-random';
@@ -12,16 +12,16 @@ import type { RandomSource } from '../../../lib/seeded-random';
  * it in production lives in `select-climbs-for-plan.ts`.
  */
 
-export type PreviewFilters = Pick<
-  GeneratorOptions,
-  'minAscents' | 'minRating' | 'onlyTallClimbs' | 'onlyWideClimbs' | 'climbBias'
->;
+export type PreviewFilters = WorkoutStageFilters;
 
 export type PreviewFetchContext = {
   board: UserBoard;
   /** Gates the climbBias hide/show-attempted filters, which require auth. */
   isAuthenticated: boolean;
-  /** Filters that survived the generator UI. Absent → no filtering. */
+  /**
+   * The filters one fetch runs with. `buildPools` and a row refresh set them
+   * from the slot they fetch for. Absent → no filtering.
+   */
   filters?: PreviewFilters;
 };
 
@@ -32,8 +32,42 @@ export type PreviewFetchContext = {
  */
 export type FetchGradePool = (grade: number, ctx: PreviewFetchContext, demand: number) => Promise<Climb[]>;
 
-/** A plan slot, plus the workout stage it belongs to when it came from a staged plan. */
-export type PreviewSlot = PlannedClimbSlot & { stageId?: string };
+/**
+ * A plan slot, plus the workout stage it belongs to when it came from a staged
+ * plan and the climb filters that stage's climbs are fetched with.
+ */
+export type PreviewSlot = PlannedClimbSlot & { stageId?: string; filters?: PreviewFilters };
+
+/** One string per distinct set of filters, so equal filters share a pool and different ones never do. */
+export function filtersSignature(filters: PreviewFilters | undefined): string {
+  if (!filters) return 'unfiltered';
+  return [
+    filters.minAscents,
+    filters.minRating,
+    filters.onlyTallClimbs,
+    filters.onlyWideClimbs,
+    filters.climbBias,
+  ].join(':');
+}
+
+/**
+ * The filters a fetch can actually apply. Signed out, climb bias never reaches
+ * the search (the hide/show-attempted flags need a user), so it is set to `any`:
+ * two blocks that differ only in bias then share one pool instead of fetching
+ * the same climbs twice.
+ */
+export function fetchFilters(
+  filters: PreviewFilters | undefined,
+  isAuthenticated: boolean,
+): PreviewFilters | undefined {
+  if (!filters || isAuthenticated || filters.climbBias === 'any') return filters;
+  return { ...filters, climbBias: 'any' };
+}
+
+/** The pool a slot draws from: its grade and its filters. */
+export function poolKeyForSlot(slot: PreviewSlot): string {
+  return `${slot.grade}|${filtersSignature(slot.filters)}`;
+}
 
 /** One preview row: the queue item plus the plan slot it fills (slot.grade is the refresh key). */
 export type PreviewItem = {
@@ -43,8 +77,13 @@ export type PreviewItem = {
 
 export type WorkoutPreviewData = {
   items: PreviewItem[];
-  /** Shuffled candidate pool per grade. Mutable cache reused across refreshes. */
-  pools: Map<number, Climb[]>;
+  /** Shuffled candidate pool per grade and filters (`poolKeyForSlot`). Mutable cache reused across refreshes. */
+  pools: Map<string, Climb[]>;
+  /**
+   * The demand each pool was last fetched for, so a rebuild can tell whether a
+   * cached pool is still big enough to reuse. A pool with no entry is never reused.
+   */
+  poolDemands?: Map<string, number>;
   /** climb.uuid currently shown across ALL rows (refresh never re-picks one). */
   usedUuids: Set<string>;
 };
@@ -86,26 +125,76 @@ export function pickRandomUnused(
 }
 
 /**
- * Fetch one shuffled pool per unique grade in the plan. Round-trips stay
- * proportional to the workout shape (unique grades), not the climb count. Each
- * fetch is told how many slots share that grade, across every workout stage.
+ * How many slots sit at `grade` across every pool. Each pool at a grade is sized
+ * by this total, not by its own slots: two filter sets at one grade mostly return
+ * the same top-quality climbs, so a pool sized for its own share would run dry
+ * once the other pool's slots had taken the climbs they have in common.
  */
-export async function buildPools(
-  slots: readonly PlannedClimbSlot[],
+function slotsAtGrade(slots: readonly PreviewSlot[]): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (const slot of slots) counts.set(slot.grade, (counts.get(slot.grade) ?? 0) + 1);
+  return counts;
+}
+
+/** Pools fetched for an earlier plan, offered back to `buildPoolsReusing`. */
+export type PoolCache = {
+  pools: ReadonlyMap<string, Climb[]>;
+  poolDemands?: ReadonlyMap<string, number>;
+};
+
+/**
+ * Fetch one shuffled pool per unique grade and filters in the plan. Round-trips
+ * stay proportional to the workout shape, not the climb count: stages with equal
+ * filters share a pool per grade, and stages with different filters at one grade
+ * each get their own. Each fetch asks for every slot at its grade (`slotsAtGrade`).
+ *
+ * A pool in `cache` under the same key, fetched for at least the demand it needs
+ * now, is reused as it is, so changing one block's filters fetches only that
+ * block's pools. The caller passes a cache only when the board and sign-in are
+ * the ones the cache was fetched for.
+ */
+export async function buildPoolsReusing(
+  slots: readonly PreviewSlot[],
   ctx: PreviewFetchContext,
   fetchPool: FetchGradePool,
-): Promise<Map<number, Climb[]>> {
-  const demandByGrade = new Map<number, number>();
-  for (const slot of slots) demandByGrade.set(slot.grade, (demandByGrade.get(slot.grade) ?? 0) + 1);
-  const pools = new Map<number, Climb[]>();
+  cache?: PoolCache,
+): Promise<{ pools: Map<string, Climb[]>; poolDemands: Map<string, number> }> {
+  const demandByGrade = slotsAtGrade(slots);
+  const slotByKey = new Map<string, PreviewSlot>();
+  for (const slot of slots) {
+    const key = poolKeyForSlot(slot);
+    if (!slotByKey.has(key)) slotByKey.set(key, slot);
+  }
+  const pools = new Map<string, Climb[]>();
+  const poolDemands = new Map<string, number>();
   await Promise.all(
-    Array.from(demandByGrade, async ([grade, demand]) => {
-      const climbs = await fetchPool(grade, ctx, demand);
+    Array.from(slotByKey, async ([key, slot]) => {
+      const demand = demandByGrade.get(slot.grade) ?? 0;
+      const cachedPool = cache?.pools.get(key);
+      const cachedDemand = cache?.poolDemands?.get(key);
+      // A pool that came back short (offline, a flaky fetch) is fetched again
+      // rather than starving its block until Regenerate.
+      if (cachedPool && cachedDemand !== undefined && cachedDemand >= demand && cachedPool.length >= demand) {
+        pools.set(key, cachedPool);
+        poolDemands.set(key, cachedDemand);
+        return;
+      }
+      const climbs = await fetchPool(slot.grade, { ...ctx, filters: slot.filters }, demand);
       // Shuffle here (not in the fetcher) so a refetch-on-refresh reshuffles.
-      pools.set(grade, shuffleInPlace(climbs.slice(), screenshotModeRandom()));
+      pools.set(key, shuffleInPlace(climbs.slice(), screenshotModeRandom()));
+      poolDemands.set(key, demand);
     }),
   );
-  return pools;
+  return { pools, poolDemands };
+}
+
+/** `buildPoolsReusing` with nothing cached, for callers that only need the pools. */
+export async function buildPools(
+  slots: readonly PreviewSlot[],
+  ctx: PreviewFetchContext,
+  fetchPool: FetchGradePool,
+): Promise<Map<string, Climb[]>> {
+  return (await buildPoolsReusing(slots, ctx, fetchPool)).pools;
 }
 
 /**
@@ -115,33 +204,55 @@ export async function buildPools(
  * change.
  */
 export function reshufflePools(
-  pools: ReadonlyMap<number, Climb[]>,
+  pools: ReadonlyMap<string, Climb[]>,
   random: RandomSource = Math.random,
-): Map<number, Climb[]> {
-  return new Map(Array.from(pools, ([grade, climbs]) => [grade, shuffleInPlace(climbs.slice(), random)]));
+): Map<string, Climb[]> {
+  return new Map(Array.from(pools, ([key, climbs]) => [key, shuffleInPlace(climbs.slice(), random)]));
 }
 
-const NO_AVOIDED_CLIMBS: ReadonlySet<string> = new Set();
+export const NO_AVOIDED_CLIMBS: ReadonlySet<string> = new Set();
 
 /**
- * Walk each slot's shuffled pool, skipping climbs already chosen. Short or
- * empty pools skip the slot so the caller can report the shortfall as
+ * Walk each slot's shuffled pool, skipping climbs already chosen in ANY pool,
+ * so one climb never fills two slots even when two filter sets both return it.
+ * Short or empty pools skip the slot so the caller can report the shortfall as
  * `failedCount`, matching the web generator's behavior.
  *
  * `avoidClimbUuids` are climbs to pass over when the pool has others, such as
  * the climbs already in a live session's queue when a block is added mid-session.
  * They are a preference, not a filter: when only avoided climbs are left at a
  * grade, one of them still fills the slot rather than leave it empty.
+ *
+ * `keptItems[i]`, when set, is the row slot `i` showed before a rebuild. It is
+ * kept as it is (same queue-item uuid, same climb) while its climb is still in
+ * the slot's pool, unused and not avoided, so a block the climber did not touch
+ * keeps its climbs when another block changes. Kept rows are placed first, so a
+ * changed block never takes one of their climbs.
  */
 export function selectItemsFromPools(
   slots: readonly PreviewSlot[],
-  pools: ReadonlyMap<number, Climb[]>,
+  pools: ReadonlyMap<string, Climb[]>,
   avoidClimbUuids: ReadonlySet<string> = NO_AVOIDED_CLIMBS,
+  keptItems: ReadonlyArray<ClimbQueueItem | undefined> = [],
 ): { items: PreviewItem[]; usedUuids: Set<string> } {
-  const items: PreviewItem[] = [];
   const usedUuids = new Set<string>();
-  for (const slot of slots) {
-    const pool = pools.get(slot.grade) ?? [];
+  const keptBySlot = new Map<number, ClimbQueueItem>();
+  slots.forEach((slot, position) => {
+    const kept = keptItems[position];
+    if (!kept || usedUuids.has(kept.climb.uuid) || avoidClimbUuids.has(kept.climb.uuid)) return;
+    const pool = pools.get(poolKeyForSlot(slot)) ?? [];
+    if (!pool.some((climb) => climb.uuid === kept.climb.uuid)) return;
+    usedUuids.add(kept.climb.uuid);
+    keptBySlot.set(position, kept);
+  });
+  const items: PreviewItem[] = [];
+  for (const [position, slot] of slots.entries()) {
+    const kept = keptBySlot.get(position);
+    if (kept) {
+      items.push({ slot, item: kept });
+      continue;
+    }
+    const pool = pools.get(poolKeyForSlot(slot)) ?? [];
     const next =
       pool.find((climb) => !usedUuids.has(climb.uuid) && !avoidClimbUuids.has(climb.uuid)) ??
       pickUnused(pool, usedUuids);
@@ -155,7 +266,7 @@ export function selectItemsFromPools(
 export type RefreshSlotResult = { state: WorkoutPreviewData; changed: boolean };
 
 /**
- * Swap a single preview row for a different climb at the same grade. Picks a
+ * Swap a single preview row for a different climb at the same grade and filters. Picks a
  * random unused climb from the cached pool (no network) so repeated refreshes of
  * one row keep re-rolling across the whole pool rather than toggling between two
  * climbs; refetches+reshuffles that grade once if the cache is exhausted of
@@ -165,7 +276,7 @@ export type RefreshSlotResult = { state: WorkoutPreviewData; changed: boolean };
  *
  * `avoidClimbUuids` is the same preference `selectItemsFromPools` takes: the
  * refresh passes over those climbs while the pool has others, and falls back to
- * one of them before calling the grade exhausted.
+ * one of them before calling the pool exhausted.
  */
 export async function refreshSlotInState(
   state: WorkoutPreviewData,
@@ -178,11 +289,12 @@ export async function refreshSlotInState(
   if (index === -1) return { state, changed: false }; // row gone (e.g. regenerated under a stale tap)
 
   const current = state.items[index];
-  const { grade } = current.slot;
+  const { grade, filters } = current.slot;
+  const poolKey = poolKeyForSlot(current.slot);
   const oldClimbUuid = current.item.climb.uuid;
 
   const { pools } = state;
-  const cachedPool = pools.get(grade) ?? [];
+  const cachedPool = pools.get(poolKey) ?? [];
   // Exclude every climb currently shown (including this row's own) so the refresh
   // lands on a genuinely different climb that isn't already on screen elsewhere.
   // Avoided climbs only if nothing else is left; null means nothing unused at all.
@@ -193,12 +305,19 @@ export async function refreshSlotInState(
   let nextClimb = pickPreferred(cachedPool);
   let refreshedPool: Climb[] | null = null;
 
-  // 1) Cache exhausted of unused climbs → refetch + reshuffle this grade once.
+  // 1) Cache exhausted of unused climbs → refetch + reshuffle this pool once.
   if (!nextClimb) {
-    // Ask for one more than the rows at this grade, so the refetch can reach past them.
+    // Ask for one more than every row at this grade, in every pool: the other
+    // pools' rows may hold the same climbs, so the refetch has to reach past them.
     const rowsAtGrade = state.items.filter((preview) => preview.slot.grade === grade).length;
-    refreshedPool = shuffleInPlace((await fetchPool(grade, ctx, rowsAtGrade + 1)).slice(), screenshotModeRandom());
-    pools.set(grade, refreshedPool);
+    refreshedPool = shuffleInPlace(
+      (await fetchPool(grade, { ...ctx, filters }, rowsAtGrade + 1)).slice(),
+      screenshotModeRandom(),
+    );
+    pools.set(poolKey, refreshedPool);
+    // Every state from buildPoolsReusing carries poolDemands. Without it the
+    // next rebuild sees no entry and refetches this pool, which is safe.
+    state.poolDemands?.set(poolKey, rowsAtGrade + 1);
     nextClimb = pickPreferred(refreshedPool);
   }
 
@@ -219,5 +338,5 @@ export async function refreshSlotInState(
   };
   const usedUuids = new Set(items.map((preview) => preview.item.climb.uuid));
 
-  return { state: { items, pools, usedUuids }, changed: true };
+  return { state: { items, pools, usedUuids, poolDemands: state.poolDemands }, changed: true };
 }
