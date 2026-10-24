@@ -470,7 +470,8 @@ today. Two ways to do it:
   only runs with no session at all), and send the removals to the server when a solo session
   exists. Smaller, but it cleans up after the cause instead of removing it.
 - **(b)** Let the current climb live outside the queue. This is the blocker named on #3841.
-  **Chosen (2026-10-23)**, in F3 (#6666). It needs its own sync design in `docs/` before code.
+  **Chosen (2026-10-23)**, in F3 (#6666). The sync design is
+  [`docs/current-climb-outside-queue.md`](current-climb-outside-queue.md).
 
 The other direction we considered, "playing a list makes it the queue", was rejected: in a
 crew it rewrites everyone's queue on every tap, and a long list runs past the 500-climb queue
@@ -518,9 +519,10 @@ No new settings ship with this page. The model keeps what exists and plans one s
 | Tapping a playlist loads it into my queue   | Planned in F4, default off | Keeps today's behaviour for climbers who want it: a playlist, For You or setter tap replaces the queue with that list. Off, the tap plays from the list (rule 5). |
 | End of list: stop or continue into my queue | Rejected                  | The end card (rule 2) offers both on the spot, so a setting would only hide the choice.                                                                             |
 
-F1, F2, F3 and F5 change behaviour for everyone without a switch. Each one fixes an open bug
+F1, F2, F3 and F5 change behaviour for everyone without a setting. Each one fixes an open bug
 report (#3841, #5157, #4979, #5924), so they are bug fixes rather than tastes. F6 only adds
-labels.
+labels. F3 still ramps behind a release flag, a kill switch rather than a setting
+([`docs/current-climb-outside-queue.md`](current-climb-outside-queue.md), section 8).
 
 ## Questions for climbers
 
