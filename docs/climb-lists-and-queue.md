@@ -88,7 +88,7 @@ drives the wall, and the "flag on" behaviour below is built but nobody has it ye
 | Surface | How you get there | Tap (solo) | Next after the tap | End of the list |
 | --- | --- | --- | --- | --- |
 | Search results | Climbs tab | Commits, flagged `suggested`, with the results as the track (`app/(tabs)/climbs/index.tsx:1302-1326`). With Light on tap off: a trackless preview (`:1313-1318`). | Walks the results | Track end. The first load holds about 250 climbs after the tapped one (rounded up to a page of 100); since F1 one more page loads as the climber nears its end, up to the first 1,000 results. |
-| Setter page | For You setter card, the setter's name in the player, Home's "See all" | Replaces the queue with the setter's climbs this board can draw; "Start playlist?" first if anything is queued after the current climb (`src/components/SetterPlaylistScreen.tsx`, behind both setter routes). | Walks the list, which the queue now holds climb for climb, under the setter's name | Track end |
+| Setter page | For You setter card, the setter's name in the player, Home's "See all" | Replaces the queue with the setter's climbs this board can draw; "Start playlist?" first if anything is queued after the current climb (`src/components/SetterPlaylistScreen.tsx`, behind both setter routes). A list longer than the 500-climb queue cap queues the tapped climb, the climbs after it and, near the end, the ones before it, 500 in all, and a toast says how many fit (#6673). The track still holds the whole list, up to the 2,000 climbs the replace loads. | Walks the list, which the queue now holds climb for climb, under the setter's name | Track end |
 | Playlist | Discover › a playlist | As the setter page (`usePlaylistActivation` in `app/(tabs)/discover/[playlist_uuid].tsx`). The Material app bar's play button does the same with the first climb. The **Add to queue** row appends instead. With a sort or filter on, all three use the sorted, filtered list on screen (see [Sorting and filtering a playlist](#sorting-and-filtering-a-playlist)). | As the setter page | As the setter page |
 | For You and smart lists (Projects, Liked Climbs and the rest) | Discover › For You | As the setter page (`app/(tabs)/discover/smart/[type].tsx:119-128`) | As the setter page | As the setter page |
 | Logbook | You › Logbook | Commits, no track, not flagged `suggested` (`src/components/you/LogbookTab.tsx:504-510`, then `use-play-selection-controller.ts:184-186`) | Walks the queue | Stops at the end of the queue |
@@ -470,7 +470,8 @@ today. Two ways to do it:
   only runs with no session at all), and send the removals to the server when a solo session
   exists. Smaller, but it cleans up after the cause instead of removing it.
 - **(b)** Let the current climb live outside the queue. This is the blocker named on #3841.
-  **Chosen (2026-10-23)**, in F3 (#6666). It needs its own sync design in `docs/` before code.
+  **Chosen (2026-10-23)**, in F3 (#6666). The sync design is
+  [`docs/current-climb-outside-queue.md`](current-climb-outside-queue.md).
 
 The other direction we considered, "playing a list makes it the queue", was rejected: in a
 crew it rewrites everyone's queue on every tap, and a long list runs past the 500-climb queue
@@ -518,9 +519,10 @@ No new settings ship with this page. The model keeps what exists and plans one s
 | Tapping a playlist loads it into my queue   | Planned in F4, default off | Keeps today's behaviour for climbers who want it: a playlist, For You or setter tap replaces the queue with that list. Off, the tap plays from the list (rule 5). |
 | End of list: stop or continue into my queue | Rejected                  | The end card (rule 2) offers both on the spot, so a setting would only hide the choice.                                                                             |
 
-F1, F2, F3 and F5 change behaviour for everyone without a switch. Each one fixes an open bug
+F1, F2, F3 and F5 change behaviour for everyone without a setting. Each one fixes an open bug
 report (#3841, #5157, #4979, #5924), so they are bug fixes rather than tastes. F6 only adds
-labels.
+labels. F3 still ramps behind a release flag, a kill switch rather than a setting
+([`docs/current-climb-outside-queue.md`](current-climb-outside-queue.md), section 8).
 
 ## Questions for climbers
 

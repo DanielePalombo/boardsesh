@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
-import { createElement, type ReactNode } from 'react';
+import { createElement, StrictMode, useLayoutEffect, type ReactNode } from 'react';
 import type { LayoutChangeEvent, ViewStyle } from 'react-native';
+import type { SharedValue } from 'react-native-reanimated';
+import type { BoardArtReadiness } from '../../../lib/board-render/ready-board-art';
 
 type ViewProps = {
   children?: ReactNode;
@@ -20,6 +22,14 @@ const recorded = vi.hoisted(() => ({
   swipeOptions: vi.fn(),
   zoomOptions: vi.fn(),
   boardProps: vi.fn(),
+  synchronousArtReadiness: undefined as BoardArtReadiness | undefined,
+}));
+
+const sharedThreads = vi.hoisted(() => ({
+  asynchronous: false,
+  onUiThread: false,
+  uiJobs: [] as (() => void)[],
+  synchronizeJsReads: [] as (() => void)[],
 }));
 
 vi.mock('react-native', () => {
@@ -54,9 +64,51 @@ vi.mock('react-native', () => {
 });
 vi.mock('react-native-reanimated', async () => {
   const { View } = await import('react-native');
+  const { useRef } = await import('react');
   return {
     default: { View },
     useAnimatedStyle: (factory: () => unknown) => factory(),
+    useSharedValue: (initial: unknown) => {
+      const shared = useRef<{ value: unknown } | null>(null);
+      if (shared.current === null) {
+        let uiContents = initial;
+        let jsCachedContents = initial;
+        shared.current = {
+          get value() {
+            return !sharedThreads.asynchronous || sharedThreads.onUiThread ? uiContents : jsCachedContents;
+          },
+          set value(nextContents: unknown) {
+            if (sharedThreads.asynchronous && !sharedThreads.onUiThread) {
+              sharedThreads.uiJobs.push(() => {
+                uiContents = nextContents;
+              });
+            } else {
+              uiContents = nextContents;
+              if (!sharedThreads.asynchronous) jsCachedContents = nextContents;
+            }
+          },
+        };
+        sharedThreads.synchronizeJsReads.push(() => {
+          jsCachedContents = uiContents;
+        });
+      }
+      return shared.current;
+    },
+    runOnUI:
+      (worklet: (...args: unknown[]) => unknown) =>
+      (...args: unknown[]) => {
+        const executeWorklet = () => {
+          const previousThread = sharedThreads.onUiThread;
+          sharedThreads.onUiThread = true;
+          try {
+            worklet(...args);
+          } finally {
+            sharedThreads.onUiThread = previousThread;
+          }
+        };
+        if (sharedThreads.asynchronous) sharedThreads.uiJobs.push(executeWorklet);
+        else executeWorklet();
+      },
   };
 });
 vi.mock('react-native-gesture-handler', () => ({
@@ -86,9 +138,20 @@ vi.mock('../use-zoom-pan-gesture', () => ({
 }));
 vi.mock('../../BoardImageNative', () => ({
   // Paint synchronously, like an image whose photo and overlay are already cached.
-  BoardImageNative: (props: { frames: string; style: ViewStyle; renderWidth: number; overlayTestID?: string }) => {
+  BoardImageNative: (props: {
+    frames: string;
+    style: ViewStyle;
+    renderWidth: number;
+    overlayTestID?: string;
+    onArtReadinessChange?: (readiness: BoardArtReadiness) => void;
+  }) => {
     recorded.boardProps(props);
     const { frames, style, renderWidth, overlayTestID } = props;
+    useLayoutEffect(() => {
+      if (recorded.synchronousArtReadiness !== undefined) {
+        props.onArtReadinessChange?.(recorded.synchronousArtReadiness);
+      }
+    }, [frames, props.onArtReadinessChange]);
     return createElement('div', {
       'data-testid': `board-${frames}`,
       'data-width': style?.width,
@@ -168,6 +231,22 @@ function expectDimensions(element: HTMLElement, width: number, height: number) {
   expect(element.dataset.height).toBe(String(height));
 }
 
+/** One UI turn: JS setters wait for this turn, while worklets read live state. */
+function flushUiThread() {
+  act(() => {
+    while (sharedThreads.uiJobs.length > 0) sharedThreads.uiJobs.shift()?.();
+    for (const synchronizeJsRead of sharedThreads.synchronizeJsReads) synchronizeJsRead();
+  });
+}
+
+function readinessCallbackFor(frames: string): (readiness: BoardArtReadiness) => void {
+  const boardProps = recorded.boardProps.mock.calls.findLast(([boardProps]) => boardProps.frames === frames)?.[0] as
+    | { onArtReadinessChange?: (readiness: BoardArtReadiness) => void }
+    | undefined;
+  if (!boardProps?.onArtReadinessChange) throw new Error(`Missing artwork readiness callback for ${frames}`);
+  return boardProps.onArtReadinessChange;
+}
+
 beforeEach(() => {
   recorded.onLayout = undefined;
   _resetPlayBoardPrewarmForTests();
@@ -175,9 +254,201 @@ beforeEach(() => {
   recorded.swipeOptions.mockClear();
   recorded.zoomOptions.mockClear();
   recorded.boardProps.mockClear();
+  recorded.synchronousArtReadiness = undefined;
+  sharedThreads.asynchronous = false;
+  sharedThreads.onUiThread = false;
+  sharedThreads.uiJobs.length = 0;
+  sharedThreads.synchronizeJsReads.length = 0;
   vi.stubEnv('EXPO_PUBLIC_SCREENSHOT_MODE', '0');
 });
 afterEach(() => vi.unstubAllEnvs());
+
+it('keeps readiness on retained pages and prunes removed slots without accepting their late callbacks', async () => {
+  const props = { ...baseProps, containerSize: { width: 350, height: 500 }, prevFrames: 'previous' };
+  const { rerender, unmount } = render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  const callbackFor = (frames: string) => {
+    const props = recorded.boardProps.mock.calls
+      .map(([props]) => props)
+      .findLast((props) => props.frames === frames) as {
+      onArtReadinessChange: (readiness: BoardArtReadiness) => void;
+    };
+    return props.onArtReadinessChange;
+  };
+  const removed = callbackFor('previous');
+  act(() => {
+    removed('ready');
+    callbackFor('current')('ready');
+    callbackFor('next')('ready');
+  });
+  expect(pageArt.value).toEqual({ '-1': 'ready', 0: 'ready', 1: 'ready' });
+  rerender(
+    createElement(SwipeBoardCarousel, {
+      ...props,
+      centerPage: 1,
+      prevFrames: 'current',
+      currentFrames: 'next',
+      nextFrames: 'new-next',
+    }),
+  );
+  expect(pageArt.value).toEqual({ 0: 'ready', 1: 'ready' });
+  act(() => removed('ready'));
+  expect(pageArt.value).toEqual({ 0: 'ready', 1: 'ready' });
+  const retained = callbackFor('next');
+  unmount();
+  act(() => retained('ready'));
+  expect(pageArt.value).toEqual({});
+});
+
+it('merges different slots atomically in one UI-thread turn despite cached JS reads', async () => {
+  sharedThreads.asynchronous = true;
+  const props = { ...baseProps, containerSize: { width: 350, height: 500 }, prevFrames: 'previous' };
+  render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  pageArt.value = { 0: 'loading', 1: 'loading' };
+  flushUiThread();
+
+  act(() => {
+    readinessCallbackFor('current')('ready');
+    readinessCallbackFor('next')('ready');
+  });
+  // JS has not observed either scheduled update yet. Both callbacks saw the
+  // same map, so JS-side read/modify/write would lose page 0's ready signal.
+  expect(pageArt.value).toEqual({ 0: 'loading', 1: 'loading' });
+  flushUiThread();
+
+  expect(pageArt.value).toEqual({ 0: 'ready', 1: 'ready' });
+});
+
+it('keeps the newest slot transition when cached JS readiness already looks ready', async () => {
+  sharedThreads.asynchronous = true;
+  const props = { ...baseProps, containerSize: { width: 350, height: 500 }, prevFrames: 'previous' };
+  render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  pageArt.value = { 0: 'ready', 1: 'ready' };
+  flushUiThread();
+
+  act(() => {
+    readinessCallbackFor('current')('loading');
+    readinessCallbackFor('current')('ready');
+  });
+  // A JS-side equality guard would discard the final ready event because the
+  // cached read has not observed the preceding loading event yet.
+  flushUiThread();
+
+  expect(pageArt.value).toEqual({ 0: 'ready', 1: 'ready' });
+});
+
+it('prunes removed slots atomically with retained updates in one UI-thread turn', async () => {
+  sharedThreads.asynchronous = true;
+  const props = { ...baseProps, containerSize: { width: 350, height: 500 }, prevFrames: 'previous' };
+  const { rerender } = render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  pageArt.value = { '-1': 'ready', 0: 'loading', 1: 'ready' };
+  flushUiThread();
+
+  rerender(
+    createElement(SwipeBoardCarousel, {
+      ...props,
+      centerPage: 1,
+      prevFrames: 'current',
+      currentFrames: 'next',
+      nextFrames: 'new-next',
+    }),
+  );
+  // The removed page's prune is queued first. A retained page then reports
+  // ready before JS sees that prune; it must not resurrect the removed page.
+  act(() => readinessCallbackFor('current')('ready'));
+  flushUiThread();
+
+  expect(pageArt.value).toEqual({ 0: 'ready', 1: 'ready' });
+});
+
+it('preserves cached readiness when the previous climb refreshes during a forward step', async () => {
+  recorded.synchronousArtReadiness = 'ready';
+  const props = {
+    ...baseProps,
+    containerSize: { width: 350, height: 500 },
+    currentFrames: 'a',
+    nextFrames: 'b',
+  };
+  const { rerender, getByTestId } = render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const previousBoard = getByTestId('board-a');
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  expect(pageArt.value[0]).toBe('ready');
+
+  rerender(
+    createElement(SwipeBoardCarousel, {
+      ...props,
+      centerPage: 1,
+      prevFrames: 'refreshed-a',
+      currentFrames: 'b',
+      nextFrames: 'c',
+    }),
+  );
+
+  // The same retained page now renders cached refreshed holds. Its descendant
+  // reports readiness during commit, before its parent's layout effects run.
+  expect(getByTestId('board-refreshed-a')).toBe(previousBoard);
+  expect(pageArt.value[0]).toBe('ready');
+  expect(pageArt.value[1]).toBe('ready');
+  expect(pageArt.value[2]).toBe('ready');
+});
+
+it('preserves cached readiness when an empty previous slot gains a climb', async () => {
+  recorded.synchronousArtReadiness = 'ready';
+  const props = { ...baseProps, containerSize: { width: 350, height: 500 } };
+  const { rerender } = render(createElement(SwipeBoardCarousel, props));
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+  expect(pageArt.value[-1]).toBe('ready');
+
+  rerender(createElement(SwipeBoardCarousel, { ...props, prevFrames: 'new-previous' }));
+
+  expect(pageArt.value[-1]).toBe('ready');
+});
+
+it('keeps cached artwork ready after StrictMode replays slot layout effects', async () => {
+  recorded.synchronousArtReadiness = 'ready';
+  const props = {
+    ...baseProps,
+    containerSize: { width: 350, height: 500 },
+    prevFrames: 'previous',
+  };
+  const { unmount } = render(createElement(SwipeBoardCarousel, props), { wrapper: StrictMode });
+  await nextFrame();
+  const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+    pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+  };
+
+  // Child layout effects replay before the parent reclaims page ownership.
+  // Their cached display result still has to enable both swipe directions.
+  expect(pageArt.value).toEqual({ '-1': 'ready', 0: 'ready', 1: 'ready' });
+
+  const removedBoard = recorded.boardProps.mock.calls.at(-1)![0] as {
+    onArtReadinessChange: (readiness: BoardArtReadiness) => void;
+  };
+  unmount();
+  act(() => removedBoard.onArtReadinessChange('ready'));
+  expect(pageArt.value).toEqual({});
+});
 
 describe.each(['0', '1'])('SwipeBoardCarousel layout (screenshot mode %s)', (screenshotMode) => {
   it('exposes the painted-overlay descendant only in screenshot mode and preserves the normal board group', () => {
@@ -185,12 +456,17 @@ describe.each(['0', '1'])('SwipeBoardCarousel layout (screenshot mode %s)', (scr
     const { getByTestId, queryByTestId } = render(createElement(SwipeBoardCarousel, baseProps));
     measure(350, 500);
     const board = getByTestId('board-current');
+    const { pageArt } = recorded.swipeOptions.mock.calls.at(-1)![0] as {
+      pageArt?: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
+    };
     if (screenshotMode === '1') {
+      expect(pageArt).toBeUndefined();
       expect(board.parentElement?.dataset.accessible).toBe('false');
       expect(board.parentElement?.dataset.importantForAccessibility).toBe('no');
       expect(board.dataset.overlayTestid).toBe('play-drawer-board-overlay');
       expect(queryByTestId('play-drawer-board-accessibility')).toBeNull();
     } else {
+      expect(pageArt?.value).toEqual({});
       // One fixed stand-in is the accessibility element, the size of the board.
       // The boards themselves change places on a swipe and are hidden from it.
       const standIn = getByTestId('play-drawer-board-accessibility');

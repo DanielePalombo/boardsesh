@@ -38,6 +38,8 @@ import {
 } from './sheet-scroll-into-view';
 import { useDetentDragHaptic } from './sheet-detent-haptic';
 import { useIosSheetBackgroundStyle } from './use-ios-sheet-background-style';
+import { SheetKeyboardCalibration } from './sheet-keyboard-calibration';
+import { useSheetKeyboardCalibrationEnabled } from '../lib/sheet-keyboard-calibration-store';
 import {
   useManagedSheet,
   type DismissAndWaitResult,
@@ -186,6 +188,8 @@ export const Sheet = forwardRef<BottomSheetMethods, SheetProps>(function Sheet(
   const columnStyle = useSheetColumnStyle(snapPoints, { enableDynamicSizing, activeIndex, contentSizedOnAndroid });
   // Dev-only observers for #3922 — they feed a log line, never layout.
   const { probeProps, sentinelProps, onColumnLayout } = useSheetDetentProbe(columnStyle, 'Sheet');
+  // QA-only keyboard calibration readout (#5964), off unless its flag is on.
+  const calibrationEnabled = useSheetKeyboardCalibrationEnabled();
 
   // The keyboard-detent snap on field focus is not a drag: no haptic for it.
   const { programmaticSnapRef, snapWithoutHaptic } = useProgrammaticSnap(managed.handle.snapToIndex);
@@ -234,6 +238,7 @@ export const Sheet = forwardRef<BottomSheetMethods, SheetProps>(function Sheet(
     bottomInset,
     columnRef,
     onColumnLayout: measureColumnForKeyboard,
+    onHostLayout,
     measureAfterDetentChange,
   } = useSheetKeyboardInset({
     enabled: hasChrome && (isOpen || visible === true),
@@ -342,15 +347,22 @@ export const Sheet = forwardRef<BottomSheetMethods, SheetProps>(function Sheet(
           branches — the "single flex child" rule below still holds. */}
       {sentinelProps ? <View {...sentinelProps} /> : null}
       {probeProps ? <View {...probeProps} /> : null}
+      {Platform.OS === 'ios' && hasChrome ? (
+        <View
+          testID="sheet-keyboard-host"
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+          onLayout={onHostLayout}
+        />
+      ) : null}
       {hasChrome ? (
         // The single flex child of the native sheet: bound to the detent height on
         // iOS (see useSheetColumnStyle) so the pinned footer can't fall off-screen
         // (#3330); flex:1 on Android's detent path; a `maxHeight` ceiling on its
         // content-fitting path (#4720). Padded by the keyboard overlap on both
-        // platforms: neither native sheet window resizes for the keyboard. Not a
-        // KeyboardAvoidingView: RN 0.86 measures its overlap from a
-        // parent-relative frame, which inside the sheet under-pads by the sheet's
-        // distance from the top of the screen (see sheet-keyboard-inset.ts).
+        // platforms. On iOS the absolute-fill sibling above measures the host's
+        // keyboard-safe height; padding removes the column's overflow past it.
+        // See sheet-keyboard-inset.ts.
         <View
           testID="sheet-chrome-column"
           style={keyboardOverlap > 0 ? [columnStyle, { paddingBottom: keyboardOverlap }] : columnStyle}
@@ -364,6 +376,16 @@ export const Sheet = forwardRef<BottomSheetMethods, SheetProps>(function Sheet(
       ) : (
         body
       )}
+      {/* After the column so it draws on top. All absolutely positioned and
+          touch-transparent, so the column stays the single in-flow child. */}
+      {calibrationEnabled && hasChrome ? (
+        <SheetKeyboardCalibration
+          label="Sheet"
+          columnRef={columnRef}
+          keyboardOverlap={keyboardOverlap}
+          bottomInset={bottomInset}
+        />
+      ) : null}
     </BottomSheet>
   );
 });

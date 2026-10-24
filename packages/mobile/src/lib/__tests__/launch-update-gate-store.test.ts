@@ -186,10 +186,18 @@ import {
   startLaunchUpdateGate,
   subscribeLaunchUpdateGate,
 } from '../launch-update-gate-store';
+import { beginDatabaseInitAttempt, resetDatabaseInitActivityForTests } from '../../db/init-activity';
+import {
+  getJsRestartCount,
+  isLaunchReloadPossible,
+  isLaunchReloadRequested,
+  resetLaunchReloadWindowForTests,
+} from '../launch-reload-window';
 
 const PRODUCTION = { development: false };
 const MARKER_KEY = 'ota_first_launch_update_runtime_v1';
 const RELOAD_TARGET_KEY = 'ota_launch_update_last_reload_target_v1';
+const OUTLIVED_GRACE_KEY = 'ota_launch_update_reload_outlived_grace_v1';
 
 const CHECKING: NativeContext = {
   isStartupProcedureRunning: true,
@@ -250,6 +258,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   resetOtaOperationOwnerForTests();
   resetLaunchUpdateGateForTests();
+  resetDatabaseInitActivityForTests();
+  resetLaunchReloadWindowForTests();
   calls.log = [];
   updates.latestContext = DOWNLOADING;
   updates.listeners.clear();
@@ -802,6 +812,179 @@ describe('state changes the listener never hears', () => {
     await advance(0);
 
     expect(updates.reloadAsync).toHaveBeenCalledOnce();
+  });
+});
+
+// #6689. The schema migrations run as write transactions, and on Android a
+// reload does not close the old runtime's connections: a reload landing inside
+// one would leave the write lock held until the process dies, and the next
+// runtime could never migrate. The gate holds its reload while a setup attempt
+// runs, and nothing that writes may start while a reload is still possible.
+describe('waiting for the database', () => {
+  it('does not reload while a database setup attempt is running, then reloads once it ends', async () => {
+    updates.latestContext = PENDING;
+    const endAttempt = beginDatabaseInitAttempt();
+    await startGate();
+    await advance(3_000);
+
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(launchUpdateEvents()).toHaveLength(0);
+
+    endAttempt();
+    await advance(0);
+
+    expect(updates.reloadAsync).toHaveBeenCalledOnce();
+    expect(launchUpdateEvents()[0]).toMatchObject({ outcome: 'updated' });
+  });
+
+  it('releases without reloading when the setup attempt outlasts the cap', async () => {
+    updates.latestContext = PENDING;
+    const endAttempt = beginDatabaseInitAttempt();
+    await startGate();
+
+    await advance(15_000);
+
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(launchUpdateEvents()).toEqual([
+      expect.objectContaining({ outcome: 'timed_out', phase_at_release: 'download' }),
+    ]);
+
+    endAttempt();
+    await advance(0);
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+  });
+
+  it('keeps the reload window open while the gate can reload, and closes it when the gate resolves', async () => {
+    updates.latestContext = DOWNLOADING;
+    await startGate();
+    expect(isLaunchReloadPossible()).toBe(true);
+
+    emit({ ...IDLE });
+    await advance(0);
+
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(isLaunchReloadPossible()).toBe(false);
+  });
+
+  it('keeps the window open through a reload it has asked for', async () => {
+    updates.latestContext = PENDING;
+    await startGate();
+
+    expect(updates.reloadAsync).toHaveBeenCalledOnce();
+    expect(isLaunchReloadPossible()).toBe(true);
+  });
+
+  // REVIEW-A (#6710 review). The superseded restart: the init chain ends one
+  // attempt and begins the next in the same tick. The end wakes the gate, which
+  // decides to reload; a reload must not then land inside the next attempt.
+  it('does not reload into a setup attempt that began in the same tick the last one ended', async () => {
+    updates.latestContext = PENDING;
+    const endFirst = beginDatabaseInitAttempt();
+    await startGate();
+
+    endFirst();
+    const endSecond = beginDatabaseInitAttempt();
+    await advance(2_000);
+
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(errors.reportHandledError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'A database setup attempt was running at restart.' }),
+      { tags: { source: 'ota', op: 'launch-update-reload' } },
+    );
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(isLaunchReloadRequested()).toBe(false);
+    endSecond();
+  });
+
+  // REVIEW-B (#6710 review). A retry that starts while the reload is flushing its
+  // event: the decision saw nothing running, but the reload itself must not.
+  it('does not reload into a setup attempt that began while the reload was flushing', async () => {
+    analytics.flush.mockReset().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 650);
+        }),
+    );
+    updates.latestContext = PENDING;
+    await startGate();
+    expect(isLaunchReloadRequested()).toBe(true);
+
+    await advance(500);
+    const endRetry = beginDatabaseInitAttempt();
+    await advance(1_000);
+
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    endRetry();
+  });
+
+  it('asks for the reload the moment it decides, before the flush', async () => {
+    analytics.flush.mockReset().mockReturnValue(new Promise<void>(() => {}));
+    updates.latestContext = PENDING;
+    await startGate();
+
+    expect(updates.reloadAsync).not.toHaveBeenCalled();
+    expect(isLaunchReloadRequested()).toBe(true);
+  });
+
+  it('withdraws the request at once when the reload is rejected', async () => {
+    updates.reloadAsync.mockReset().mockRejectedValue(new Error('no reference to the JS runtime'));
+    updates.latestContext = PENDING;
+    await startGate();
+    await advance(0);
+
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(isLaunchReloadRequested()).toBe(false);
+    expect(isLaunchReloadPossible()).toBe(false);
+  });
+
+  // The grace path opens the app with the reload still outstanding. On Android a
+  // queued relaunch can land after it, so writers wait a further bounded margin.
+  it('keeps writers waiting for 10 s after a reload outlives the grace, and says so next launch', async () => {
+    updates.latestContext = PENDING;
+    await startGate();
+
+    await advance(5_000);
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(isLaunchReloadRequested()).toBe(true);
+    expect(isLaunchReloadPossible()).toBe(true);
+    expect(preferences.stored.get(OUTLIVED_GRACE_KEY)).toBe(true);
+
+    await advance(9_999);
+    expect(isLaunchReloadRequested()).toBe(true);
+    await advance(1);
+    expect(isLaunchReloadRequested()).toBe(false);
+    expect(isLaunchReloadPossible()).toBe(false);
+
+    // The next cold start reports it once, then forgets it.
+    resetLaunchUpdateGateForTests();
+    updates.latestContext = { ...IDLE, restartCount: 0 };
+    preferences.stored.set(MARKER_KEY, 'fingerprint-new');
+    analytics.track.mockClear();
+    await startGate();
+    await advance(0);
+    expect(launchUpdateEvents()).toEqual([
+      expect.objectContaining({ outcome: 'nothing_newer', previous_reload_outlived_grace: true }),
+    ]);
+    expect(preferences.stored.has(OUTLIVED_GRACE_KEY)).toBe(false);
+  });
+
+  it('reports a launch after an ordinary one as not having outlived a grace', async () => {
+    updates.latestContext = IDLE;
+    await startGate();
+    await advance(0);
+
+    expect(launchUpdateEvents()).toEqual([expect.objectContaining({ previous_reload_outlived_grace: false })]);
+  });
+
+  it('never opens the window for a launch it does not cover, and records the restart count', () => {
+    updates.latestContext = { ...PENDING, restartCount: 1 };
+    startLaunchUpdateGate(PRODUCTION);
+
+    expect(getLaunchUpdateGateFlags().resolved).toBe(true);
+    expect(isLaunchReloadPossible()).toBe(false);
+    expect(getJsRestartCount()).toBe(1);
   });
 });
 

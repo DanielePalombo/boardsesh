@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -8,7 +8,13 @@ import {
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
-import Animated, { useAnimatedStyle, type AnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import Animated, {
+  runOnUI,
+  useAnimatedStyle,
+  useSharedValue,
+  type AnimatedStyle,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { Gesture, GestureDetector, type GestureType } from 'react-native-gesture-handler';
 import type { BoardName } from '@boardsesh/shared-schema';
 import { useBoardAccessibilitySummary } from '../../hooks/use-board-accessibility-summary';
@@ -29,7 +35,11 @@ import {
   rememberPlayOverlayWidth,
 } from '../../lib/board-render/play-board-prewarm';
 
-import type { ReadyBoardArtIdentity, ReadyBoardArtSnapshot } from '../../lib/board-render/ready-board-art';
+import type {
+  BoardArtReadiness,
+  ReadyBoardArtIdentity,
+  ReadyBoardArtSnapshot,
+} from '../../lib/board-render/ready-board-art';
 
 type BoardRenderData = {
   boardWidth: number;
@@ -116,6 +126,7 @@ type CarouselBoardSlotProps = {
   frameOverride: string | null;
   anchorPage: SharedValue<number>;
   translateX: SharedValue<number>;
+  pageArt: SharedValue<Readonly<Record<number, BoardArtReadiness>>>;
   /** How far the incoming board travels to reach the middle: the contained board width. */
   slideWidth: number;
   boardBox: ViewStyle;
@@ -148,6 +159,7 @@ const CarouselBoardSlot = React.memo(function CarouselBoardSlot({
   frameOverride,
   anchorPage,
   translateX,
+  pageArt,
   slideWidth,
   boardBox,
   readyBoardArt,
@@ -162,6 +174,44 @@ const CarouselBoardSlot = React.memo(function CarouselBoardSlot({
   overlayRenderWidth,
   zoomStyle,
 }: CarouselBoardSlotProps) {
+  const mountedRef = useRef(true);
+  const lastArtReadinessRef = useRef<BoardArtReadiness | undefined>(undefined);
+  const handleArtReadinessChange = useCallback(
+    (readiness: BoardArtReadiness) => {
+      lastArtReadinessRef.current = readiness;
+      if (!mountedRef.current) return;
+      // JS shared-value getters can lag queued writes from another slot. Merge
+      // on the UI thread so one image cannot overwrite its neighbour's readiness.
+      runOnUI((nextReadiness: BoardArtReadiness) => {
+        'worklet';
+        if (pageArt.value[page] === nextReadiness) return;
+        pageArt.value = { ...pageArt.value, [page]: nextReadiness };
+      })(readiness);
+    },
+    [page, pageArt],
+  );
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    // Effect replay can report from the child before this setup runs, while
+    // ownership is still suspended by the previous cleanup.
+    if (lastArtReadinessRef.current !== undefined) handleArtReadinessChange(lastArtReadinessRef.current);
+    return () => {
+      mountedRef.current = false;
+      runOnUI(() => {
+        'worklet';
+        const remainingPages = { ...pageArt.value };
+        delete remainingPages[page];
+        pageArt.value = remainingPages;
+      })();
+    };
+  }, [handleArtReadinessChange, page, pageArt]);
+  useLayoutEffect(() => {
+    // A climb on another board deliberately has no peek; navigation swaps the
+    // board on commit. There is no pending image for this slot to wait for.
+    // Keep this separate from mount ownership: descendant image layout effects
+    // report before this slot's setup when a retained page changes frames.
+    if (!frames) handleArtReadinessChange('ready');
+  }, [frames, handleArtReadinessChange]);
   const slotStyle = useAnimatedStyle(() => {
     const { visible, offset } = pageOffset(page, anchorPage.value, translateX.value, slideWidth);
     // Opacity and transform only, and never zIndex. Two pages that are both
@@ -186,6 +236,7 @@ const CarouselBoardSlot = React.memo(function CarouselBoardSlot({
             accessible={false}
             readyBoardArt={readyBoardArt}
             onReadyArtDisplayed={onReadyArtDisplayed}
+            onArtReadinessChange={handleArtReadinessChange}
             frames={frameOverride ?? frames}
             boardName={boardName}
             layoutId={layoutId}
@@ -209,6 +260,7 @@ const CarouselBoardSlot = React.memo(function CarouselBoardSlot({
             // colour on purpose: the drawer behind is a blur material, and no
             // solid block matches it, so the wait shows the drawer itself.
             revealWithOverlay="first-paint"
+            retainDisplayedOverlay
             // A neighbour has nothing to fade from: it is out of sight until a
             // swipe brings it in, and holds fading up on a board that is already
             // sliding is the flicker this carousel exists to avoid.
@@ -253,6 +305,8 @@ export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
   dismissRef,
 }: SwipeBoardCarouselProps) {
   const { width: screenWidth } = useWindowDimensions();
+  const isScreenshotMode = process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1';
+  const pageArt = useSharedValue<Readonly<Record<number, BoardArtReadiness>>>({});
   const { t } = useTranslation('climbs');
   const accessibilitySummary = useBoardAccessibilitySummary(boardName, currentFrameOverride ?? currentFrames);
   const handleAccessibilityAction = useCallback(
@@ -349,6 +403,9 @@ export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
     screenWidth,
     enabled: gesturesEnabled,
     isZoomedSV,
+    // The static capture board cannot share readiness owned by retained slots.
+    // Its capture markers still wait for actual image display.
+    pageArt: isScreenshotMode ? undefined : pageArt,
     scrollRef,
   });
 
@@ -386,7 +443,6 @@ export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
     () => (process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1' ? countLitHolds(currentFrames) : 0),
     [currentFrames],
   );
-  const isScreenshotMode = process.env.EXPO_PUBLIC_SCREENSHOT_MODE === '1';
   // Remembered so the climbs list can start the next climb's play-size render at
   // the tap, before this carousel has mounted and measured again.
   const measuredOverlayWidth = boardBox ? Math.round(boardBox.width * PixelRatio.get()) : null;
@@ -418,6 +474,7 @@ export const SwipeBoardCarousel = React.memo(function SwipeBoardCarousel({
       frameOverride={isCurrent ? (currentFrameOverride ?? null) : null}
       anchorPage={pager.anchorPage}
       translateX={pager.translateX}
+      pageArt={pageArt}
       slideWidth={boardWidthForSwipe}
       boardBox={imageBox}
       readyBoardArt={isCurrent ? readyBoardArt : undefined}

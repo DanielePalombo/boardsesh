@@ -63,6 +63,7 @@
 import type { OfflineDatabase, SqlExecutor } from '../database';
 import { isNetworkError } from '../mutation-queue/error-classification';
 import { classifySqliteLockError } from '../db/lock-errors';
+import { runPullWrite } from './pull-write';
 
 // --- sync_meta keys -----------------------------------------------------------
 //
@@ -555,7 +556,7 @@ export function shouldSkipPagedPull(input: {
  * bug — so its value is not carried into `structuralFailures`. A stranded scope
  * gets exactly one clean pass under the new taxonomy (bounded at 3 transport + 2
  * structural), which is what un-strands the mid-crawl population. The legacy rows
- * are never DELETED, but the first `writeBootstrapRetryState` after a migration
+ * are never DELETED, but the first `writeBootstrapRetryRows` after a migration
  * re-stamps `bootstrap-attempts:` down to the mirrored value — the clean pass has
  * to be visible to a rolled-back bundle too, or it would re-read the pre-migration
  * count and settle the scope again. `mirroredAttempts` records what we wrote, so a
@@ -698,21 +699,20 @@ export async function readBootstrapRetryState(
 }
 
 /**
- * Persist a retry state AND its legacy mirror. The mirror is what keeps an OTA
- * rollback honest, so it lives in exactly one function — there is no second
- * place that can forget it.
+ * Persist a retry state AND its legacy mirror, on the executor given. The mirror
+ * is what keeps an OTA rollback honest, so it lives in exactly one function —
+ * there is no second place that can forget it.
  *
- * The rows go down in ONE transaction when the handle offers one, because the
- * read path infers "an older bundle counted failures we never saw" from the
- * legacy counter sitting above `mirroredAttempts`. A torn write would forge that
- * evidence: a user retry lowers the counter from 2 to 0, and if only the JSON
- * row committed, the next read would fold the stale 2 back into
- * `structuralFailures` and settle the scope again — the confirmed retry
- * silently lost. A plain `SqlExecutor` (no transaction method) still works; it
- * just falls back to the two autocommit statements.
+ * Call it inside a write transaction (`runPullWrite`, issue #5851), never as
+ * autocommit statements: the read path infers "an older bundle counted failures
+ * we never saw" from the legacy counter sitting above `mirroredAttempts`. A torn
+ * write would forge that evidence: a user retry lowers the counter from 2 to 0,
+ * and if only the JSON row committed, the next read would fold the stale 2 back
+ * into `structuralFailures` and settle the scope again — the confirmed retry
+ * silently lost.
  */
-export async function writeBootstrapRetryState(
-  db: SqlExecutor | OfflineDatabase,
+export async function writeBootstrapRetryRows(
+  txn: SqlExecutor,
   scopeKey: string,
   state: BootstrapRetryState,
 ): Promise<BootstrapRetryState> {
@@ -726,30 +726,19 @@ export async function writeBootstrapRetryState(
     : Math.min(state.structuralFailures, MAX_BOOTSTRAP_ATTEMPTS - 1);
   const mirrored: BootstrapRetryState = { ...state, mirroredAttempts: legacyAttempts };
 
-  const writeRows = async (txn: SqlExecutor): Promise<void> => {
+  await txn.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [
+    `${BOOTSTRAP_RETRY_PREFIX}${scopeKey}`,
+    JSON.stringify(mirrored),
+  ]);
+  await txn.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [
+    `${BOOTSTRAP_ATTEMPTS_PREFIX}${scopeKey}`,
+    String(legacyAttempts),
+  ]);
+  if (mirrored.legacyHealSpent) {
     await txn.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [
-      `${BOOTSTRAP_RETRY_PREFIX}${scopeKey}`,
-      JSON.stringify(mirrored),
+      `${BOOTSTRAP_ATTEMPTS_HEALED_PREFIX}${scopeKey}`,
+      '1',
     ]);
-    await txn.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [
-      `${BOOTSTRAP_ATTEMPTS_PREFIX}${scopeKey}`,
-      String(legacyAttempts),
-    ]);
-    if (mirrored.legacyHealSpent) {
-      await txn.runAsync('INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, ?)', [
-        `${BOOTSTRAP_ATTEMPTS_HEALED_PREFIX}${scopeKey}`,
-        '1',
-      ]);
-    }
-  };
-
-  // Never called from inside another transaction — every call site settles a
-  // bootstrap decision between phases, not during the snapshot import — so the
-  // exclusive lock here can't nest.
-  if ('withExclusiveTransactionAsync' in db) {
-    await db.withExclusiveTransactionAsync(writeRows);
-  } else {
-    await writeRows(db);
   }
   return mirrored;
 }
@@ -785,10 +774,20 @@ export async function restoreBootstrapRetryBudget(
   db: SqlExecutor | OfflineDatabase,
   scopeKey: string,
 ): Promise<BootstrapRetryState> {
-  const { state } = await readBootstrapRetryState(db, scopeKey, { now: 0, random: () => 0 }, false);
-  const written = await writeBootstrapRetryState(db, scopeKey, clearRetryStateForUserRequest(state));
-  await clearBootstrapPagedFallback(db, scopeKey);
-  return written;
+  // Read, rewrite and clear under ONE write lock: the state is read-modify-write,
+  // and a read on the main connection can be a snapshot older than a cycle's
+  // settle that committed since. Foreground-sized — the climber has just
+  // confirmed the download and the kick waits on this.
+  const restore = async (txn: SqlExecutor): Promise<BootstrapRetryState> => {
+    const { state } = await readBootstrapRetryState(txn, scopeKey, { now: 0, random: () => 0 }, false);
+    const written = await writeBootstrapRetryRows(txn, scopeKey, clearRetryStateForUserRequest(state));
+    await clearBootstrapPagedFallback(txn, scopeKey);
+    return written;
+  };
+  if ('withExclusiveTransactionAsync' in db) {
+    return runPullWrite(db, restore, { site: 'bootstrap-retry-restore', sizing: 'foreground' });
+  }
+  return restore(db);
 }
 
 /** Cheap page-boundary check; a retry never needs to reset or remove downloaded rows. */

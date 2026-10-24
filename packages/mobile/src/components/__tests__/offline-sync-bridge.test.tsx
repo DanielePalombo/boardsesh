@@ -132,6 +132,12 @@ const recoverAndReportOutboxOnceMock = vi.hoisted(() => vi.fn(async (..._args: u
 vi.mock('../../offline/outbox-telemetry', () => ({
   recoverAndReportOutboxOnce: recoverAndReportOutboxOnceMock,
 }));
+// Another launch-time writer (it clears the markers it reports). Stubbed so the
+// launch-gate case can see when it runs.
+const sweepDelistedDownloadTerminalsMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
+vi.mock('../../offline/abandoned-download-terminals', () => ({
+  sweepDelistedDownloadTerminals: sweepDelistedDownloadTerminalsMock,
+}));
 
 // Stub the settings barrel so the static import graph never pulls
 // react-native-mmkv (its react-native Flow entry breaks Rolldown's scan).
@@ -150,7 +156,32 @@ vi.mock('../../lib/env', () => ({
   isSnapshotBaseUrlConfigured: () => snapshotBaseUrlConfigured.value,
 }));
 
-const fakeDb = { tag: 'db' };
+// Records every SQLite call the bridge makes on its database, so a writer that
+// nobody stubbed is seen instead of throwing silently inside the bridge's own
+// try/catch (#6689).
+const sqliteCalls: string[] = [];
+const SQLITE_METHODS = new Set([
+  'withExclusiveTransactionAsync',
+  'runAsync',
+  'execAsync',
+  'getFirstAsync',
+  'getAllAsync',
+  'prepareAsync',
+]);
+const fakeDb: { tag: string } = new Proxy(
+  { tag: 'db' },
+  {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && SQLITE_METHODS.has(property)) {
+        return async () => {
+          sqliteCalls.push(property);
+          return property === 'getAllAsync' ? [] : null;
+        };
+      }
+      return Reflect.get(target, property, receiver) as unknown;
+    },
+  },
+);
 let providedDatabase = fakeDb;
 vi.mock('expo-sqlite', () => ({
   useSQLiteContext: () => providedDatabase,
@@ -192,15 +223,23 @@ import { FeatureFlagsProvider, type FeatureFlags } from '../../providers/feature
 import { isOfflineEngineEnabled, __resetOfflineEngineForTests } from '../../lib/offline-engine';
 import { setSchemaReady, __resetSchemaReadyForTests } from '../../db/schema-ready';
 import { invalidatePrivacySnapshots } from '../../lib/privacy/privacy-cache';
+import { LaunchReadyProvider } from '../../providers/launch-ready-context';
+import { resetLaunchReloadWindowForTests, setLaunchReloadRequested } from '../../lib/launch-reload-window';
+
+// What `useLaunchReady()` answers: auth, fonts and the launch update gate have all
+// resolved. Mutable so the launch-gate case can hold it false (#6689).
+let launchReady = true;
 
 function Harness({ flags, queryClient }: { flags: FeatureFlags; queryClient: QueryClient }) {
   return (
-    <QueryClientProvider client={queryClient}>
-      <FeatureFlagsProvider flags={flags}>
-        <OfflineEngineFlagSync />
-        <OfflineSyncBridge />
-      </FeatureFlagsProvider>
-    </QueryClientProvider>
+    <LaunchReadyProvider ready={launchReady}>
+      <QueryClientProvider client={queryClient}>
+        <FeatureFlagsProvider flags={flags}>
+          <OfflineEngineFlagSync />
+          <OfflineSyncBridge />
+        </FeatureFlagsProvider>
+      </QueryClientProvider>
+    </LaunchReadyProvider>
   );
 }
 
@@ -265,6 +304,9 @@ beforeEach(() => {
   startSyncSchedulerMock.mockReturnValue(startSyncSchedulerStop);
   getPendingCountMock.mockResolvedValue(0);
   isAuthenticated = true;
+  launchReady = true;
+  sqliteCalls.length = 0;
+  resetLaunchReloadWindowForTests();
   providedDatabase = fakeDb;
   storedUserId = 'user-1';
   assertLocalUserDataOwnerMock.mockClear();
@@ -497,6 +539,59 @@ describe('OfflineSyncBridge — baked-on native engine', () => {
     render(<Harness flags={FLAG_ON_WITH_SNAPSHOT} queryClient={makeQueryClient()} />);
     await waitFor(() => expect(startSyncSchedulerMock).toHaveBeenCalledTimes(1));
     expect(getStartSyncSchedulerSnapshotSource()).toBeUndefined();
+  });
+});
+
+// #6689. Until the launch update gate resolves it may reload this runtime, and
+// on Android a reload does not close the old runtime's SQLite connections. A
+// write transaction open at that moment keeps the write lock until the process
+// dies, so every tick and sync write after it fails for the whole session. No
+// writer may start before the launch has settled.
+describe('OfflineSyncBridge — waits for the launch to settle', () => {
+  it('starts no SQLite writer while a launch reload is still possible, then starts each once', async () => {
+    launchReady = false;
+    const queryClient = makeQueryClient();
+    const view = render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    await act(async () => {});
+
+    expect(startSyncSchedulerMock).not.toHaveBeenCalled();
+    expect(recoverAndReportOutboxOnceMock).not.toHaveBeenCalled();
+    expect(sweepDelistedDownloadTerminalsMock).not.toHaveBeenCalled();
+    expect(assertLocalUserDataOwnerMock).not.toHaveBeenCalled();
+    expect(loadFollowedAuthorsMock).not.toHaveBeenCalled();
+    expect(sqliteCalls).toEqual([]);
+    // Not a writer: the backgrounding guard still starts at once.
+    expect(startBackgroundTrackingMock).toHaveBeenCalledOnce();
+
+    launchReady = true;
+    view.rerender(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+
+    await waitFor(() => expect(startSyncSchedulerMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(loadFollowedAuthorsMock).toHaveBeenCalledOnce());
+    expect(recoverAndReportOutboxOnceMock).toHaveBeenCalledOnce();
+    expect(sweepDelistedDownloadTerminalsMock).toHaveBeenCalledOnce();
+    expect(assertLocalUserDataOwnerMock).toHaveBeenCalledOnce();
+  });
+
+  // The gate gives a reload 5 s, then opens the app with it still outstanding; on
+  // Android it can land later. Writers wait out the gate's extra margin too.
+  it('keeps every writer waiting while a launch reload is still outstanding', async () => {
+    setLaunchReloadRequested(true);
+    const queryClient = makeQueryClient();
+    render(<Harness flags={FLAG_ON} queryClient={queryClient} />);
+    await act(async () => {});
+
+    expect(startSyncSchedulerMock).not.toHaveBeenCalled();
+    expect(recoverAndReportOutboxOnceMock).not.toHaveBeenCalled();
+    expect(sweepDelistedDownloadTerminalsMock).not.toHaveBeenCalled();
+    expect(assertLocalUserDataOwnerMock).not.toHaveBeenCalled();
+    expect(sqliteCalls).toEqual([]);
+
+    await act(async () => {
+      setLaunchReloadRequested(false);
+    });
+    await waitFor(() => expect(startSyncSchedulerMock).toHaveBeenCalledOnce());
+    expect(recoverAndReportOutboxOnceMock).toHaveBeenCalledOnce();
   });
 });
 

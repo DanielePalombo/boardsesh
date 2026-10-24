@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { createElement, type ReactNode } from 'react';
+import { Activity, createElement, useLayoutEffect, type ReactNode } from 'react';
 import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const native = vi.hoisted(() => ({
-  events: [] as Array<{ uri: string; load?: () => void; display?: () => void }>,
+  events: [] as Array<{ uri: string; load?: () => void; display?: () => void; transition?: number }>,
   hidden: false,
 }));
 vi.mock('react-native', () => ({
@@ -14,8 +14,18 @@ vi.mock('react-native', () => ({
     createElement('div', { 'data-testid': testID }, children),
 }));
 vi.mock('expo-image', () => ({
-  Image: ({ source, onLoad, onDisplay }: { source: { uri: string }; onLoad?: () => void; onDisplay?: () => void }) => {
-    native.events.push({ uri: source.uri, load: onLoad, display: onDisplay });
+  Image: ({
+    source,
+    onLoad,
+    onDisplay,
+    transition,
+  }: {
+    source: { uri: string };
+    onLoad?: () => void;
+    onDisplay?: () => void;
+    transition?: number;
+  }) => {
+    native.events.push({ uri: source.uri, load: onLoad, display: onDisplay, transition });
     return createElement('img', { src: source.uri });
   },
 }));
@@ -31,6 +41,198 @@ describe('native artwork display handoff', () => {
   beforeEach(() => {
     native.events.length = 0;
     native.hidden = false;
+  });
+  it('requires native display of both backgrounds and holds before declaring a cold neighbour ready', () => {
+    const readiness = vi.fn();
+    const props = {
+      overlayUri: 'file:///ready-holds.png',
+      overlayLoadKey: 'ready:0',
+      backgroundPaths: ['/ready-board.webp'],
+      onArtReadinessChange: readiness,
+    };
+    const { rerender, unmount } = render(createElement(LayeredClimbImage, props));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => {
+      latest('file:///ready-board.webp').load?.();
+      latest(props.overlayUri).load?.();
+      latest('file:///ready-board.webp').display?.();
+    });
+    expect(readiness).not.toHaveBeenCalledWith(true);
+    act(() => latest(props.overlayUri).display?.());
+    expect(readiness).toHaveBeenLastCalledWith(true);
+    const stale = latest(props.overlayUri);
+    rerender(createElement(LayeredClimbImage, { ...props, overlayLoadKey: 'ready:1' }));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => stale.display?.());
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => latest(props.overlayUri).display?.());
+    expect(readiness).toHaveBeenLastCalledWith(true);
+    native.hidden = true;
+    rerender(createElement(LayeredClimbImage, props));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    native.hidden = false;
+    rerender(createElement(LayeredClimbImage, props));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    unmount();
+    act(() => stale.display?.());
+    expect(readiness).toHaveBeenLastCalledWith(false);
+  });
+
+  it('still waits for native backgrounds when the holds are explicitly unavailable', () => {
+    const readiness = vi.fn();
+    render(
+      createElement(LayeredClimbImage, {
+        overlayUri: null,
+        overlayRequired: false,
+        backgroundPaths: ['/fallback-board.webp'],
+        onArtReadinessChange: readiness,
+      }),
+    );
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => latest('file:///fallback-board.webp').load?.());
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => latest('file:///fallback-board.webp').display?.());
+    expect(readiness).toHaveBeenLastCalledWith(true);
+  });
+
+  it('restores displayed readiness after layout effects replay around retained native images', () => {
+    const readiness = vi.fn();
+    const props = {
+      overlayUri: 'file:///retained-native-holds.png',
+      overlayLoadKey: 'retained:0',
+      backgroundPaths: ['/retained-native-board.webp'],
+      onArtReadinessChange: readiness,
+    };
+    const board = createElement(LayeredClimbImage, props);
+    const { container, rerender } = render(createElement(Activity, { mode: 'visible', children: board }));
+    act(() => {
+      latest('file:///retained-native-board.webp').display?.();
+      latest(props.overlayUri).display?.();
+    });
+    expect(readiness).toHaveBeenLastCalledWith(true);
+    const originalImages = Array.from(container.querySelectorAll('img'));
+
+    // Activity disconnects effects while retaining the native image instances,
+    // reproducing the ownership replay without inventing another display event.
+    rerender(createElement(Activity, { mode: 'hidden', children: board }));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    rerender(createElement(Activity, { mode: 'visible', children: board }));
+
+    const revealedImages = Array.from(container.querySelectorAll('img'));
+    expect(revealedImages).toHaveLength(originalImages.length);
+    for (const [imageIndex, originalImage] of originalImages.entries()) {
+      expect(revealedImages[imageIndex]).toBe(originalImage);
+    }
+    expect(readiness).toHaveBeenLastCalledWith(true);
+  });
+
+  it.each([true, false])('refuses an unresolved background layer when overlayRequired is %s', (overlayRequired) => {
+    const readiness = vi.fn();
+    const props = {
+      overlayUri: overlayRequired ? 'file:///incomplete-holds.png' : null,
+      overlayLoadKey: overlayRequired ? 'incomplete:0' : null,
+      overlayRequired,
+      backgroundPaths: ['/available-board.webp'],
+      missingBackgroundCount: 1,
+      onArtReadinessChange: readiness,
+    };
+    const { rerender } = render(createElement(LayeredClimbImage, props));
+    act(() => {
+      latest('file:///available-board.webp').display?.();
+      if (props.overlayUri) latest(props.overlayUri).display?.();
+    });
+    expect(readiness).not.toHaveBeenCalledWith(true);
+
+    // The resolved layer list was already displayed; clearing the missing-layer
+    // barrier must publish readiness without requiring duplicate native events.
+    rerender(createElement(LayeredClimbImage, { ...props, missingBackgroundCount: 0 }));
+    expect(readiness).toHaveBeenLastCalledWith(true);
+  });
+
+  it.each([true, false])('waits for an actual background when overlayRequired is %s', (overlayRequired) => {
+    const readiness = vi.fn();
+    const props = {
+      overlayUri: overlayRequired ? 'file:///backgroundless-holds.png' : null,
+      overlayLoadKey: overlayRequired ? 'backgroundless:0' : null,
+      overlayRequired,
+      backgroundPaths: [] as string[],
+      onArtReadinessChange: readiness,
+    };
+    const { rerender } = render(createElement(LayeredClimbImage, props));
+    act(() => {
+      if (props.overlayUri) latest(props.overlayUri).display?.();
+    });
+    expect(readiness).not.toHaveBeenCalledWith(true);
+
+    rerender(createElement(LayeredClimbImage, { ...props, backgroundPaths: ['/resolved-board.webp'] }));
+    expect(readiness).toHaveBeenLastCalledWith(false);
+    act(() => latest('file:///resolved-board.webp').display?.());
+    expect(readiness).toHaveBeenLastCalledWith(true);
+  });
+
+  it('waits for the first-paint reveal commit after native display', () => {
+    const readiness = vi.fn();
+    render(
+      createElement(LayeredClimbImage, {
+        overlayUri: 'file:///concealed-holds.png',
+        overlayLoadKey: 'concealed:0',
+        backgroundPaths: ['/concealed-board.webp'],
+        revealWithOverlay: 'first-paint',
+        onArtReadinessChange: readiness,
+      }),
+    );
+    act(() => {
+      latest('file:///concealed-board.webp').display?.();
+      latest('file:///concealed-holds.png').display?.();
+    });
+    expect(readiness).not.toHaveBeenCalledWith(true);
+    act(() => latest('file:///concealed-holds.png').load?.());
+    expect(readiness).toHaveBeenLastCalledWith(true);
+  });
+
+  it('retains only this climb’s displayed holds while new-size artwork renders and decodes', () => {
+    const props = {
+      overlayUri: 'file:///old-width.png',
+      overlayLoadKey: 'width:0',
+      backgroundPaths: ['/board.webp'],
+      retainDisplayedOverlayFor: 'board-and-climb-a',
+    };
+    const { container, rerender } = render(createElement(LayeredClimbImage, props));
+    act(() => latest(props.overlayUri).display?.());
+    rerender(createElement(LayeredClimbImage, { ...props, overlayUri: null }));
+    expect(container.querySelector('img[src="file:///old-width.png"]')).not.toBeNull();
+    const replacement = { ...props, overlayUri: 'file:///new-width.png', overlayLoadKey: 'width:1' };
+    rerender(createElement(LayeredClimbImage, replacement));
+    expect(latest(replacement.overlayUri).transition).toBe(0);
+    act(() => latest(replacement.overlayUri).load?.());
+    expect(container.querySelector('img[src="file:///old-width.png"]')).not.toBeNull();
+    act(() => latest(replacement.overlayUri).display?.());
+    expect(container.querySelector('img[src="file:///old-width.png"]')).toBeNull();
+    rerender(
+      createElement(LayeredClimbImage, {
+        ...replacement,
+        overlayUri: null,
+        retainDisplayedOverlayFor: 'board-and-climb-b',
+      }),
+    );
+    expect(container.querySelector('img[src="file:///new-width.png"]')).toBeNull();
+  });
+
+  it('preserves a cached display received before passive identity-reset effects', () => {
+    function CachedBoard({ uri }: { uri: string | null }) {
+      useLayoutEffect(() => {
+        if (uri) latest(uri).display?.();
+      }, [uri]);
+      return createElement(LayeredClimbImage, {
+        overlayUri: uri,
+        overlayLoadKey: uri,
+        backgroundPaths: ['/board.webp'],
+        retainDisplayedOverlayFor: 'same-climb',
+      });
+    }
+    const { container, rerender } = render(createElement(CachedBoard, { uri: 'file:///cached-width.png' }));
+    rerender(createElement(CachedBoard, { uri: null }));
+    expect(container.querySelector('img[src="file:///cached-width.png"]')).not.toBeNull();
   });
   it.each(['displayIdentity', 'paintedTestID', 'mirrored'] as const)(
     'accepts the real queued overlay display after only %s changes and reports the current capture',

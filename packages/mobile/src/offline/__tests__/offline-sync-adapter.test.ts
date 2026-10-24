@@ -84,6 +84,12 @@ const setBackgroundedCore = vi.fn();
 // end-of-cycle check). Empty unless a test says otherwise.
 const completedScopeKeys = new Set<string>();
 const isScopeDownloadCompleteCore = vi.fn(async (_db: unknown, scopeKey: string) => completedScopeKeys.has(scopeKey));
+// The background-write telemetry seam (#5851): the sink the adapter registers,
+// and the label the engine leaves on a lock error that escaped a cycle.
+const pullWriteTelemetry = vi.hoisted(() => ({
+  reporter: null as ((report: Record<string, unknown>) => void) | null,
+  unregister: vi.fn(),
+}));
 vi.mock('@boardsesh/offline-sync', () => ({
   drainMutationQueue: (...args: unknown[]) => drainMutationQueueCore(...args),
   startSyncScheduler: (...args: unknown[]) => startSyncSchedulerCore(...args),
@@ -91,6 +97,14 @@ vi.mock('@boardsesh/offline-sync', () => ({
   pullSync: (...args: unknown[]) => pullSyncCore(...args),
   setBackgrounded: (...args: unknown[]) => setBackgroundedCore(...args),
   isScopeDownloadComplete: (db: unknown, scopeKey: string) => isScopeDownloadCompleteCore(db, scopeKey),
+  setPullWriteSettledReporter: (reporter: (report: Record<string, unknown>) => void) => {
+    pullWriteTelemetry.reporter = reporter;
+    return pullWriteTelemetry.unregister;
+  },
+  getSqliteWriteSite: (error: unknown) =>
+    typeof error === 'object' && error !== null && 'sqliteWriteSite' in error
+      ? String((error as { sqliteWriteSite: unknown }).sqliteWriteSite)
+      : null,
 }));
 
 // The connectivity store (issue #4862). The adapter reads its snapshot for the
@@ -172,6 +186,7 @@ import {
   __resetCycleErrorDedupeForTests,
   __resetMeteredStateForTests,
 } from '../offline-sync-adapter';
+import { resetLaunchReloadWindowForTests, setJsRestartCount } from '../../lib/launch-reload-window';
 import type {
   OfflineDatabase,
   DrainOptions,
@@ -423,6 +438,52 @@ describe('startBackgroundTracking', () => {
 
     unsubscribe();
     expect(appStateRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a contended sync write as one PostHog event and unregisters on stop (#5851)', () => {
+    const stop = startBackgroundTracking();
+    expect(pullWriteTelemetry.reporter).toBeTypeOf('function');
+
+    pullWriteTelemetry.reporter?.({
+      site: 'scope-complete',
+      sizing: 'background',
+      attempts: 2,
+      outcome: 'refused',
+      elapsedMs: 5_310,
+    });
+
+    expect(trackMock).toHaveBeenCalledWith(SHARED_EVENTS.OfflineSyncWriteRetried, {
+      site: 'scope-complete',
+      sizing: 'background',
+      attempts: 2,
+      outcome: 'refused',
+      elapsedMs: 5_310,
+      jsRestartCount: null,
+    });
+    stop();
+    expect(pullWriteTelemetry.unregister).toHaveBeenCalledTimes(1);
+  });
+
+  // #6689: a sync write that never wins after a reload is the old runtime's orphan.
+  it('says how many times this runtime has been restarted on a contended sync write', () => {
+    setJsRestartCount(1);
+    try {
+      const stop = startBackgroundTracking();
+      pullWriteTelemetry.reporter?.({
+        site: 'deletions-coverage',
+        sizing: 'background',
+        attempts: 3,
+        outcome: 'exhausted',
+        elapsedMs: 15_520,
+      });
+      stop();
+      expect(trackMock).toHaveBeenCalledWith(
+        SHARED_EVENTS.OfflineSyncWriteRetried,
+        expect.objectContaining({ outcome: 'exhausted', jsRestartCount: 1 }),
+      );
+    } finally {
+      resetLaunchReloadWindowForTests();
+    }
   });
 });
 
@@ -1693,10 +1754,40 @@ describe('triggerSync / pullSync bindings', () => {
       status: null,
       errorKind: 'exception',
       offlineEngineEnabled: false,
+      jsRestartCount: null,
     });
     expect(reportHandledError).toHaveBeenCalledWith(cycleError, {
       tags: { source: 'offline-sync', kind: 'cycle', phase: 'deletions' },
       extra: { currentTable: null, documentsProcessed: 500 },
+    });
+  });
+
+  it('names the background write that lost the lock on both reports (#5851)', () => {
+    setSyncProgress({ phase: 'deletions', currentTable: null, documentsProcessed: 0 });
+    triggerSync(
+      db,
+      queryClient,
+      graphqlFetch,
+      () => [],
+      async () => {},
+    );
+
+    const options = triggerSyncCore.mock.calls[0][5] as SchedulerOptions;
+    const lockError = Object.assign(
+      new Error(
+        "Call to function 'NativeStatement.runAsync' has been rejected.\n→ Caused by: Error code 5: database is locked",
+      ),
+      { sqliteWriteSite: 'deletions-coverage' },
+    );
+    options.onCycleError?.(lockError);
+
+    expect(trackMock).toHaveBeenCalledWith(
+      SHARED_EVENTS.OfflineSyncCycleFailed,
+      expect.objectContaining({ phase: 'deletions', sqliteWriteSite: 'deletions-coverage' }),
+    );
+    expect(reportHandledError).toHaveBeenCalledWith(lockError, {
+      tags: { source: 'offline-sync', kind: 'cycle', phase: 'deletions', sqliteWriteSite: 'deletions-coverage' },
+      extra: { currentTable: null, documentsProcessed: 0 },
     });
   });
 

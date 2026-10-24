@@ -215,9 +215,11 @@ it can read on the UI thread.
   waited for it to swap the climb before taking another touch: on an iPhone 13 Pro every swipe
   forward began with the wrong holds on the incoming board, and swipes were ignored for 160 to 230 ms
   after each release. The page after the next exists only once the JS thread has rendered the
-  step before, so a second flick the same way that is let go inside those 30 to 66 ms springs back
-  (#6351). The board/carousel host stays mounted when a section header changes and the drawer
-  measures itself again (#6383), including the setter-notes layouts reported in #6373. See rule 9.
+  step before. A qualifying second release during that wait is retained on the UI thread until
+  its neighbour is mounted and its exact background and holds overlay have displayed (#6351).
+  A React commit, image `onLoad`, or first-paint timeout alone does not make a page ready to enter.
+  The board/carousel host stays mounted when a section header changes and the drawer measures
+  itself again (#6383), including the setter-notes layouts reported in #6373. See rule 9.
 - `packages/mobile/src/components/ClimbListRow.tsx` follows the same pattern: the swipe-commit
   haptic is gated by `useAnimatedReaction` on the `>= COMMIT_THRESHOLD` boolean edge (lines 39–43),
   so `runOnJS(hapticLight)` fires once per arm, not per frame.
@@ -521,6 +523,24 @@ reference numbers):
   for its page.
 - The JS thread takes the steps one per committed render (`requestStep`). Two can be waiting when
   it has been busy, and the queue's navigation reads state that only a render brings up to date.
+- A release blocked because React or the neighbour's artwork is behind retains one direction and
+  velocity. It starts its fling after the matching step renders and native display events confirm
+  the current artwork attempt, including all background layers. A new touch, cancellation,
+  navigation reset, backward queue boundary, zoom, disable, or carousel unmount discards that intent. The
+  current complete board stays centred until its neighbour is ready; no extra board slot is mounted.
+  A confirmed forward boundary opens the track-end card once. A loading neighbour never counts as
+  that boundary. An exhausted artwork attempt cancels the retained release immediately, even while
+  React is behind; a later repair cannot revive it. Unresolved or absent backgrounds are not ready.
+- Readiness belongs to a mounted page, including when its climb frames change. Only unmounting
+  removes the page's entry: a frames-dependent parent cleanup can otherwise discard the child's
+  synchronous image-readiness report and leave a previous page impossible to swipe back to.
+  Merge readiness updates and remove pages on the UI thread. A JS shared-value getter can still
+  see the map from before its queued writes: spreading that map can overwrite another slot's
+  `ready` signal or resurrect an unmounted page, permanently blocking a reverse swipe. Keep native
+  display ownership in refs so effect replay preserves an image's genuine display event.
+- The displayed holds for the same climb bridge a replacement caused by board-size refinement.
+  Keep them until the replacement overlay's native display event, with the replacement transition
+  disabled. Scope that bridge to the board and climb frames so another climb cannot inherit it.
 - Everything a step needs is the pager's, created in the drawer: the offset, the step a fling is
   carrying (`untoldStep`), the reaction that tells the JS thread, and the Next and Previous
   callbacks (`useSwipeNavigation`). The board/carousel host now stays mounted through geometry

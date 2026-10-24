@@ -108,3 +108,77 @@ update an already-installed binary. Validate the same reproduction with a newly
 compiled client, then ship the matching native build. JavaScript privacy recovery
 from #6286 remains useful for transient contention, but does not repair an old
 binary's abandoned native connection.
+
+## Android (#6689)
+
+Android 2.6.0 has the same failure, and the #6292 native fix covers iOS only.
+In the first 2.6.0 session after the store update, 10 Android users had every
+tick write and sync write fail for the whole session. The next process was
+clean. Every failed write waited out its full busy timeout, so a lock was really
+held. iOS 2.6.0 made about 1,650 launch-gate reloads in the same 10 days, with
+no failures.
+
+Two things in the installed Android expo-sqlite mean no connection is ever
+closed when a runtime is torn down:
+
+- `removeAllCachedDatabases()` returns the same `MutableList` it has just
+  cleared, so `OnDestroy` closes nothing.
+- The JS-release path, `sharedObjectDidRelease`, frees the C++ binding without
+  calling `sqlite3_close`.
+
+The native fix is #6707.
+
+Until that ships, the app keeps write transactions out of the window where the
+launch update gate can reload. Two states in `src/lib/launch-reload-window.ts`,
+written only by the gate, carry it:
+
+- **The gate is open**: an eligible run that has not resolved yet.
+- **A reload is requested**: set at the moment the gate decides to reload, before
+  it flushes its event. It is cleared when the reload is rejected. When the
+  gate's 5 s grace expires with the runtime still alive, the gate resolves and
+  the app opens, but the request stays for a further 10 s
+  (`LAUNCH_UPDATE_RELOAD_OUTSTANDING_MARGIN_MS`). On Android a relaunch can be
+  queued behind expo-updates' own work, so the grace is no proof the reload will
+  not land. The next gated launch reports a reload that outlived its grace as
+  `previous_reload_outlived_grace` on `OTA Launch Update`.
+
+What waits on those states:
+
+- Every writer the offline sync bridge starts waits for `useLaunchWritesReady()`:
+  the owner stamp, the outbox recovery, the delisted-download sweep and the sync
+  scheduler. That is `useLaunchReady()` plus no reload requested. The owned spray
+  wall pin waits the same way.
+- Writers outside React read `isLaunchReloadPossible()`, which is true while the
+  gate is open or a reload is requested. The followed-authors load serves its
+  stored snapshot instead of writing a new one while it is true.
+- The gate does not decide to reload while a database setup attempt is running
+  (`src/db/init-activity.ts`). The init chain starts no new attempt while a
+  reload is requested. The gate also re-checks for a running attempt right
+  before it calls `reloadAsync()`, and declines (`failed`) if one is running.
+  If an attempt outlasts the cap, the gate releases as `timed_out`, and the
+  update applies on the next cold start.
+- Ordinary local reads do not wait. The first screen renders from them.
+
+The cost is the same on both platforms. iOS cannot wedge (#6292), but one code
+path is simpler, and iOS waits about 1.5 s at p90 before its first pull.
+
+Known gaps, which only #6707 closes:
+
+- A store update's first launch runs the embedded JS of the new binary. This
+  protects that launch only from the binary whose embedded bundle includes it.
+- Reloads the climber starts after launch: changelog restart, OTA recovery,
+  channel switch, QA surf.
+- expo-updates' native error-recovery relaunch.
+- The drainer's `UPDATE … RETURNING`, whose window is one native step.
+- Similar climbs and the hold heatmap are reads, but they build the holds index
+  in write transactions (`ensureHoldIndex`). Today they sit behind held routes
+  or taps the placeholder blocks, so the risk is latent.
+- A forced sign-out after auth is ready (a confirmed identity change, or a 401)
+  runs `clearUserData`, which can land while the gate is still downloading.
+- `useKeepBoardsOffline` is mounted by the settings layout. A cold start deep
+  linked into settings can kick a download cycle under the placeholder.
+
+`Offline Local Write Attempt Failed`, `Offline Sync Write Retried` and
+`Offline Sync Cycle Failed` carry `jsRestartCount`. An `exhausted` lock with a
+count above zero that repeats all session is a transaction the previous runtime
+left open.

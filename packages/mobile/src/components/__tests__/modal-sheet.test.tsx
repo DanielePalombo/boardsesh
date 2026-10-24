@@ -3,6 +3,7 @@ vi.mock('../use-ios-sheet-background-style', () => ({ useIosSheetBackgroundStyle
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render } from '@testing-library/react';
 import { createElement, forwardRef, type ReactNode, type Ref } from 'react';
+import type { LayoutChangeEvent } from 'react-native';
 
 const captures = vi.hoisted(() => ({
   bottomSheetViewUsed: false,
@@ -12,9 +13,16 @@ const captures = vi.hoisted(() => ({
   scrollStyle: undefined as unknown,
   onChange: undefined as ((index: number) => void) | undefined,
   managedOptions: undefined as Record<string, unknown> | undefined,
+  columnStyle: undefined as unknown,
+  onHostLayout: undefined as ((event: LayoutChangeEvent) => void) | undefined,
 }));
 const haptics = vi.hoisted(() => ({ hapticSelection: vi.fn() }));
 const platform = vi.hoisted(() => ({ os: 'ios' }));
+type KeyboardListener = (event: {
+  endCoordinates?: { height: number; screenY: number; width: number };
+  duration?: number;
+}) => void;
+const keyboardListeners = vi.hoisted(() => new Map<string, KeyboardListener>());
 
 type ViewMockProps = { children?: ReactNode };
 
@@ -54,14 +62,43 @@ vi.mock('react-native', () => ({
     Version: '26.1',
     select: (options: { ios?: unknown }) => options.ios,
   },
-  View: ({ children }: ViewMockProps) => createElement('div', null, children),
-  // The keyboard stays down here; sheet.test.tsx and log-ascent-sheet.test.tsx drive it.
-  Keyboard: { addListener: () => ({ remove: () => {} }), isVisible: () => false, metrics: () => undefined },
+  View: ({
+    children,
+    style,
+    testID,
+    ref,
+    onLayout,
+  }: ViewMockProps & {
+    style?: unknown;
+    testID?: string;
+    ref?: { current: unknown };
+    onLayout?: (event: LayoutChangeEvent) => void;
+  }) => {
+    if (testID === 'sheet-keyboard-host') captures.onHostLayout = onLayout;
+    if (testID === 'sheet-chrome-column') {
+      captures.columnStyle = style;
+      if (ref)
+        ref.current = {
+          measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) =>
+            callback(0, 16, 390, Number(flattenStyle(style).height)),
+        };
+    }
+    return createElement('div', null, children);
+  },
+  Keyboard: {
+    addListener: (eventName: string, listener: KeyboardListener) => {
+      keyboardListeners.set(eventName, listener);
+      return { remove: () => keyboardListeners.delete(eventName) };
+    },
+    isVisible: () => false,
+    metrics: () => undefined,
+  },
   LayoutAnimation: { configureNext: () => {} },
   useWindowDimensions: () => ({ width: 390, height: 844 }),
   StyleSheet: {
     create: (styles: Record<string, unknown>) => styles,
     hairlineWidth: 1,
+    absoluteFill: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
     // Faithful flatten (arrays merge left-to-right, falsy entries skipped) — the
     // footerless body composes its bottom inset through withSheetBottomInset.
     flatten: function flatten(style: unknown): Record<string, unknown> | undefined {
@@ -116,9 +153,25 @@ vi.mock('../../providers/theme-provider', () => ({
   }),
 }));
 
+// The #5964 calibration readout, captured rather than rendered: its own suite
+// (sheet-keyboard-calibration.test.tsx) covers what it draws.
+const calibration = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
+vi.mock('../sheet-keyboard-calibration', () => ({
+  SheetKeyboardCalibration: (props: Record<string, unknown>) => {
+    calibration.props.push(props);
+    return null;
+  },
+}));
+
 import { ModalSheet } from '../ModalSheet';
+import {
+  publishSheetKeyboardCalibration,
+  resetSheetKeyboardCalibrationForTests,
+} from '../../lib/sheet-keyboard-calibration-store';
 
 beforeEach(() => {
+  calibration.props = [];
+  resetSheetKeyboardCalibrationForTests();
   captures.bottomSheetViewUsed = false;
   captures.scrollUsed = false;
   captures.snapPoints = undefined;
@@ -126,11 +179,53 @@ beforeEach(() => {
   captures.scrollStyle = undefined;
   captures.onChange = undefined;
   captures.managedOptions = undefined;
+  captures.columnStyle = undefined;
+  captures.onHostLayout = undefined;
+  keyboardListeners.clear();
   haptics.hapticSelection.mockClear();
   platform.os = 'ios';
 });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+  if (Array.isArray(style)) return Object.assign({}, ...style.map(flattenStyle));
+  return style && typeof style === 'object' ? (style as Record<string, unknown>) : {};
+}
+
+function reportHostHeight(height: number): void {
+  expect(captures.onHostLayout).toBeTypeOf('function');
+  act(() =>
+    captures.onHostLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } } as LayoutChangeEvent),
+  );
+}
+
 describe('ModalSheet', () => {
+  it('lifts its chrome when the native host shrinks after the keyboard event', () => {
+    render(
+      <ModalSheet visible scrollable footer={<div>save</div>}>
+        <div>body</div>
+      </ModalSheet>,
+    );
+    act(() => captures.onChange?.(1));
+    expect(flattenStyle(captures.columnStyle).height).toBe(718);
+    reportHostHeight(734);
+    act(() =>
+      keyboardListeners.get('keyboardWillChangeFrame')?.({
+        endCoordinates: { height: 336, screenY: 508, width: 390 },
+        duration: 250,
+      }),
+    );
+    expect(flattenStyle(captures.columnStyle).paddingBottom).toBeUndefined();
+    reportHostHeight(398);
+    expect(flattenStyle(captures.columnStyle).paddingBottom).toBe(336);
+    act(() =>
+      keyboardListeners.get('keyboardWillHide')?.({
+        endCoordinates: { height: 336, screenY: 844, width: 390 },
+        duration: 250,
+      }),
+    );
+    expect(flattenStyle(captures.columnStyle).paddingBottom).toBeUndefined();
+  });
+
   it('keeps footerless native dynamic content in the existing plain View layout', () => {
     render(
       <ModalSheet enableDynamicSizing>
@@ -192,6 +287,43 @@ describe('ModalSheet', () => {
       );
       expect(captures.snapPoints).toEqual(['65%', '92%']);
       expect(captures.enableDynamicSizing).toBe(false);
+    });
+  });
+
+  // #5964: the QA calibration readout exists only while its flag is on, and only
+  // on a sheet with a column to measure.
+  describe('keyboard calibration readout', () => {
+    it('is not mounted while the flag is off', () => {
+      render(
+        <ModalSheet visible scrollable footer={<div>save</div>}>
+          <div>body</div>
+        </ModalSheet>,
+      );
+      expect(calibration.props).toHaveLength(0);
+    });
+
+    it('measures the chrome column once the flag is on, with the padding it applies today', () => {
+      publishSheetKeyboardCalibration({ enabled: true, windowTopInset: 62 });
+      render(
+        <ModalSheet visible scrollable footer={<div>save</div>}>
+          <div>body</div>
+        </ModalSheet>,
+      );
+      const latest = calibration.props.at(-1);
+      expect(latest?.label).toBe('ModalSheet');
+      expect(latest?.columnRef).toHaveProperty('current');
+      expect(latest?.keyboardOverlap).toBe(0);
+      expect(latest?.bottomInset).toBe(34);
+    });
+
+    it('is not mounted on a sheet without a header or footer', () => {
+      publishSheetKeyboardCalibration({ enabled: true, windowTopInset: 62 });
+      render(
+        <ModalSheet visible>
+          <div>body</div>
+        </ModalSheet>,
+      );
+      expect(calibration.props).toHaveLength(0);
     });
   });
 
