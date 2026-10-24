@@ -1209,7 +1209,11 @@ export const SHARED_EVENTS = {
   // should size the ladder, which today rests on an estimate. This is the ONLY
   // signal for a lost favorite/follow; those paths have no Sentry report at all.
   // Props: { tableName, operation, attempts, outcome: 'recovered' | 'exhausted',
-  // isLockError, wasOffline, elapsedMs }.
+  // isLockError, wasOffline, elapsedMs, jsRestartCount }. `jsRestartCount` is how
+  // many times expo-updates restarted the JS runtime in this process (null where
+  // unknown). On Android a reload leaves an open write transaction holding the
+  // lock until the process dies (#6689), so `exhausted` with a count above zero,
+  // repeating all session, is that orphan.
   OfflineLocalWriteAttemptFailed: 'Offline Local Write Attempt Failed',
   // Offline sync — the FIRST attempt of one of the sync engine's own SQLite
   // writes lost the write lock, so its retry ladder ran (#5851). Covers every
@@ -1226,7 +1230,8 @@ export const SHARED_EVENTS = {
   // Sync Cycle Failed` carries the same `sqliteWriteSite`). Every attempt waits
   // the lock out with the busy handler honoured, so `elapsedMs` is how long
   // another connection really held it. Props: { site, sizing: 'background' |
-  // 'foreground', attempts, outcome, elapsedMs }.
+  // 'foreground', attempts, outcome, elapsedMs, jsRestartCount }. `jsRestartCount`
+  // is the same field as on `Offline Local Write Attempt Failed` (#6689).
   OfflineSyncWriteRetried: 'Offline Sync Write Retried',
   // Offline sync — the local SQLite write behind an offline tick threw. `outcome`
   // says what happened next: 'queued' means the outbox-only fallback still saved
@@ -1259,7 +1264,8 @@ export const SHARED_EVENTS = {
   // failures. Raw exception text stays in Sentry rather than analytics; an
   // unchanged signature is emitted at most once per five minutes.
   // `sqliteWriteSite` (#5851) names the sync write that lost the SQLite lock when
-  // that is what failed the cycle, and is absent otherwise.
+  // that is what failed the cycle, and is absent otherwise. `jsRestartCount`
+  // (#6689) is the same field as on `Offline Local Write Attempt Failed`.
   // `errorKind` is 'aborted' | 'server_unavailable' | 'network' | 'server' |
   // 'exception' | 'non-error', in that precedence. 'server_unavailable' (#4862)
   // is a 502/503/504, or any failure raised while the connectivity store had

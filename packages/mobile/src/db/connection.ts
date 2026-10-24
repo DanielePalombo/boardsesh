@@ -35,6 +35,8 @@ import { SHARED_EVENTS } from '@boardsesh/analytics';
 import { reportError } from '../lib/error-reporting';
 import { track } from '../lib/analytics';
 import { setSchemaReady } from './schema-ready';
+import { beginDatabaseInitAttempt } from './init-activity';
+import { isLaunchReloadRequested, waitForLaunchReloadRequestToClear } from '../lib/launch-reload-window';
 import { SCHEMA_NEWER_REPORT_KIND, setSchemaDowngrade, type SchemaDowngrade } from './schema-downgrade';
 import { pinDatabase } from './connection-pin';
 import { registerDeadHandleRecovery, type DeadHandleOrigin } from './dead-handle';
@@ -534,11 +536,32 @@ function beginInitialization(db: SQLiteDatabase): Promise<void> {
     let supersededRestarts = 0;
 
     while (budgetSpent < MAX_INIT_ATTEMPTS) {
+      // The launch update gate has decided to reload. Starting an attempt now would
+      // run migrations under a reload that is already on its way, and on Android
+      // that leaves their write lock held for the rest of the process (#6689). The
+      // runtime is going away; if it survives, the gate clears the request and the
+      // chain carries on where it was.
+      if (isLaunchReloadRequested()) {
+        await waitForLaunchReloadRequestToClear();
+        if (epoch !== chainEpoch) {
+          releaseLaunch();
+          return;
+        }
+      }
       // The live connection, which a remount may have swapped since the chain
       // started — see `latestDatabase`. Falls back to the captured one only if the
       // handle was cleared outright.
       const target = latestDatabase ?? db;
-      const outcome = await attemptInitialization(target);
+      // While an attempt runs, the launch update gate holds its reload: the
+      // migrations inside are write transactions, and on Android a reload leaves
+      // an open one holding the write lock for the rest of the process (#6689).
+      const endAttempt = beginDatabaseInitAttempt();
+      let outcome: InitOutcome;
+      try {
+        outcome = await attemptInitialization(target);
+      } finally {
+        endAttempt();
+      }
       if (epoch !== chainEpoch) {
         releaseLaunch();
         return;
