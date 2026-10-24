@@ -1070,6 +1070,49 @@ backlog and last-success timestamps come from durable records. No credentials,
 provider responses or payloads enter logs or metrics. Alert on backlog age and
 freshness as well as failures; independent monitors must detect primary outages.
 
+### A worker that loses its job queue (#6683)
+
+Docker only restarts a container whose process exits. An unhealthy container
+keeps running, so a 503 on `/health` changes nothing by itself. In October 2026
+two workers sat unhealthy for three days. Each had one job-queue query that
+never got an answer, and that query held the worker's only pg-boss connection.
+Two guards now cover this:
+
+- **Deadlines on the worker's pg-boss pool.** The server cancels and rolls back
+  any statement still running after 25 s (`WORKER_JOB_QUEUE_STATEMENT_TIMEOUT_MS`).
+  The client drops a query with no answer after 30 s, along with its socket
+  (`WORKER_JOB_QUEUE_QUERY_TIMEOUT_MS`). Either way the worker logs one
+  `[worker] poll failed`, and the next poll opens a fresh connection. See
+  [`docs/db-connectivity.md`](db-connectivity.md), "Worker job-queue read
+  deadline", for why the server's deadline is the shorter one, what a lost fetch
+  costs, and why the backend's pool has neither.
+- **A stall watchdog** (`packages/backend/src/workers/stall-watchdog.ts`). It
+  exits the process with code 1 in either of two cases:
+  - **No round trip has succeeded for 10 minutes.** Every 30 s, on its own timer,
+    it runs one round trip on the pg-boss pool. It then logs
+    `[worker] job queue unreachable, exiting so Docker restarts the worker`. A
+    long job does not count as silence, because a running job never uses that
+    pool: each run's I/O goes through the Drizzle adapter, on the application
+    pool.
+  - **The poll loop is still inside one job 10 minutes after that job's lease
+    (`startedOn + expireInSeconds`) ended.** It then logs
+    `[worker] job still running past its lease, exiting so Docker restarts the
+    worker`. This is the same wedge on the application pool: a query or call
+    inside the job that never returns. By then the attempt is already lost.
+    pg-boss expires it, and the attempt fence refuses its writes, so exiting
+    loses nothing.
+
+  The watchdog keeps time on a monotonic clock, so a wall-clock step changes
+  nothing. A check that arrives more than a minute late means the process was
+  suspended or blocked. Silence then starts counting again from that check.
+
+Restart cadence during a real outage comes from Docker's restart manager. The
+delay starts at 100 ms and doubles on each restart up to 1 minute. It drops back
+to 100 ms whenever the last run lasted 10 s or more. A worker that exits after
+10 minutes therefore restarts at once. If the database is still down, startup
+fails, and the loop is paced either by Docker's doubling (a quick failure) or by
+the 30 s connect timeout (a hung connect). It never spins.
+
 ## Deployment and evidence gates
 
 The `Background Worker Image` workflow builds the dependency-scoped
