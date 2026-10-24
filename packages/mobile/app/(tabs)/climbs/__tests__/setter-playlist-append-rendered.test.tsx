@@ -195,6 +195,7 @@ vi.mock('../../../../src/providers/theme-provider', () => ({
 }));
 
 vi.mock('../../../../src/providers/drawer-host-provider', () => ({
+  usePreviewedClimbUuid: () => null,
   useDrawerHost: () => ({
     boardConfig: null,
     openClimbActions: ctrl.openClimbActions,
@@ -204,6 +205,7 @@ vi.mock('../../../../src/providers/drawer-host-provider', () => ({
 vi.mock('../../../../src/providers/queue-provider', () => ({
   useQueueActions: () => ({ addToQueue: ctrl.addToQueue }),
   useIsSharedSession: () => ctrl.shared,
+  useActiveClimbUuid: () => null,
 }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'queued-climb-uuid' }));
 
@@ -462,6 +464,12 @@ vi.mock('../../../../src/lib/graphql/hooks/use-infinite-search-climbs', () => ({
 }));
 vi.mock('../../../../src/lib/graphql/hooks', () => ({ useSearchClimbsCount: () => ({ data: ctrl.empty ? 0 : 1 }) }));
 vi.mock('../../../../src/lib/graphql/offline-request', () => ({ offlineAwareRequest: vi.fn() }));
+// The player's list count reads the query cache, and these screens render
+// without a QueryClientProvider. No test here reads the count.
+vi.mock('../../../../src/lib/graphql/hooks/search-climbs-count-query', () => {
+  const countNothing = async () => 0;
+  return { useFetchCachedSearchClimbsCount: () => countNothing };
+});
 import SetterPlaylist from '../setter/[username]';
 import { cleanup } from '@testing-library/react';
 afterEach(cleanup);
