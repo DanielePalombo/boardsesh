@@ -121,11 +121,13 @@ vi.mock('react-i18next', () => ({
 vi.mock('../../../providers/toast-provider', () => ({ useToast: () => ({ showToast }) }));
 vi.mock('../../../lib/error-reporting', () => ({ reportHandledError }));
 
-vi.mock('@tanstack/react-query', () => ({
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
   useQuery: () => ({ data: qstate.data, isLoading: qstate.loading }),
   useQueryClient: () => queryClientMock,
 }));
 
+vi.mock('../../../lib/graphql/offline-request', () => ({ offlineAwareRequest: vi.fn() }));
 vi.mock('@boardsesh/graphql/operations/playlists', () => ({ GET_PLAYLISTS_FOR_CLIMB: 'GET_PLAYLISTS_FOR_CLIMB' }));
 vi.mock('@boardsesh/climb-actions', () => ({ playlistMembershipStore: membershipStore }));
 // The store-seed hook — the picker uses it as an instant fallback for checkmarks.

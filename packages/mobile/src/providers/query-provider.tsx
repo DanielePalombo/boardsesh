@@ -1,10 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AppState, Platform } from 'react-native';
 import { QueryCache, QueryClient, QueryClientProvider, MutationCache, focusManager } from '@tanstack/react-query';
 import { reportHandledError } from '../lib/error-reporting';
 import { startConnectivityStore } from '../lib/connectivity/start-connectivity';
 import { shouldRetryQuery } from '../lib/graphql/query-retry';
+import { watchBoardImportCompletion } from '../lib/integrations/board-import-completion';
 import { climbProgressCacheScopeFor } from '../lib/climb-progress-cache-owner';
+import { bindOfflineUserReadRecovery } from '../lib/graphql/offline-user-read-recovery';
 // React Query keys `refetchOnReconnect` / `refetchOnWindowFocus` off a browser's
 // `navigator.onLine` and window-focus events, neither of which exists on React
 // Native — so without these bridges it treats the app as permanently online and
@@ -112,11 +114,14 @@ export function createQueryClient(): QueryClient {
     },
   });
   climbProgressCacheScopeFor(queryClient);
+  // The client lives as long as the app, so the unsubscribe is never needed here.
+  watchBoardImportCompletion(queryClient);
   return queryClient;
 }
 
 export function QueryProvider({ children }: { children: ReactNode }) {
   const [queryClient] = useState(createQueryClient);
+  useEffect(() => bindOfflineUserReadRecovery(queryClient), [queryClient]);
 
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }

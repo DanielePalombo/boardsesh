@@ -8,8 +8,15 @@ import { enqueueOn } from '../services/job-queue';
 import { executeBackgroundJob, handlerForRole, type BackgroundJobPayload } from './jobs';
 import { requireProviderSecrets, type WorkerConfig } from './config';
 import { familiesForRole } from './families';
+import { watchWorkerJobQueue } from './stall-watchdog';
 
-export async function startWorker(config: WorkerConfig) {
+export async function startWorker(
+  config: WorkerConfig,
+  hooks: {
+    /** The stall watchdog gave up on this worker (stall-watchdog.ts); the caller exits. */
+    onStalled: () => void;
+  },
+) {
   // Before any connection: a worker missing a provider secret never claims a
   // job, unless paused, when it starts anyway and reports it via /health.
   const providerSecretsReady = requireProviderSecrets(config.role, familiesForRole(config.role), config.paused);
@@ -30,6 +37,9 @@ export async function startWorker(config: WorkerConfig) {
   let monitoring: Promise<void> | undefined;
   let polling: Promise<void> | undefined;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopStallWatch: (() => void) | undefined;
+  // When the job being run loses its lease, on performance.now()'s clock (stall-watchdog.ts).
+  let jobLeaseEndsAt: number | undefined;
   const started = Date.now();
   const health = createServer((request, response) => {
     const healthy = ready && !stopping && Date.now() - lastContact < 60_000;
@@ -112,12 +122,15 @@ export async function startWorker(config: WorkerConfig) {
         for (const job of jobs) {
           if (stopping) break;
           active++;
+          // The same lease executeBackgroundJob aborts at: startedOn + expireInSeconds.
+          jobLeaseEndsAt = performance.now() + (job.startedOn.getTime() + job.expireInSeconds * 1000 - Date.now());
           try {
             const outcome = await executeBackgroundJob(database, boss, job, handler, shutdown.signal);
             if (outcome === 'succeeded') completed++;
             if (outcome === 'failed') failed++;
           } finally {
             active--;
+            jobLeaseEndsAt = undefined;
           }
         }
       } catch {
@@ -144,8 +157,18 @@ export async function startWorker(config: WorkerConfig) {
     };
     monitor = setTimeout(tick, 15_000);
     monitor.unref();
+    // Startup's probe just completed a round trip on this pool, which is where
+    // the watchdog starts counting (#6683).
+    stopStallWatch = watchWorkerJobQueue({
+      boss,
+      role: config.role,
+      isStopping: () => stopping,
+      jobLeaseEndsAt: () => jobLeaseEndsAt,
+      onStalled: hooks.onStalled,
+    });
     logger.info('[worker] started', { role: config.role, paused: config.paused });
   } catch (error) {
+    stopStallWatch?.();
     health.close();
     await boss.stop({ graceful: false, close: true });
     await closePool();
@@ -156,6 +179,7 @@ export async function startWorker(config: WorkerConfig) {
       if (stopping) return;
       stopping = true;
       ready = false;
+      stopStallWatch?.();
       clearTimeout(monitor);
       clearTimeout(pollTimer);
       // Abort fetches/batches first; handlers cannot commit after their fence is lost.

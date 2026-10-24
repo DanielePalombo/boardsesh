@@ -3,7 +3,7 @@
 // instance for the single climb it shows. These tests pin what they share: the
 // fetched-uuid marker, and a batch answering a later single-climb request.
 
-import type { ReactNode } from 'react';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClientProvider, QueryObserver } from '@tanstack/react-query';
@@ -82,6 +82,35 @@ const DRAWER_EMPTY_CLIMB = ['climb-empty'];
 const DRAWER_OTHER_CLIMB = ['climb-9'];
 
 describe('useLogbook (shared)', () => {
+  it('does not resurrect an offline batch removed before its passive merge', async () => {
+    let readCount = 0;
+    const executeHttp = vi.fn(async () => {
+      readCount += 1;
+      return { ticks: [{ ...serverTick('tick-climb-1', 'climb-1'), upvotes: readCount === 1 ? 0 : 8 }] };
+    }) as unknown as ExecuteHttp;
+    const { wrapper, queryClient } = createWrapper({ executeHttp });
+    let removed = false;
+    const list = renderHook(
+      () => {
+        const result = useLogbook('kilter', DRAWER_CLIMB);
+        const batch = queryClient.getQueryData(fetchLogbookQueryKey('kilter', DRAWER_CLIMB));
+        // Reconnect can remove the Infinity caches during this commit, before
+        // useLogbook's passive effect publishes the batch it rendered with.
+        useLayoutEffect(() => {
+          if (removed || !batch) return;
+          removed = true;
+          queryClient.removeQueries({ queryKey: ['logbook', 'kilter'] });
+        }, [batch]);
+        return result;
+      },
+      { wrapper },
+    );
+
+    await waitFor(() => expect(removed).toBe(true));
+    await waitFor(() => expect(list.result.current.logbook[0]?.upvotes).toBe(8));
+    expect(readCount).toBe(2);
+  });
+
   // #6023: GetTicks cannot select Tick.climbRevision while the screenshot
   // fixtures pin its text, so the platform's local copy supplies it.
   it('joins the platform’s local tick versions onto a fetched batch, in one read', async () => {
@@ -98,6 +127,27 @@ describe('useLogbook (shared)', () => {
     expect(byUuid.get('tick-climb-2')?.climb_revision).toBe(3);
     expect(byUuid.get('tick-climb-1')?.climb_revision).toBeUndefined();
   });
+
+  it.each([
+    { sourceRevision: 4, uuidRevision: null },
+    { sourceRevision: 4, uuidRevision: 1 },
+    { sourceRevision: null, uuidRevision: 4 },
+  ])(
+    'keeps explicit source revision $sourceRevision over UUID enrichment $uuidRevision',
+    async ({ sourceRevision, uuidRevision }) => {
+      const executeHttp = vi.fn(async () => ({
+        ticks: [{ ...serverTick('tick-climb-1', 'climb-1'), climbRevision: sourceRevision }],
+      })) as unknown as ExecuteHttp;
+      const readLocalTickRevisions = vi.fn(
+        async () => new Map<string, number | null>([['tick-climb-1', uuidRevision]]),
+      );
+      const { wrapper } = createWrapper({ executeHttp, readLocalTickRevisions });
+
+      const drawer = renderHook(() => useLogbook('kilter', DRAWER_CLIMB), { wrapper });
+      await waitFor(() => expect(drawer.result.current.fetchedUuids.has('climb-1')).toBe(true));
+      expect(drawer.result.current.logbook[0]).toHaveProperty('climb_revision', sourceRevision);
+    },
+  );
 
   // The second-device case: the GetTicks batch lands before the platform has
   // pulled the ticks, so the first join finds no local row. The pull then

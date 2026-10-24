@@ -10,7 +10,9 @@ import { LinkBoardAccountModal, errorMessageFor } from './LinkBoardAccountModal'
 import {
   AURORA_CREDENTIALS_QUERY_KEY,
   AURORA_UNSYNCED_QUERY_KEY,
-} from '../../lib/integrations/use-board-account-credentials';
+} from '../../lib/integrations/board-account-query-keys';
+import { invalidateOwnDataAfterImport } from '../../lib/integrations/board-import-completion';
+import { pendingSyncRefetchInterval } from '../../lib/integrations/use-board-account-credentials';
 import { getImportPickerTypes } from '../../lib/integrations/import-picker-types';
 import { circuitPlaylistSyncWarningKind } from '@boardsesh/shared-schema/sync-error-codes';
 import {
@@ -241,9 +243,6 @@ function getMoonBoardProgressLabel(t: TFunction<'settings'>, progress: MoonBoard
 
 const SYNCABLE_SYNC_STATUSES = new Set(['pending', 'active', 'error']);
 
-/** While a board sync is waiting, re-read the cards this often so "Syncing" clears on its own. */
-const PENDING_SYNC_REFRESH_MS = 20_000;
-
 function requestProviderSync(boardType: AuroraBoardName) {
   return getHttpClient().request<RequestProviderSyncMutationResponse, RequestProviderSyncMutationVariables>(
     REQUEST_PROVIDER_SYNC,
@@ -300,8 +299,7 @@ export function BoardAccountsSection() {
   const credentialsQuery = useQuery({
     queryKey: AURORA_CREDENTIALS_QUERY_KEY,
     queryFn: getAuroraCredentials,
-    refetchInterval: (query) =>
-      query.state.data?.credentials.some((credential) => credential.pendingRunId) ? PENDING_SYNC_REFRESH_MS : false,
+    refetchInterval: pendingSyncRefetchInterval,
   });
   const unsyncedQuery = useQuery({
     queryKey: AURORA_UNSYNCED_QUERY_KEY,
@@ -504,6 +502,7 @@ export function BoardAccountsSection() {
               event.results.partialError ? 'warning' : 'success',
             );
             void queryClient.invalidateQueries({ queryKey: AURORA_UNSYNCED_QUERY_KEY });
+            invalidateOwnDataAfterImport(queryClient);
             return;
           }
 
@@ -633,6 +632,7 @@ const MoonBoardAccountCard = memo(function MoonBoardAccountCard() {
   const { t } = useTranslation('settings');
   const { systemColors } = useTheme();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [importPreview, setImportPreview] = useState<MoonBoardExportPreview | null>(null);
   const [importData, setImportData] = useState<StrippedMoonBoardExportData | null>(null);
@@ -745,6 +745,7 @@ const MoonBoardAccountCard = memo(function MoonBoardAccountCard() {
                 : t('aurora.moonboard.csvImport.successCount', { count: totalMoonBoardImported(event.results) }),
               event.results.partialError ? 'warning' : 'success',
             );
+            invalidateOwnDataAfterImport(queryClient);
             return;
           }
 
@@ -762,7 +763,7 @@ const MoonBoardAccountCard = memo(function MoonBoardAccountCard() {
         setImportData(null);
       }
     })();
-  }, [importData, showToast, t]);
+  }, [importData, queryClient, showToast, t]);
 
   return (
     <View
