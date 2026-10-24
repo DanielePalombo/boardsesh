@@ -42,7 +42,11 @@ function parseArgs(argv: string[]): { format: 'md' | 'json'; minClimbs: number }
   let minClimbs = 1000;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--format') format = argv[index + 1] === 'json' ? 'json' : 'md';
-    if (argv[index] === '--min-climbs') minClimbs = Number(argv[index + 1]) || minClimbs;
+    if (argv[index] === '--min-climbs') {
+      const requested = Number(argv[index + 1]);
+      // 0 is a valid threshold; only a missing or non-numeric value keeps the default.
+      if (Number.isFinite(requested) && requested >= 0) minClimbs = requested;
+    }
   }
   return { format, minClimbs };
 }
