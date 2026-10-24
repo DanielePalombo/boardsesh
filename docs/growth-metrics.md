@@ -525,6 +525,150 @@ beside them. What the lines say at rollout time decides the next board —
 alongside `Board Demand Reported`, which is the same ledger from the other
 end: the demand that has not become a wall yet.
 
+## Community monthly recap
+
+The numbers behind the PostHog "Community: monthly recap" dashboard and the
+monthly r/kilterboard post: how many climbers lit climbs on real boards, the
+ten busiest public gyms and the ten climbers with the most sends, per UTC
+calendar month. PostHog has no Postgres connection, so the
+`community-monthly-stats` batch family (`docs/background-workers.md`) computes
+them from the app tables and sends them as personless events. Active users
+are not repeated here: read them from `Active Users Snapshot` (above).
+
+- **Filter:** `event IN ('Community Monthly Summary', 'Community Monthly Rank')`,
+  distinct id `system:community-monthly`, `$lib = posthog-node`,
+  `$process_person_profile = false`. Each event is dated noon UTC on the 1st of
+  the month it measures.
+- **Re-sent on purpose.** Every day at 07:30 UTC the family re-sends the
+  current and the previous month (`months: 2`); every Monday it re-sends the
+  current month and the twelve before it (`months: 13`), plus the month just
+  behind that window with every climber name removed (`retireMonths: 1`, see
+  "Names age out" below). The first Monday run is the 12-month backfill. The
+  current month fills in day by day (`complete` is false until it ends).
+- **A `complete` month can still change**, on every re-send for as long as it
+  is in the 13-month window. `climbed_at` is set by the climber's device, so a
+  tick can be logged or backdated into an earlier month; a deleted account,
+  board or gym drops out of every month it was in; and a privacy change moves
+  the climber list. A number posted for a month can therefore differ from what
+  the dashboard shows for it later. Quote the dashboard's number with the date
+  it was read.
+- **Dedupe by uuid, keep the newest.** Every re-send reuses the same uuid: a
+  v5 hash of `boardsesh:community-monthly:<month>:summary` or
+  `boardsesh:community-monthly:<month>:<list>:<rank>`. A query can still see
+  several copies of one uuid, so every tile keeps one row per uuid, the one
+  with the newest `created_at`, which is the latest measurement
+  (`ORDER BY created_at DESC LIMIT 1 BY uuid`). PostHog does not promise to
+  dedupe by uuid, so this was checked on 2026-10-24: two probe uuids
+  (`Recap Uuid Probe`, `system:recap-uuid-probe`, one dated this month and
+  one dated September) were each sent twice with different values, and each
+  read back as a single row, the newer one, within a minute. Re-check it if
+  names ever linger after a privacy change.
+- **No cohort, not zero.** A month in which nobody lit a climb sends no
+  summary, not a summary of zeros. It still sends its 20 rank rows, all
+  `empty: true`, so a month that had rows before and has lost every lit climb
+  since (every board behind them deleted) does not keep its old gym or climber
+  rows. Its last summary does stay: read a summary together with the month's
+  rank rows, and treat a month whose rank rows are all empty as having no
+  lighting.
+
+`Community Monthly Summary`, one per month:
+
+| Property | Definition |
+| --- | --- |
+| `month` | `YYYY-MM`, the UTC calendar month measured. |
+| `complete` | False for the month that has not ended yet; read it as partial. |
+| `climbersWhoLit` | Distinct climbers who lit a climb: `board_climb_events` with `source = 'boardsesh'` (a phone pushed it to the LEDs after about 60 s of presence), by `confirmed_at`. A lit climb whose climber deleted their account still counts in `climbsLit`, never here. |
+| `climbsLit` | Those lit climbs, on every board. |
+| `boardsLit` | Distinct boards they were lit on, every board (home walls and private boards too: it is a count). |
+| `gymsWithActivity` | Public, undeleted gyms with at least one lit climb on a public, listed, live gym board (`ENUMERABLE_GYM_BOARDS`) that is not a spray wall an admin hid or its owner deleted. |
+| `sendsLogged` | Native flash and send ticks (`origin = 'native'`), by `climbed_at`. Logbook imports never count, so an import does not inflate the month it ran in. A total: no privacy filter. |
+| `climbersWhoLogged` | Distinct climbers behind those ticks. |
+| `newAccounts` | Accounts created in the month (`users.created_at`), without the reserved system accounts. |
+
+`Community Monthly Rank`, exactly ten per list per month:
+
+| Property | Definition |
+| --- | --- |
+| `month`, `complete` | As on the summary. |
+| `list` | `gyms` or `climbers`. |
+| `rank` | 1 to 10. |
+| `empty` | True on a padding row: the list had fewer than ten entries. Every other property but these four is null on it. |
+| `gymName`, `gymSlug` | The gym's public name and slug (`boardsesh.com/gym/<slug>`; the slug can be null). |
+| `climbers` | Distinct climbers who lit a climb on the gym's public, listed, live boards (hidden or deleted spray walls left out). The rank orders by this, then `climbsLit`, then the older gym. |
+| `climbsLit`, `boards` | Lit climbs and distinct boards behind `climbers`. |
+| `climberName` | The climber's display name (trimmed), under the naming rule below; null otherwise. Never the account name. |
+| `named` | Whether `climberName` is set. |
+| `sends`, `flashes` | Native flash and send ticks a signed-out visitor may read (`tickPrivacyCondition` with no viewer), and the flashes among them. The rank orders by sends, then flashes, then `sendDays`, then a fixed order that is not sent. |
+| `sendDays` | Distinct UTC days with one of those sends. |
+
+**Always ten rows.** A list with fewer than ten entries is padded with
+`empty: true` rows, so when a list shrinks (a climber goes private, a gym is
+deleted) its old bottom rows are overwritten by the same uuids instead of
+lingering.
+
+**The naming rule** starts from the board leaderboard's for a signed-out
+visitor on a board the climber does not own (`boardLeaderboard`), and is
+stricter about the name itself:
+
+- Only sends a signed-out visitor may read count. A private account's sends
+  (except any it marked public itself), `only_me` and followers-only sends, and
+  sends on unlisted, draft or private spray-wall climbs drop out of the
+  ranking.
+- A ranked climber is named only when their account is public, they have
+  not chosen "Stay anonymous on boards I don't own" (a global ranking spans
+  boards they don't own, so that choice always applies), and they set a
+  display name that is not blank. Otherwise `climberName` is null and they
+  keep their rank and counts: show them as "Anonymous climber".
+- Only the display name a climber chose. The board leaderboard falls back to
+  the account name when there is none; the recap does not, on purpose: the
+  account name can be the local part of an email address or a legal name from
+  a Google or Apple sign-in.
+- Nothing else about a climber is sent: no id, avatar or profile link.
+
+A climber who goes private, turns on anonymity or deletes their account drops
+out of the current and previous month by the next morning, and out of every
+month in the 13-month window by the next Monday.
+
+**Names age out.** The Monday run also re-sends the 14th month back, the one
+that just left the window, under its same uuids with `climberName: null` and
+`named: false` on every climbers row. Its counts, ranks and gym rows are
+re-measured as usual. So a name lives in PostHog for at most 13 months plus
+one week, and every month that still holds names is re-sent at least weekly.
+Each month spends four or five Mondays in that 14th position, so one missed
+run does not leave its names behind. A month with no lighting there sends its
+20 empty rank rows like anywhere else.
+
+If the family is off (`BATCH_FAMILIES_DISABLED`, worker down) for more than
+four weeks, a month can pass that position without a run and keep its names.
+Once it runs again, enqueue one catch-up run that retires every month it
+missed, for example after eight weeks off:
+`operator.ts enqueue community-monthly-stats '{"months":13,"retireMonths":2}'`
+(`retireMonths` goes up to 12 and only with `months: 13`; see
+[analytics-consent.md](./analytics-consent.md#named-climbers-in-the-community-recap)).
+
+**What may be published.** Totals and per-gym counts may go in the post. A
+count of Boardsesh users split by board brand may not, so no tile breaks these
+numbers down by board type.
+
+**Dashboard and queries.** The tiles on
+[Community: monthly recap](https://us.posthog.com/project/412845/dashboard/2254130)
+are versioned in `scripts/posthog/community-queries.ts`: climbers and climbs
+per month, the top 10 gyms and climbers of the latest complete month with
+their movement since the month before, and a "Reddit post draft" tile that
+returns one markdown block to paste. A climber's movement column matches last
+month by display name (the events carry no id), so two climbers sharing a name
+can show a false move and a climber who renamed reads as new; anonymous
+climbers show no movement. The post's 30-day active line comes from
+`Active Users Snapshot` and is left out for any month ending before
+2026-11-07, the first day that number covers a full 30 days. Each query is
+built from three swappable sources; `community-fixtures.ts` runs the same text
+against literal rows, and `community-fixture-validation.json` records what
+PostHog returned for it (checked by `community-queries.test.ts`). After
+changing a query, print the fixtures with
+`vp exec node --import tsx scripts/posthog/export-community-dashboard.ts --fixtures`,
+run each through PostHog, and record the new rows and hashes; drop
+`--fixtures` to print the live queries for the tiles.
+
 ## Acquisition
 
 These are separate counts. None of them is a funnel of the same people.
@@ -1008,6 +1152,7 @@ finished the period shown as final. Mark the current, unfinished period.
 | #6342 backend deploy (fill in the date when it ships) | Consented capture is geolocated to the visitor again; country-based filters work from here |
 | #6574 OTA (fill in the date when it ships) | The Bluetooth quickstart lists boards with no serial. `Board Quickstart Scan Finished` gains `serialless_count` (boards heard with no serial, one per Bluetooth device: MoonBoards and Kilter-built boxes advertising a bare `Kilter Board`) and `moonboard_count` (the MoonBoard part of it). `found_count` stays serials-only, so its series continues across the change. Both new counts are devices, not boards: an Android controller that rotates its private address mid-scan can count twice. Earlier events have no `serialless_count`; a scan that heard nothing has all three at zero |
 | #6358 web deploy and OTA (fill in the date when it ships) | Analytics starts on by default outside the prompt regions (EU, EEA, UK, Switzerland, China, South Korea and the rest of `CONSENT_PROMPT_COUNTRIES`), so PostHog person and event counts from those other countries jump on this date. Do not compare those counts across it. Install attribution (`Install Attributed`, Apple Ads campaign fields, `install_*` person properties) keeps needing an explicit Allow, so its counts do not jump; the share of people who carry them falls instead |
+| community-monthly-stats first run (fill in the date when it ships) | `Community Monthly Summary` and `Community Monthly Rank` start. The first Monday run sends the 12 months before it as well, so those months appear on one day; read them by their own `month`, not by when they arrived |
 | 2026-10-19 (crew browse UI, #4281) | `Set Active Climb` gains `trigger = 'put_on_wall'` when a climber commits a pinned preview on purpose: the Put on the wall (or Set active) button, or the lightbulb relaying it. It is a real pick: filters on `trigger != 'climb_saved'` count it unchanged. Crew commits are the ones with `participantCount >= 2` |
 
 None of these repairs past data. Annotate them; do not backfill.

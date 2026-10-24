@@ -431,6 +431,40 @@ const SPRAY_WALL_ART_GRANTS: readonly WorkerTableGrant[] = [
 ];
 
 /**
+ * What `community-monthly-stats` reads on top of the rest of the batch list:
+ * the monthly community recap (lighting and sending totals, new accounts, the
+ * top public gyms and the top climbers). Read-only. Each entry adds only the
+ * columns the batch list does not already grant; a column-level GRANT adds to
+ * what the login holds, so a table may appear here and above.
+ */
+const COMMUNITY_MONTHLY_STATS_GRANTS: readonly WorkerTableGrant[] = [
+  // Only Boardsesh's own LED writes count as lighting; imported displays
+  // (`source <> 'boardsesh'`) are history, not activity.
+  { table: 'board_climb_events', privileges: ['SELECT'], columns: ['source'] },
+  // ENUMERABLE_GYM_BOARDS: a gym ranks only on its public, listed boards. The
+  // spray-wall half of the tick privacy rule reads the same flag.
+  { table: 'user_boards', privileges: ['SELECT'], columns: ['is_unlisted'] },
+  // The gym ranking's rows: identity for the join, the public name and slug
+  // the dashboard links, and the two flags that keep a private or deleted gym
+  // out. No owner, contact, address or coordinates.
+  { table: 'gyms', privileges: ['SELECT'], columns: ['id', 'name', 'slug', 'is_public', 'deleted_at'] },
+  // The tick privacy rule finds a tick's own audience in content_privacy by
+  // the tick's uuid. Still no comments, sessions or media.
+  { table: 'boardsesh_ticks', privileges: ['SELECT'], columns: ['uuid'] },
+  // New accounts per month. Never the account name, email or image: a ranked
+  // climber is named by their display name only.
+  { table: 'users', privileges: ['SELECT'], columns: ['created_at'] },
+  // A ranked climber's chosen name, and their opt-out from being named on
+  // boards they don't own. Never avatar or social links.
+  { table: 'user_profiles', privileges: ['SELECT'], columns: ['display_name', 'anonymous_on_foreign_boards'] },
+  // The spray-wall half of the tick privacy rule, for a signed-out reader:
+  // whether a wall is public, unlisted or neither. With no viewer the rule
+  // names no follow, grant or membership table (sprayResourceVisibility), so
+  // none of those is granted.
+  { table: 'resource_privacy', privileges: ['SELECT'], columns: ['kind', 'resource_id', 'audience'] },
+];
+
+/**
  * Data grants per worker role, on top of the pg-boss DML and the ledger every
  * worker login gets. Each list is exactly what that role's families read and
  * write, and is proven by running every family under the restricted role in
@@ -447,7 +481,8 @@ export const WORKER_ROLE_DATA_GRANTS: Record<BackgroundWorkerRole, readonly Work
   // climb-stats-self-heal, user-data-export, spray-wall-art.
   'maintenance-delivery': [...CLIMB_STATS_SELF_HEAL_GRANTS, ...USER_DATA_EXPORT_GRANTS, ...SPRAY_WALL_ART_GRANTS],
   // refresh-recommendations, refresh-hold-features, refresh-climb-grades,
-  // refresh-climb-neighbors, export-board-snapshots.
+  // refresh-climb-neighbors, export-board-snapshots, spray-wall-health,
+  // community-monthly-stats.
   batch: [
     // Public recommendation cohorts must apply current account/item privacy.
     // No private profile text or follower identities are read by this job.
@@ -584,6 +619,7 @@ export const WORKER_ROLE_DATA_GRANTS: Record<BackgroundWorkerRole, readonly Work
         'board_id',
       ],
     },
+    ...COMMUNITY_MONTHLY_STATS_GRANTS,
   ],
 };
 
