@@ -587,6 +587,100 @@ describe.skipIf(!redisAvailable)('crew rest clock storage on Redis', () => {
     }
   });
 
+  it('bounds a PAUSE, spaces onTheMinute beats and re-anchors a KEEP onto afterTick, the same on Redis and in memory (#6754 review)', async () => {
+    const sessionId = newSessionId();
+    const onRedis = new RoomManager();
+    await onRedis.initialize(instanceOneRedis);
+    const inMemory = new RoomManager();
+    const afterTick60 = {
+      mode: 'afterTick',
+      targetSeconds: 60,
+      autoAdvance: true,
+      advanceOn: 'deadline',
+      source: 'settings',
+    } as const;
+    const onTheMinute60 = { ...afterTick60, mode: 'onTheMinute' } as const;
+    const H = NOW;
+    const J = NOW + 200_000;
+    const steps: Array<{ nowMs: number; input: RestCadenceInput }> = [
+      // A crewmate pauses on its pre-advance 60 s: the server freezes the 0 s its clock ran since the FIRE.
+      { nowMs: H, input: { action: 'ARM', config: afterTick60, elapsedMs: 60_000 } },
+      { nowMs: H, input: { action: 'FIRE' } },
+      { nowMs: H + 500, input: { action: 'PAUSE', pausedElapsedSeconds: 60 } },
+      { nowMs: H + 5_000, input: { action: 'RESUME' } },
+      { nowMs: H + 5_000, input: { action: 'FIRE' } },
+      { nowMs: H + 65_000, input: { action: 'FIRE' } },
+      // onTheMinute: a PAUSE sent with 118 s on a grid that ran 61 s freezes 61.
+      { nowMs: J, input: { action: 'ARM', config: onTheMinute60, elapsedMs: 60_000 } },
+      { nowMs: J, input: { action: 'FIRE' } },
+      { nowMs: J + 1_000, input: { action: 'PAUSE', pausedElapsedSeconds: 118 } },
+      { nowMs: J + 3_000, input: { action: 'RESUME' } },
+      { nowMs: J + 5_000, input: { action: 'FIRE' } },
+      { nowMs: J + 60_000, input: { action: 'FIRE' } },
+      // A CONFIGURE NOW dated 58 s back beats 3 s after the last: refused; the next beat applies.
+      { nowMs: J + 63_000, input: { action: 'CONFIGURE', config: onTheMinute60, anchor: 'NOW', elapsedMs: 58_000 } },
+      { nowMs: J + 65_000, input: { action: 'FIRE' } },
+      { nowMs: J + 125_000, input: { action: 'FIRE' } },
+      // A KEEP onto a 90 s afterTick rest counts from that beat, not from the grid's origin.
+      { nowMs: J + 126_000, input: { action: 'CONFIGURE', config: { ...afterTick60, targetSeconds: 90 } } },
+      { nowMs: J + 155_000, input: { action: 'FIRE' } },
+      { nowMs: J + 215_000, input: { action: 'FIRE' } },
+    ];
+    const run = async (manager: RoomManager) => {
+      const outcomes = [];
+      for (const { nowMs, input } of steps) {
+        const fenced =
+          input.action === 'FIRE'
+            ? { ...input, expectedRevision: (await manager.getSessionRestCadence(sessionId)).revision }
+            : input;
+        outcomes.push(await manager.updateSessionRestCadence(sessionId, fenced, 'phone', nowMs));
+      }
+      return outcomes;
+    };
+    try {
+      const redisOutcomes = await run(onRedis);
+      const memoryOutcomes = await run(inMemory);
+      expect(redisOutcomes.map((commit) => commit.applied)).toEqual([
+        // ARM, FIRE, PAUSE, RESUME, FIRE 5 s after the last (before: applied), FIRE a rest later.
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        // ARM, FIRE, PAUSE, RESUME, FIRE at J + 5 s (before: applied), the next beat.
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        // CONFIGURE NOW, FIRE 3 s after the last (before: applied), the next beat.
+        true,
+        false,
+        true,
+        // CONFIGURE KEEP onto afterTick, FIRE before the rest ran (before: the clock was stranded), FIRE.
+        true,
+        false,
+        true,
+      ]);
+      const stored = redisOutcomes.map((commit) => commit.stored.cadence);
+      expect(stored[2]?.pausedElapsedSeconds).toBe(0);
+      expect(stored[3]).toMatchObject({ anchorMs: H + 5_000, lastFiredBeatMs: H + 5_000 });
+      expect(stored[8]?.pausedElapsedSeconds).toBe(61);
+      expect(stored[9]).toMatchObject({ anchorMs: J - 58_000, lastFiredBeatMs: J + 2_000 });
+      expect(stored[15]?.anchorMs).toBe(J + 125_000);
+      expect(stored.map((cadence) => cadence?.lastFiredBeatMs ?? null)).toEqual(
+        expect.arrayContaining([H + 65_000, J + 62_000, J + 125_000, J + 215_000]),
+      );
+      expect(memoryOutcomes).toEqual(redisOutcomes);
+    } finally {
+      await onRedis.shutdown();
+      onRedis.reset();
+      inMemory.reset();
+    }
+  });
+
   it('gives racing un-fenced writes from two instances distinct, increasing revisions', async () => {
     const sessionId = newSessionId();
     await instanceOne.casSessionRestCadence(sessionId, 0, serializeRestCadence(CLOCK), NO_FLOOR);

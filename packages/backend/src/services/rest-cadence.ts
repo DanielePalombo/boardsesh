@@ -80,7 +80,9 @@ export const REST_CADENCE_FIRE_EARLY_TOLERANCE_MS = 2_000;
  * for it now would surprise the crew. It must stay below the shortest
  * onTheMinute interval minus the early tolerance (15 s − 2 s = 13 s);
  * otherwise a late claim of one beat and an early claim of the next could land
- * a moment apart. At 5 s, two FIREs that both apply are at least 8 s apart.
+ * a moment apart. At 5 s, two FIREs that both apply on one unchanged 15 s
+ * grid are at least 8 s apart; across a change of rest, tooSoonAfterLastBeat
+ * bounds how close two claimed beats can be.
  * An afterTick deadline that goes stale stays stale until a TICK, a RESET or a
  * CONFIGURE with anchor NOW re-anchors the clock; onTheMinute recovers on its
  * next beat.
@@ -114,6 +116,21 @@ export const REST_CADENCE_OLDER_THAN_ANY_REST_MS =
  * missed one.
  */
 export const REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS = REST_CADENCE_FIRE_EARLY_TOLERANCE_MS + 1_000;
+
+/**
+ * The closest an onTheMinute beat may sit to the last claimed one and still
+ * be claimed: the shortest grid (15 s) minus REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS,
+ * 12 s. Every normal move keeps beats at least an interval minus that slack
+ * after the last (a grid that stays put: whole intervals; RESUME: the fired
+ * beat moves with the grid; CONFIGURE NOW with elapsedMs 0: at least an
+ * interval after now, which is at most 2 s past an early-claimed beat), and a
+ * KEEP onto another interval on the 15 s steps the settings offer lands at
+ * least 15 s after it. A closer beat only comes from a CONFIGURE that reaches
+ * back (a 61 s grid kept from a 60 s one, an anchor NOW with elapsedMs), and
+ * FIRE refuses it; the grid recovers on its next beat.
+ */
+export const REST_CADENCE_ON_THE_MINUTE_MIN_SPACING_MS =
+  REST_CADENCE_TARGET_SECONDS.onTheMinute.min * 1000 - REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS;
 
 /** Internal retries for an un-fenced write that lost a compare-and-set race. */
 export const REST_CADENCE_CAS_ATTEMPTS = 5;
@@ -239,7 +256,7 @@ function hasQualifyingTick(state: RestCadenceState): boolean {
  * Deriving the beat here is what makes "once per beat" hold: every FIRE inside
  * one beat's window resolves to the same instant whatever beat age it
  * reports, so the second fails the `> lastFiredBeatMs` check in the reducer.
- * The two bounds keep the windows of neighbouring beats at least
+ * The two bounds keep the windows of neighbouring beats on one grid at least
  * interval − 7 s apart, so a late claim of one beat can never sit a moment
  * before an early claim of the next.
  */
@@ -302,18 +319,47 @@ function restCadenceTickAnchorMs(
 }
 
 /**
- * Whether an afterTick deadline sits closer to the last claimed one than a
- * full interval minus REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS: a deadline
- * only a CONFIGURE reaching back can produce. A defence in depth behind the
- * TICK floor, so no sequence of actions moves the wall twice inside one rest.
+ * The anchor a CONFIGURE KEEP from onTheMinute onto afterTick keeps: the rest
+ * counts from the last advance. An onTheMinute anchor is its grid's origin,
+ * often whole beats before the last one fired, so kept as it is the first
+ * afterTick deadline falls before or just after that beat: the spacing fence
+ * refuses it, it goes stale, and nothing advances until a TICK, a RESET or a
+ * CONFIGURE NOW (#6754 review). A paused clock loses the same stretch from the
+ * rest it froze, so RESUME lands on the same rest.
  */
-function tooSoonAfterLastAfterTickBeat(
-  previous: Pick<RestCadenceState, 'lastFiredBeatMs' | 'targetSeconds'>,
+function restFromLastAdvance(
+  previous: Pick<RestCadenceState, 'anchorMs' | 'lastFiredBeatMs' | 'isRunning' | 'pausedElapsedSeconds'>,
+): Partial<Pick<RestCadenceState, 'anchorMs' | 'pausedElapsedSeconds'>> {
+  if (previous.anchorMs === null || previous.lastFiredBeatMs === null) return {};
+  const shiftMs = Math.max(0, previous.lastFiredBeatMs - previous.anchorMs);
+  if (shiftMs === 0) return {};
+  const anchorMs = previous.anchorMs + shiftMs;
+  if (previous.isRunning) return { anchorMs };
+  return { anchorMs, pausedElapsedSeconds: Math.max(0, previous.pausedElapsedSeconds - Math.ceil(shiftMs / 1000)) };
+}
+
+/**
+ * Whether a beat sits too close to the last claimed one to claim: a beat only
+ * a CONFIGURE reaching back can produce. A defence in depth behind the TICK
+ * floor and the PAUSE bound, so no sequence of actions moves the wall twice
+ * inside one rest.
+ *
+ * afterTick: closer than a full interval minus
+ * REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS. onTheMinute: closer than
+ * REST_CADENCE_ON_THE_MINUTE_MIN_SPACING_MS, whatever the interval, because a
+ * CONFIGURE KEEP onto a new interval legitimately beats sooner than a whole
+ * new interval after the last (15 s → 60 s: 15 s later).
+ */
+function tooSoonAfterLastBeat(
+  previous: Pick<RestCadenceState, 'mode' | 'lastFiredBeatMs' | 'targetSeconds'>,
   beatMs: number,
 ): boolean {
   if (previous.lastFiredBeatMs === null || previous.targetSeconds === null) return false;
-  const intervalMs = previous.targetSeconds * 1000;
-  return beatMs < previous.lastFiredBeatMs + intervalMs - REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS;
+  const minSpacingMs =
+    previous.mode === 'afterTick'
+      ? previous.targetSeconds * 1000 - REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS
+      : REST_CADENCE_ON_THE_MINUTE_MIN_SPACING_MS;
+  return beatMs < previous.lastFiredBeatMs + minSpacingMs;
 }
 
 /**
@@ -413,7 +459,9 @@ export function applyRestCadenceAction(
           ? { anchorMs: nowMs - clampMs(input.elapsedMs, MAX_REST_CADENCE_ELAPSED_MS), pausedElapsedSeconds: 0 }
           : anchor === 'CLEAR'
             ? { anchorMs: null }
-            : {};
+            : anchor === 'KEEP' && previous.mode === 'onTheMinute' && input.config.mode === 'afterTick'
+              ? restFromLastAdvance(previous)
+              : {};
       return {
         applicable: true,
         next: { ...previous, ...pickConfig(input.config), ...reanchored, setByParticipantId: participantId },
@@ -452,7 +500,7 @@ export function applyRestCadenceAction(
       const beatMs = claimableRestCadenceBeatMs(previous, nowMs);
       if (beatMs === null) return NOT_APPLICABLE;
       if (previous.lastFiredBeatMs !== null && beatMs <= previous.lastFiredBeatMs) return NOT_APPLICABLE;
-      if (previous.mode === 'afterTick' && tooSoonAfterLastAfterTickBeat(previous, beatMs)) return NOT_APPLICABLE;
+      if (tooSoonAfterLastBeat(previous, beatMs)) return NOT_APPLICABLE;
       const fired = { ...previous, lastFiredBeatMs: beatMs };
       const anchor = anchorAfterFire(previous);
       if (anchor === 'now') {
@@ -466,11 +514,19 @@ export function applyRestCadenceAction(
 
     case 'PAUSE': {
       if (!previous.isRunning) return NOT_APPLICABLE;
+      // A pause freezes no more rest than the shared clock has run. The phone
+      // reports its own elapsed, which can be from before an advance it has
+      // not heard of yet: frozen as sent, RESUME would put the anchor (and the
+      // fired beat with it) back before that advance, and the wall would move
+      // again at once (#6754 review). With no anchor the clock has run nothing
+      // the server can check, so the phone's figure stands.
       const pausedElapsedSeconds =
-        input.pausedElapsedSeconds ??
-        (previous.anchorMs === null
-          ? previous.pausedElapsedSeconds
-          : Math.max(0, Math.floor((nowMs - previous.anchorMs) / 1000)));
+        previous.anchorMs === null
+          ? (input.pausedElapsedSeconds ?? previous.pausedElapsedSeconds)
+          : Math.min(
+              input.pausedElapsedSeconds ?? Number.POSITIVE_INFINITY,
+              Math.max(0, Math.floor((nowMs - previous.anchorMs) / 1000)),
+            );
       return {
         applicable: true,
         next: {
@@ -486,11 +542,14 @@ export function applyRestCadenceAction(
       const anchorMs = nowMs - previous.pausedElapsedSeconds * 1000;
       // The grid moves by however long the pause lasted, so the fired beat
       // moves with it: otherwise the beat fired just before a pause comes due
-      // again just after it, under a later instant than lastFiredBeatMs.
+      // again just after it, under a later instant than lastFiredBeatMs. It
+      // only ever moves forward: PAUSE freezes no more than the clock ran, so
+      // the shift is never negative, and the clamp keeps it that way whatever
+      // the stored state.
       const lastFiredBeatMs =
         previous.lastFiredBeatMs === null || previous.anchorMs === null
           ? previous.lastFiredBeatMs
-          : previous.lastFiredBeatMs + (anchorMs - previous.anchorMs);
+          : previous.lastFiredBeatMs + Math.max(0, anchorMs - previous.anchorMs);
       return {
         applicable: true,
         next: { ...previous, isRunning: true, anchorMs, pausedElapsedSeconds: 0, lastFiredBeatMs },
