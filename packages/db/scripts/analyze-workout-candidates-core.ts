@@ -5,6 +5,15 @@
  * quality axis, so the filter grid (minAscents x minRating x benchmark) is
  * evaluated here, in memory, with no further database work.
  */
+import {
+  DEFAULT_GRADE_FOCUS_OPTIONS,
+  DEFAULT_LADDER_OPTIONS,
+  DEFAULT_PYRAMID_OPTIONS,
+  DEFAULT_VOLUME_OPTIONS,
+  generateWorkoutPlan,
+  type GeneratorGradeScale,
+  type GeneratorOptions,
+} from '@boardsesh/playlist-generator';
 
 /** The `minAscents` thresholds the workout filters can take (0 means no filter). */
 export const MIN_ASCENTS_THRESHOLDS = [0, 1, 5, 10, 50, 100] as const;
@@ -70,49 +79,47 @@ export function countByGrade(groups: readonly TierGroup[], combo: FilterCombo): 
   return counts;
 }
 
-/** The plan shapes the generator produces: `perStep` climbs at each of `steps` consecutive grades ending at the target. */
+/**
+ * A plan shape is a generator option set. The demand per grade is read off the
+ * slots `generateWorkoutPlan` really produces, so the shapes cannot drift from
+ * the app (the pyramid is 1/2/2 climbs on the peak and the two grades below it,
+ * not one climb on five descending grades).
+ */
 export interface PlanShape {
   name: string;
-  /** Grades the plan draws from: the target and the steps-1 grades below it on the scale. */
-  steps: number;
-  /** Climbs needed at each step grade. */
-  perStep: number;
+  options: Omit<GeneratorOptions, 'targetGrade'>;
 }
 
 export const PLAN_SHAPES: readonly PlanShape[] = [
-  { name: 'volume 20 at one grade', steps: 1, perStep: 20 },
-  { name: 'grade focus 15', steps: 1, perStep: 15 },
-  { name: 'pyramid 5 steps x 1', steps: 5, perStep: 1 },
-  { name: 'ladder 5 steps x 2', steps: 5, perStep: 2 },
+  { name: 'volume 20 at one grade', options: DEFAULT_VOLUME_OPTIONS },
+  { name: 'grade focus 15', options: DEFAULT_GRADE_FOCUS_OPTIONS },
+  { name: 'pyramid 5 steps x 1', options: DEFAULT_PYRAMID_OPTIONS },
+  { name: 'ladder 5 steps x 2', options: DEFAULT_LADDER_OPTIONS },
 ];
 
+/** Climbs the generator asks for at each grade id when aimed at `targetGrade`. */
+export function planDemand(scale: GeneratorGradeScale, targetGrade: number, shape: PlanShape): Map<number, number> {
+  const slots = generateWorkoutPlan({ ...shape.options, targetGrade } as GeneratorOptions, scale);
+  const demand = new Map<number, number>();
+  for (const slot of slots) demand.set(slot.grade, (demand.get(slot.grade) ?? 0) + 1);
+  return demand;
+}
+
 /**
- * Does the plan fill when aimed at `scale[targetIndex]`? Pyramid steps walk down
- * the board's grade scale by index (as the generator does), not by raw id, and
- * clamp at the bottom of the scale: when the target is near the bottom, the
- * missing steps repeat the lowest grade and their demand stacks there. Ladders
- * clamp slightly differently in the generator; this treats them the same way.
+ * Does the plan fill when aimed at `targetGrade`? `scale` is the board's real
+ * grade table (`getGradesForBoard`), including grades no climb sits on: the
+ * generator walks that table, so a gap in the catalogue is a grade with demand
+ * and 0 climbs.
  */
 export function planFills(
   counts: ReadonlyMap<number, number>,
-  scale: readonly number[],
-  targetIndex: number,
+  scale: GeneratorGradeScale,
+  targetGrade: number,
   shape: PlanShape,
 ): boolean {
-  const demand = new Map<number, number>();
-  for (let offset = 0; offset < shape.steps; offset += 1) {
-    const grade = scale[Math.max(0, targetIndex - offset)];
-    if (grade === undefined) return false;
-    demand.set(grade, (demand.get(grade) ?? 0) + shape.perStep);
-  }
+  const demand = planDemand(scale, targetGrade, shape);
+  if (demand.size === 0) return false;
   return [...demand].every(([grade, needed]) => (counts.get(grade) ?? 0) >= needed);
-}
-
-/** The board's grade scale as far as this catalogue shows it: every grade with at least one climb. */
-export function gradeScale(groups: readonly TierGroup[]): number[] {
-  return [...countByGrade(groups, { minAscents: 0, minRating: 0, benchmarksOnly: false }).keys()].sort(
-    (first, second) => first - second,
-  );
 }
 
 /**
@@ -162,13 +169,17 @@ function median(values: number[]): number {
   return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-export function evaluateCombo(groups: readonly TierGroup[], band: readonly number[], combo: FilterCombo): ComboResult {
+export function evaluateCombo(
+  groups: readonly TierGroup[],
+  band: readonly number[],
+  combo: FilterCombo,
+  scale: GeneratorGradeScale,
+): ComboResult {
   const counts = countByGrade(groups, combo);
   const bandCounts = band.map((grade) => counts.get(grade) ?? 0);
-  const scale = gradeScale(groups);
   const fillRates: Record<string, number> = {};
   for (const shape of PLAN_SHAPES) {
-    const filled = band.filter((grade) => planFills(counts, scale, scale.indexOf(grade), shape)).length;
+    const filled = band.filter((grade) => planFills(counts, scale, grade, shape)).length;
     fillRates[shape.name] = band.length === 0 ? 0 : filled / band.length;
   }
   return {
@@ -194,9 +205,13 @@ export interface CatalogueResult {
   results: ComboResult[];
 }
 
-export function evaluateCatalogue(target: CatalogueTarget, groups: readonly TierGroup[]): CatalogueResult {
+export function evaluateCatalogue(
+  target: CatalogueTarget,
+  groups: readonly TierGroup[],
+  scale: GeneratorGradeScale,
+): CatalogueResult {
   const band = coreGradeBand(groups);
-  const results = allFilterCombos().map((combo) => evaluateCombo(groups, band, combo));
+  const results = allFilterCombos().map((combo) => evaluateCombo(groups, band, combo, scale));
   const unfiltered = results.find(
     ({ combo }) => combo.minAscents === 0 && combo.minRating === 0 && !combo.benchmarksOnly,
   );

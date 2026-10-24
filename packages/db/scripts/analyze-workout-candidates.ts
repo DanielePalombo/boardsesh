@@ -10,7 +10,7 @@
  *   minAscents {0,1,5,10,50,100} x minRating {0,2,3,3.5} x benchmarks only {no,yes}
  *
  * and how often a typical plan (volume 20, grade focus 15, pyramid 5x1, ladder
- * 5x2) fills across the grades climbers actually target. The predicates mirror
+ * 5x2, built by the real generator on the board's real grade table) fills across the grades climbers actually target. The predicates mirror
  * the server search (create-climb-filters.ts): rounded display_difficulty,
  * ascensionist_count >= minAscents, quality_average >= minRating,
  * benchmark_difficulty > 0, and is_listed / not draft / not hidden.
@@ -19,6 +19,7 @@
  * Writes nothing: every query runs in a READ ONLY transaction.
  */
 import { sql } from 'drizzle-orm';
+import { getGradesForBoard, toBoardName } from '@boardsesh/board-config';
 import { createScriptDb } from './db-connection.js';
 import { rowsOf } from '../src/queries/util/rows.js';
 import {
@@ -133,7 +134,9 @@ async function main(): Promise<void> {
             });
         }
         const groups = [...merged.values()];
-        results.push({ ...evaluateCatalogue(target, groups), groups });
+        const boardName = toBoardName(target.boardType);
+        if (!boardName) throw new Error(`Unknown board type ${target.boardType}`);
+        results.push({ ...evaluateCatalogue(target, groups, getGradesForBoard(boardName)), groups });
       }
       return results;
     });
@@ -157,6 +160,7 @@ async function main(): Promise<void> {
 function printMarkdown(catalogues: Array<CatalogueResult & { groups: TierGroup[] }>): void {
   const sections: Array<[string, FilterCombo]> = [
     ['No quality filter (minAscents 0, minRating 0)', UNFILTERED_COMBO],
+    ['Rating floor off (minAscents 5, minRating 0)', { minAscents: 5, minRating: 0, benchmarksOnly: false }],
     ['Current defaults (minAscents 5, minRating 2)', DEFAULT_COMBO],
     ['Benchmarks only (no other filter)', BENCHMARK_COMBO],
     ['Boardz-style (minAscents 50, minRating 3.5)', { minAscents: 50, minRating: 3.5, benchmarksOnly: false }],
