@@ -413,6 +413,12 @@ describe('Release simulator launch smoke', () => {
     await expect(silent.run()).resolves.toMatchObject({
       diagnosticWarnings: expect.arrayContaining([expect.stringMatching(/launchctl list: exit status 3$/)]),
     });
+    const noisy = fixture();
+    const noisyRun = noisy.dependencies.run;
+    noisy.dependencies.run = (command, args, timeoutMs) =>
+      args[1] === 'spawn' ? { status: 1, stdout: '', stderr: 'x'.repeat(5_000) } : noisyRun(command, args, timeoutMs);
+    const { diagnosticWarnings } = await noisy.run();
+    expect(diagnosticWarnings?.[0]).toBe(`Diagnostic collection failed: launchctl list: ${'x'.repeat(300)}…`);
   });
 
   it('gives each diagnostic 60 s and the install 300 s', async () => {

@@ -173,7 +173,10 @@ function failureMessage(error: unknown): string {
 }
 
 function commandFailure(result: SmokeCommandResult): string {
-  return result.error ?? (result.stderr.trim() || `exit status ${result.status}`);
+  const stderr = result.stderr.trim();
+  // A warning is one annotation line; the full stderr stays in commands.jsonl.
+  const shortStderr = stderr.length > 300 ? `${stderr.slice(0, 300)}…` : stderr;
+  return result.error ?? (shortStderr || `exit status ${result.status}`);
 }
 
 /** One GitHub Actions `::warning::` line; the message cannot end or forge the command. */
