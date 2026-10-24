@@ -422,6 +422,33 @@ describe('the operations mobile sends', () => {
     expect(failures).toEqual([]);
   });
 
+  // Train tester builds and train OTAs query the production backend, which
+  // deploys from `main`, not from `release/next`. A train PR that adds a field
+  // and the query that selects it therefore ships a query production rejects
+  // with GRAPHQL_VALIDATION_FAILED (#6111, the train version of #5370). The
+  // `train-schema-on-main` guard step of ci.yml sets PRODUCTION_SCHEMA_SDL to
+  // origin/main's committed schema.graphql; unset, this check does not run.
+  // Validating the operations, not diffing the two schemas, means a schema
+  // addition no client uses stays green, and a `main` that is ahead of the
+  // train stays green too.
+  it.runIf(process.env.PRODUCTION_SCHEMA_SDL)('validates every document against the production (main) schema', () => {
+    const productionSchema = buildSchema(readFileSync(process.env.PRODUCTION_SCHEMA_SDL as string, 'utf8'));
+    const failures: string[] = [];
+    for (const registered of registeredDocuments) {
+      const errors = validate(productionSchema, parse(registered.document));
+      if (errors.length === 0) continue;
+      failures.push(
+        `Mobile operation ${registered.operationName} (${registered.source}) is rejected by origin/main's schema:\n` +
+          errors.map((error, index) => `  ${index + 1}. ${error.message}`).join('\n'),
+      );
+    }
+    expect(
+      failures,
+      'Production deploys from main, so tester builds of this branch would get GRAPHQL_VALIDATION_FAILED. ' +
+        'Land the server half on main first, then merge main into the train.',
+    ).toEqual([]);
+  });
+
   it('carries every operation the store flow depends on', () => {
     const missing = REQUIRED_STORE_FLOW_OPERATIONS.filter((operationName) => !registry.has(operationName));
     expect(missing).toEqual([]);

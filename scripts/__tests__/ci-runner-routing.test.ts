@@ -130,6 +130,7 @@ const GUARD_STEPS = [
   'pg18-artifacts',
   'rest-surface',
   'codegen-drift',
+  'train-schema-on-main',
 ] as const;
 
 function workflow(name: string): string {
