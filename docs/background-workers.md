@@ -271,6 +271,7 @@ module. The module declares:
 | `refresh-moonboard-angle-estimates` | `batch` | 1,800 s | 1, after 900 s | 6 days | `weekly` |
 | `refresh-moonboard-wide-angle-estimates` | `batch` | 7,200 s | 1, after 900 s | 6 days | `weekly` |
 | `spray-wall-health` | `batch` | 600 s | 1, after 300 s | 6 days | `weekly`, or the backfilled `weekStart` |
+| `community-monthly-stats` | `batch` | 900 s | 1, after 300 s | 20 h | `months`, `+retireMonths` when set, `:dry-run` on a dry run (`2` daily, `13+1` Mondays) |
 | `aurora-user-sync` | `interactive-import` | 1800 s (heartbeat 300 s) | 3, 30 s backoff to 300 s | 2 h | `userId:boardType:linkGeneration` |
 | `kilter-user-sync` | `interactive-import` | 1800 s (heartbeat 300 s) | 3, 30 s backoff to 300 s | 2 h | `userId:kilter:linkGeneration` |
 | `provider-routine-cycle` | `routine-provider` | 600 s (heartbeat 300 s) | none | 48 600 s (the fan-out budget) | `aurora` / `kilter` |
@@ -362,6 +363,7 @@ fence (`context.transaction`). The worker never imports
 | `refresh-moonboard-angle-estimates` | `0 8 * * 1` | `{ publish = true, validateOnly?, dryRun? }` | 600 s | `board_grade_coefficients`, `board_climb_grades` | `refresh-moonboard-angle-estimates.yml` |
 | `refresh-moonboard-wide-angle-estimates` | `30 8 * * 1` | `{ publish = true, dryRun? }` | 300 s | `board_climb_grades` (no coefficients: the angle surface is refit from `board_climb_stats` every run) | `refresh-moonboard-wide-angle-estimates.yml` |
 | `spray-wall-health` | `45 8 * * 1` | `{ weekStart?, dryRun? }` | 300 s | nothing in Postgres; one `Spray Wall Health Weekly` PostHog event (`docs/growth-metrics.md`) | none — new with #6062 |
+| `community-monthly-stats` | `30 7 * * 0,2-6` (`daily`, `{ months: 2 }`), `30 7 * * 1` (`weekly`, `{ months: 13, retireMonths: 1 }`) | `{ months = 2 (1 to 13), retireMonths = 0 (0 to 12, only with months 13), dryRun? }` | 300 s | nothing in Postgres; 21 `Community Monthly Summary` / `Community Monthly Rank` PostHog events per month with lighting (`docs/growth-metrics.md`, "Community monthly recap") | none, new |
 
 Measured on GitHub Actions against production in Sep 2026: recommendations
 about 25 s, hold features about 60 s, grades about 4 minutes, of which the
@@ -489,8 +491,9 @@ above: `board_setter_stats`, `board_climb_send_stats`, `playlists`,
 `user_hold_classifications`, `board_climb_grades`, `board_grade_coefficients`,
 `board_climb_neighbors` (SELECT, INSERT, DELETE), `board_climb_neighbor_runs`
 and `board_climb_neighbor_group_runs`. The neighbours job reads only
-`board_climbs` besides its own tables. On `users` it may read `id` and insert `(id, name, email)` only, for the two
-reserved system users. For `export-board-snapshots` it also reads the catalogue
+`board_climbs` besides its own tables. On `users` it may insert `(id, name, email)` only, for the two
+reserved system users, and read `id`, plus `created_at` for the community
+recap below; never `name`, `email` or `image`. For `export-board-snapshots` it also reads the catalogue
 tables (`board_products`, `board_layouts`, `board_product_sizes`,
 `board_placement_roles`, `board_leds`, `board_kits`, `board_difficulty_grades`,
 `board_attempts`, and `board_beta_links` without `created_by_user_id`,
@@ -506,6 +509,54 @@ earlier estimates and, for the wide-angle job, the angle job's 25°/40° rows),
 and write only `board_climb_grades` and, for the angle job,
 `board_grade_coefficients`. All of these are already granted for the grade
 job.
+
+`community-monthly-stats` is read-only and adds column grants
+(`COMMUNITY_MONTHLY_STATS_GRANTS`) on top of the list above:
+
+| Table | Columns | Why |
+| --- | --- | --- |
+| `board_climb_events` | `source` | Only Boardsesh's own LED writes count as lighting. |
+| `user_boards` | `is_unlisted` | A gym ranks only on its public, listed boards (`ENUMERABLE_GYM_BOARDS`). |
+| `gyms` | `id, name, slug, is_public, deleted_at` | The gym ranking: the public name and slug, and the flags that keep private and deleted gyms out. No owner, contact or location. |
+| `boardsesh_ticks` | `uuid` | The tick privacy rule finds a tick's audience in `content_privacy` by its uuid. |
+| `users` | `created_at` | New accounts per month. Never the account name: a ranked climber is named by their display name only. |
+| `user_profiles` | `display_name, anonymous_on_foreign_boards` | A ranked climber's chosen name and their opt-out from being named. |
+| `resource_privacy` | `kind, resource_id, audience` | The spray-wall half of the tick privacy rule: whether a wall is public or unlisted. |
+
+The tick privacy rule applies `sprayClimbVisibilityCondition` to every send.
+For a signed-out reader (no viewer), as the recap is, that rule leaves out
+every branch that compares a row with the viewer, so its SQL names no follow,
+grant or membership table and the batch login holds no grant on
+`user_follows`, `resource_grants` or `gym_members`.
+`spray-visibility-null-viewer.test.ts` pins that the signed-out form returns
+the same walls as the full rule. The recap's gym ranking also leaves out spray
+walls an admin hid or their owner deleted, reading `spray_walls (board_uuid,
+hidden_at, deleted_at)` from the list above.
+
+What a run costs, measured with `EXPLAIN (ANALYZE, BUFFERS)` on the DR standby
+on 2026-10-24 for the Monday window (13 months plus one retired):
+
+| Statement | Time | Buffers |
+| --- | ---: | --- |
+| Climber ranking | 21.8 s | hit 1,265,523, read 32,952 |
+| Sending totals | 0.6 s | hit 416, read 23,343 |
+| New accounts | 6 ms | hit 153 |
+| Lighting (totals and gyms, one scan) | not measured | one pass over `board_climb_events`, the table `communityStats` already scans in about 430 ms |
+
+The climber ranking runs the tick privacy rule once per native send (about
+90,000 over the window, five index probes each), which is what the buffer hits
+count. The daily run covers two months, about a sixth of that. Both sit well
+inside the 900 s lease. If the Monday run ever nears it, rank climbers on raw
+send counts first and apply the privacy rule in that order, stopping once the
+next raw count is below the tenth visible count: the rule only removes sends,
+so nobody further down can reach the top ten.
+
+The family's schedule exists only once the backend has booted with it, and the
+backend deploys after `migrate`, so its first scheduled run already has these
+grants (see "A new worker image can start before the migrator has run"). An
+operator run enqueued before `migrate` finishes fails with `permission denied`
+and retries once.
+
 `packages/backend/src/services/__tests__/job-queue-roles.test.ts` runs every
 family under exactly these grants, and `job-queue-roles-snapshots.test.ts` runs
 the snapshot exporter under a real login with them plus `pg_read_all_stats`; a
@@ -524,10 +575,19 @@ node --import tsx packages/backend/src/workers/operator.ts enqueue refresh-climb
 node --import tsx packages/backend/src/workers/operator.ts enqueue export-board-snapshots '{"mode":"nightly"}'
 node --import tsx packages/backend/src/workers/operator.ts enqueue refresh-moonboard-angle-estimates '{"validateOnly":true}'
 node --import tsx packages/backend/src/workers/operator.ts enqueue refresh-moonboard-wide-angle-estimates '{"dryRun":true}'
+node --import tsx packages/backend/src/workers/operator.ts enqueue community-monthly-stats '{"months":2,"dryRun":true}'
+node --import tsx packages/backend/src/workers/operator.ts enqueue community-monthly-stats '{"months":13,"retireMonths":2}'
 ```
 
+The last line is the community recap's catch-up after the family was off for
+more than four weeks: it removes climber names from the months that left the
+13-month window while it was off (see `docs/growth-metrics.md`, "Names age
+out").
+
 Each family has one dedup key (per board for hold features and neighbours, per
-mode for snapshots, one weekly slot for both MoonBoard jobs), so a manual run
+mode for snapshots, one weekly slot for both MoonBoard jobs, per window and
+retirement for the community recap, whose dry runs get a key of their own), so
+a manual run
 enqueued while the nightly or weekly run is queued returns that queued run with
 `ALREADY_QUEUED`; enqueue again once it has started.
 The reverse holds too: a manual run still queued when the nightly schedule fires
