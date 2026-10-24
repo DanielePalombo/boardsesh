@@ -367,8 +367,10 @@ describe('setSessionRestCadence', () => {
       expect(fired.change.restCadence).toMatchObject({ anchorAt: null, lastTickStatus: null });
     }
 
-    it('applies, publishes a stale anchor and keeps the cleared last tick, so the FIRE it would have earned is refused', async () => {
+    it('writes and publishes nothing for a tick older than any rest, so the FIRE it would have earned is refused', async () => {
       await advancedOnSend();
+      const stored = await roomManager.getSessionRestCadence(SESSION_ID);
+      pubsubMock.publishSessionEvent.mockClear();
       vi.setSystemTime(NOW + 63_000);
       const ticked = await setRestCadence({
         action: 'TICK',
@@ -376,16 +378,12 @@ describe('setSessionRestCadence', () => {
         tickStatus: 'send',
         elapsedMs: FOUR_HOURS_MS,
       });
-      expect(ticked.applied).toBe(true);
-      expect(ticked.change.restCadence).toMatchObject({
-        anchorAt: String(NOW + 63_000 - FOUR_HOURS_MS),
-        isRunning: true,
-        lastTickQueueItemUuid: null,
-        lastTickStatus: null,
-      });
-      expect(pubsubMock.publishSessionEvent).toHaveBeenLastCalledWith(SESSION_ID, ticked.change);
+      // Before: applied, anchored on the advance with lastTick item-2, and the FIRE at NOW + 121 s applied.
+      expect(ticked.applied).toBe(false);
+      expect(ticked.change.restCadence).toMatchObject({ anchorAt: null, lastTickQueueItemUuid: null });
+      expect(await roomManager.getSessionRestCadence(SESSION_ID)).toEqual(stored);
+      expect(pubsubMock.publishSessionEvent).not.toHaveBeenCalled();
 
-      pubsubMock.publishSessionEvent.mockClear();
       vi.setSystemTime(NOW + 121_000);
       const refused = await setRestCadence({ action: 'FIRE', expectedRevision: ticked.change.revision });
       expect(refused.applied).toBe(false);
@@ -397,6 +395,22 @@ describe('setSessionRestCadence', () => {
       vi.setSystemTime(NOW + 181_000);
       const fired = await setRestCadence({ action: 'FIRE', expectedRevision: sentNow.change.revision });
       expect(fired.applied).toBe(true);
+    });
+
+    it('starts the rest from the advance for a tick inside any rest, without the tick it would need', async () => {
+      await advancedOnSend();
+      vi.setSystemTime(NOW + 63_000);
+      const ticked = await setRestCadence({
+        action: 'TICK',
+        tickQueueItemUuid: 'item-2',
+        tickStatus: 'send',
+        elapsedMs: 30 * 60_000,
+      });
+      expect(ticked.applied).toBe(true);
+      expect(ticked.change.restCadence).toMatchObject({ anchorAt: String(NOW + 61_000), lastTickStatus: null });
+      vi.setSystemTime(NOW + 121_000);
+      const refused = await setRestCadence({ action: 'FIRE', expectedRevision: ticked.change.revision });
+      expect(refused.applied).toBe(false);
     });
 
     it('rejects an elapsed past 4 h without writing, so a client caps the age it sends there', async () => {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vite-plus/test';
 import {
-  MAX_REST_CADENCE_ELAPSED_MS,
   REST_CADENCE_CAS_ATTEMPTS,
   REST_CADENCE_FIRE_EARLY_TOLERANCE_MS,
   REST_CADENCE_FIRE_LATE_TOLERANCE_MS,
+  REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS,
   REST_CADENCE_LATE_CLAMP_MS,
+  REST_CADENCE_OLDER_THAN_ANY_REST_MS,
   REST_CADENCE_REVISION_EPOCH_MS,
   applyRestCadenceAction,
   buildRestCadenceChange,
@@ -313,11 +314,18 @@ describe('applyRestCadenceAction', () => {
 
     describe('a tick logged more than a minute before it landed is history and never moves the wall (#6729 twin)', () => {
       const SIXTY: RestCadenceConfig = { ...AFTER_TICK, targetSeconds: 60 };
+      const NINETY: RestCadenceConfig = { ...AFTER_TICK, targetSeconds: 90 };
       const DAY_MS = 24 * 60 * 60 * 1000;
       const fireAt = (state: RestCadenceState, nowMs: number) =>
         applyRestCadenceAction(state, { action: 'FIRE', expectedRevision: 1 }, nowMs, ME);
       const at = (state: RestCadenceState, input: RestCadenceInput, nowMs: number) =>
         next(applyRestCadenceAction(state, input, nowMs, ME))!;
+      const tickAged = (elapsedMs: number, queueItemUuid = 'item-2'): RestCadenceInput => ({
+        action: 'TICK',
+        tickQueueItemUuid: queueItemUuid,
+        tickStatus: 'send',
+        elapsedMs,
+      });
       const B = NOW;
       /** A tick or send advance at B: the anchor and the last tick are gone, and B is the fired beat. */
       const advancedAt = (advanceOn: 'tick' | 'send') => {
@@ -329,6 +337,12 @@ describe('applyRestCadenceAction', () => {
         });
         const advanced = next(fireAt(due, B))!;
         expect(advanced).toMatchObject({ anchorMs: null, lastTick: null, lastFiredBeatMs: B });
+        return advanced;
+      };
+      /** A 60 s afterTick + deadline rest that advanced at B: it restarts from B. */
+      const deadlineAdvancedAt = () => {
+        const advanced = next(fireAt(clock({ ...SIXTY, anchorMs: B - 60_000 }), B))!;
+        expect(advanced).toMatchObject({ anchorMs: B, lastFiredBeatMs: B, isRunning: true });
         return advanced;
       };
       /** Every second from `fromMs` to `toMs`: no beat is claimable and every FIRE is refused. */
@@ -344,30 +358,19 @@ describe('applyRestCadenceAction', () => {
         expect(isHistoricalRestCadenceTick(0)).toBe(false);
         expect(isHistoricalRestCadenceTick(REST_CADENCE_LATE_CLAMP_MS)).toBe(false);
         expect(isHistoricalRestCadenceTick(REST_CADENCE_LATE_CLAMP_MS + 1)).toBe(true);
+        expect(REST_CADENCE_OLDER_THAN_ANY_REST_MS).toBe(3_600_000 + REST_CADENCE_FIRE_LATE_TOLERANCE_MS);
       });
 
       it.each(['tick', 'send'] as const)(
-        "afterTick + %s: yesterday's send on the climb just lit leaves nothing to claim; a send now advances once",
+        "afterTick + %s: yesterday's send on the climb just lit changes nothing; a send now advances once",
         (advanceOn) => {
           const advanced = advancedAt(advanceOn);
-          const yesterday = at(
-            advanced,
-            { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: DAY_MS },
-            B + 2_000,
-          );
           // Before: the floor anchored it at B with lastTick naming item-2, so a FIRE at B + 60 s moved the wall.
-          expect(yesterday).toMatchObject({
-            lastTick: null,
-            anchorMs: B + 2_000 - MAX_REST_CADENCE_ELAPSED_MS,
-            isRunning: true,
-          });
+          const yesterday = at(advanced, tickAged(DAY_MS), B + 2_000);
+          expect(yesterday).toEqual(advanced);
           expectNothingClaimable(yesterday, B + 2_000, B + 10 * 60_000);
 
-          const sentNow = at(
-            yesterday,
-            { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: 1_000 },
-            B + 20_000,
-          );
+          const sentNow = at(yesterday, tickAged(1_000), B + 20_000);
           expect(sentNow).toMatchObject({
             lastTick: { queueItemUuid: 'item-2', status: 'send' },
             anchorMs: B + 19_000,
@@ -383,14 +386,11 @@ describe('applyRestCadenceAction', () => {
         'afterTick + %s: a send logged exactly a minute back earns the advance; one a millisecond older does not',
         (advanceOn) => {
           const advanced = advancedAt(advanceOn);
-          const tickAged = (elapsedMs: number) =>
-            at(advanced, { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs }, B + 2_000);
-          const fresh = tickAged(REST_CADENCE_LATE_CLAMP_MS);
-          const history = tickAged(REST_CADENCE_LATE_CLAMP_MS + 1);
+          const fresh = at(advanced, tickAged(REST_CADENCE_LATE_CLAMP_MS), B + 2_000);
+          const history = at(advanced, tickAged(REST_CADENCE_LATE_CLAMP_MS + 1), B + 2_000);
           expect(fresh.lastTick).toEqual({ queueItemUuid: 'item-2', status: 'send' });
           expect(history.lastTick).toBeNull();
-          // Both rest from the advance. The historical one's own rest ran out only 1 ms ago, inside the
-          // FIRE late tolerance, so it keeps the floor rather than its own time.
+          // Both start the rest at the advance: the historical one is younger than any rest, so it floors.
           expect(fresh.anchorMs).toBe(B);
           expect(history.anchorMs).toBe(B);
           expect(next(fireAt(fresh, B + 60_000))?.lastFiredBeatMs).toBe(B + 60_000);
@@ -398,7 +398,17 @@ describe('applyRestCadenceAction', () => {
         },
       );
 
-      it('on a running rest it moves nothing and earns nothing; a send logged now earns the advance', () => {
+      it('a waiting clock keeps waiting for a tick older than any rest, and floors one a millisecond younger', () => {
+        const advanced = advancedAt('send');
+        const older = at(advanced, tickAged(REST_CADENCE_OLDER_THAN_ANY_REST_MS + 1), B + 2_000);
+        const younger = at(advanced, tickAged(REST_CADENCE_OLDER_THAN_ANY_REST_MS), B + 2_000);
+        expect(older).toEqual(advanced);
+        expect(younger).toMatchObject({ anchorMs: B, isRunning: true, lastTick: null });
+        // Neither earns the send rule.
+        expect(fireAt(younger, B + 60_000)).toEqual({ applicable: false });
+      });
+
+      it('on a running rest it never rewinds and earns nothing; a send logged now earns the advance', () => {
         // Under send, the climber fell on this climb 30 s into a 90 s rest: the rest runs, the rule is not met.
         const running = clock({
           advanceOn: 'send',
@@ -406,69 +416,107 @@ describe('applyRestCadenceAction', () => {
           lastTick: { queueItemUuid: 'item-1', status: 'attempt' },
         });
         for (const elapsedMs of [REST_CADENCE_LATE_CLAMP_MS + 1, 10 * 60_000, DAY_MS]) {
-          const ticked = at(
-            running,
-            { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs },
-            NOW,
-          );
           // Before: the same anchor, and lastTick became this send, so the FIRE at NOW + 60 s applied.
-          expect(ticked).toEqual(running);
+          expect(at(running, tickAged(elapsedMs, 'item-1'), NOW)).toEqual(running);
         }
         expect(fireAt(running, NOW + 60_000)).toEqual({ applicable: false });
-        const sentNow = at(running, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' }, NOW);
+        const sentNow = at(running, tickAged(0, 'item-1'), NOW);
         expect(next(fireAt(sentNow, NOW + 90_000))?.lastFiredBeatMs).toBe(NOW + 90_000);
       });
 
-      it.each([
-        ['paused', clock({ isRunning: false, pausedElapsedSeconds: 20, anchorMs: NOW - 20_000 })],
-        ['waiting for a tick', clock({ anchorMs: null })],
-      ])('with no rest running (%s), a tick from yesterday starts a rest that is already over', (_label, idle) => {
-        const yesterday = at(
-          idle,
-          { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs: DAY_MS },
-          NOW,
+      it('on a stale running rest a tick newer than its anchor moves it forward, never before the last advance', () => {
+        // afterTick + deadline, 90 s, anchored 10 minutes ago (the last advance), long stale.
+        const stale = clock({ anchorMs: NOW - 10 * 60_000, lastFiredBeatMs: NOW - 10 * 60_000 });
+        const moved = at(stale, tickAged(REST_CADENCE_LATE_CLAMP_MS + 1_000), NOW);
+        expect(moved.anchorMs).toBe(NOW - 61_000);
+        expect(fireAt(moved, NOW + 29_000 - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS - 1)).toEqual({ applicable: false });
+        expect(next(fireAt(moved, NOW + 29_000))?.lastFiredBeatMs).toBe(NOW + 29_000);
+      });
+
+      it.each([REST_CADENCE_LATE_CLAMP_MS + 1, 70_000, 30 * 60_000, DAY_MS])(
+        'a paused clock stays paused for a tick %i ms old, as the phone keeps it; a send now resumes it',
+        (elapsedMs) => {
+          const paused = clock({ isRunning: false, pausedElapsedSeconds: 20, anchorMs: NOW - 20_000 });
+          // Before: it resumed at the tick's own time (or the floor) and counted up from there.
+          expect(at(paused, tickAged(elapsedMs), NOW)).toEqual(paused);
+          expect(fireAt(paused, NOW + 70_000)).toEqual({ applicable: false });
+          const sentNow = at(paused, tickAged(0), NOW);
+          expect(sentNow).toMatchObject({ isRunning: true, anchorMs: NOW });
+          expect(next(fireAt(sentNow, NOW + 90_000))?.lastFiredBeatMs).toBe(NOW + 90_000);
+        },
+      );
+
+      it('#6754 review: a pause, a tick 70 s old and a longer rest never move the wall 22 s after the last advance', () => {
+        const paused = at(deadlineAdvancedAt(), { action: 'PAUSE' }, B + 1_000);
+        const ticked = at(paused, tickAged(70_000), B + 2_000);
+        const longer = at(ticked, { action: 'CONFIGURE', config: NINETY }, B + 3_000);
+        // Before: the tick anchored at its own time (B - 68 s) and resumed, so after the CONFIGURE its
+        // deadline was B + 22 s and the FIRE there applied.
+        expect(ticked).toEqual(paused);
+        expect(fireAt(longer, B + 22_000)).toEqual({ applicable: false });
+        const resumed = at(longer, { action: 'RESUME' }, B + 4_000);
+        expect(resumed).toMatchObject({ anchorMs: B + 3_000, lastFiredBeatMs: B + 3_000 });
+        expect(fireAt(resumed, B + 22_000)).toEqual({ applicable: false });
+        expect(fireAt(resumed, B + 93_000 - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS - 1)).toEqual({ applicable: false });
+        expect(next(fireAt(resumed, B + 93_000))?.lastFiredBeatMs).toBe(B + 93_000);
+      });
+
+      it('#6754 review: rest Off, a pause, a tick 61 s old and a 90 s rest never move the wall 31 s after the last advance', () => {
+        const off = at(
+          deadlineAdvancedAt(),
+          { action: 'CONFIGURE', config: { ...SIXTY, targetSeconds: null } },
+          B + 500,
         );
-        expect(yesterday).toMatchObject({
-          anchorMs: NOW - MAX_REST_CADENCE_ELAPSED_MS,
-          isRunning: true,
-          lastTick: null,
-        });
-        expectNothingClaimable(yesterday, NOW, NOW + 10 * 60_000);
-        const sentNow = at(idle, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' }, NOW);
-        expect(next(fireAt(sentNow, NOW + 90_000))?.lastFiredBeatMs).toBe(NOW + 90_000);
+        const paused = at(off, { action: 'PAUSE' }, B + 1_000);
+        const ticked = at(paused, tickAged(61_000), B + 2_000);
+        const ninety = at(ticked, { action: 'CONFIGURE', config: NINETY }, B + 3_000);
+        // Before: Off counted as long gone, so the tick anchored at B - 59 s and the FIRE at B + 31 s applied.
+        expect(ticked).toEqual(paused);
+        expect(fireAt(ninety, B + 31_000)).toEqual({ applicable: false });
+        const resumed = at(ninety, { action: 'RESUME' }, B + 4_000);
+        expect(fireAt(resumed, B + 31_000)).toEqual({ applicable: false });
+        expect(next(fireAt(resumed, B + 93_000))?.lastFiredBeatMs).toBe(B + 93_000);
       });
 
-      it('with no rest running, one whose rest would still be live keeps the floor, so the wall never moves twice in seconds', () => {
-        // afterTick + deadline, 90 s: an advance at B restarts the rest from B, a pause lands at B + 1 s,
-        // and a tick logged 88 s back lands at B + 2 s. At its own time (B - 86 s) it would fall due at B + 4 s.
-        const advanced = next(fireAt(clock({ anchorMs: B - 90_000 }), B))!;
-        expect(advanced).toMatchObject({ anchorMs: B, lastFiredBeatMs: B });
-        const paused = at(advanced, { action: 'PAUSE' }, B + 1_000);
-        const ticked = at(
-          paused,
-          { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs: 88_000 },
+      it('#6754 review: a waiting clock, a tick 70 s old and a longer rest wait a full rest from the last advance', () => {
+        const waiting = at(deadlineAdvancedAt(), { action: 'CONFIGURE', config: SIXTY, anchor: 'CLEAR' }, B + 500);
+        const ticked = at(waiting, tickAged(70_000), B + 2_000);
+        // Before: its own 60 s rest ran out 10 s ago, so it anchored at B - 68 s, and the CONFIGURE below
+        // put the deadline at B + 22 s.
+        expect(ticked).toMatchObject({ anchorMs: B, isRunning: true });
+        const longer = at(ticked, { action: 'CONFIGURE', config: NINETY }, B + 3_000);
+        expect(fireAt(longer, B + 22_000)).toEqual({ applicable: false });
+        expect(next(fireAt(longer, B + 90_000))?.lastFiredBeatMs).toBe(B + 90_000);
+      });
+
+      it('a waiting clock that a stage change turns onTheMinute never beats seconds after the last advance', () => {
+        // A tick-rule rest advanced at B, a tick 2 h old lands, and the next stage is a 60 s EMOM (same
+        // interval, so the anchor is kept). Anchored at its own time (a whole number of minutes back), the
+        // grid would put a beat at B + 2 s.
+        const waiting = at(advancedAt('tick'), tickAged(2 * 60 * 60 * 1000), B + 2_000);
+        const emom = at(waiting, { action: 'CONFIGURE', config: ON_THE_MINUTE }, B + 3_000);
+        expect(claimableRestCadenceBeatMs({ ...emom, anchorMs: B + 2_000 - 2 * 60 * 60 * 1000 }, B + 3_000)).toBe(
           B + 2_000,
         );
-        expect(claimableRestCadenceBeatMs({ ...ticked, anchorMs: B - 86_000 }, B + 4_000)).toBe(B + 4_000);
-        expect(ticked).toMatchObject({ anchorMs: B, isRunning: true });
-        expect(fireAt(ticked, B + 4_000)).toEqual({ applicable: false });
-        expect(next(fireAt(ticked, B + 90_000))?.lastFiredBeatMs).toBe(B + 90_000);
+        expect(emom.anchorMs).toBeNull();
+        expect(fireAt(emom, B + 3_000)).toEqual({ applicable: false });
+        const ticked = at(emom, tickAged(0), B + 4_000);
+        expect(ticked.anchorMs).toBe(B + 4_000);
+        expect(fireAt(ticked, B + 64_000 - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS - 1)).toEqual({ applicable: false });
+        expect(next(fireAt(ticked, B + 64_000))?.lastFiredBeatMs).toBe(B + 64_000);
       });
 
       it('onTheMinute: it fills an empty anchor no earlier than the last advance, so no beat lands seconds after it', () => {
         // A stage boundary left the grid waiting right after a beat fired at B.
         const waiting = clock({ ...ON_THE_MINUTE, anchorMs: null, lastFiredBeatMs: B });
-        const ticked = at(
-          waiting,
-          { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: DAY_MS },
-          B + 2_000,
-        );
+        const ticked = at(waiting, tickAged(30 * 60_000), B + 2_000);
         // At its own time (a whole number of minutes back) a beat would fall due on the spot, 2 s after B.
-        const unfloored = { ...ticked, anchorMs: B + 2_000 - MAX_REST_CADENCE_ELAPSED_MS };
-        expect(claimableRestCadenceBeatMs(unfloored, B + 2_000)).toBe(B + 2_000);
+        expect(claimableRestCadenceBeatMs({ ...ticked, anchorMs: B + 2_000 - 30 * 60_000 }, B + 2_000)).toBe(B + 2_000);
         expect(ticked).toMatchObject({ anchorMs: B, lastTick: null });
         expect(fireAt(ticked, B + 2_000)).toEqual({ applicable: false });
         expect(next(fireAt(ticked, B + 60_000))?.lastFiredBeatMs).toBe(B + 60_000);
+        // A tick older than any rest leaves it waiting.
+        expect(at(waiting, tickAged(DAY_MS), B + 2_000)).toEqual(waiting);
       });
     });
 
@@ -667,10 +715,59 @@ describe('applyRestCadenceAction', () => {
       });
 
       it('afterTick refuses a deadline at or before the last beat it fired, such as a CONFIGURE NOW dated before that advance', () => {
+        expect(fire(due({ lastFiredBeatMs: NOW }))).toEqual({ applicable: false });
         expect(fire(due({ anchorMs: NOW - 95_000, lastFiredBeatMs: NOW - 5_000 }))).toEqual({ applicable: false });
-        expect(next(fire(due({ anchorMs: NOW - 95_000, lastFiredBeatMs: NOW - 5_001 })))?.lastFiredBeatMs).toBe(
-          NOW - 5_000,
-        );
+      });
+
+      describe('afterTick: two claimed deadlines are at least a rest minus REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS apart (#6754 review)', () => {
+        // The 90 s rest is due NOW; it may be claimed once the last beat is a rest minus 3 s back.
+        const boundMs = NOW - 90_000 + REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS;
+
+        it('refuses a deadline a millisecond inside the bound and claims one on it', () => {
+          expect(REST_CADENCE_AFTER_TICK_SPACING_SLACK_MS).toBe(REST_CADENCE_FIRE_EARLY_TOLERANCE_MS + 1_000);
+          expect(fire(due({ lastFiredBeatMs: boundMs + 1 }))).toEqual({ applicable: false });
+          expect(next(fire(due({ lastFiredBeatMs: boundMs })))?.lastFiredBeatMs).toBe(NOW);
+          // Before the fence, a deadline a millisecond after the last beat was claimed.
+          expect(fire(due({ anchorMs: NOW - 95_000, lastFiredBeatMs: NOW - 5_001 }))).toEqual({ applicable: false });
+        });
+
+        it('refuses the deadline a CONFIGURE NOW reached back for, 1 s after the last advance', () => {
+          // The holder claimed NOW at NOW - 2 s; a CONFIGURE NOW dated 89 s back put the next deadline at NOW + 1 s.
+          const fired = next(fire(due(), 0, NOW - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS))!;
+          const reachedBack = next(
+            applyRestCadenceAction(
+              fired,
+              { action: 'CONFIGURE', config: AFTER_TICK, anchor: 'NOW', elapsedMs: 89_000 },
+              NOW,
+              ME,
+            ),
+          )!;
+          expect(claimableRestCadenceBeatMs(reachedBack, NOW + 1_000)).toBe(NOW + 1_000);
+          expect(fire(reachedBack, 0, NOW + 1_000)).toEqual({ applicable: false });
+        });
+
+        it('still claims the rest after an early FIRE and a CONFIGURE NOW straight after it', () => {
+          const fired = next(fire(due(), 0, NOW - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS))!;
+          expect(fired).toMatchObject({ anchorMs: NOW, lastFiredBeatMs: NOW });
+          const reanchored = next(
+            applyRestCadenceAction(
+              fired,
+              { action: 'CONFIGURE', config: AFTER_TICK, anchor: 'NOW', elapsedMs: 0 },
+              NOW - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS,
+              ME,
+            ),
+          )!;
+          // Its deadline, NOW + 88 s, is 2 s inside a full rest from the last beat: inside the slack.
+          expect(reanchored.anchorMs).toBe(NOW - 2_000);
+          expect(fire(reanchored, 0, NOW + 86_000 - 1)).toEqual({ applicable: false });
+          expect(next(fire(reanchored, 0, NOW + 86_000))?.lastFiredBeatMs).toBe(NOW + 88_000);
+        });
+
+        it('leaves onTheMinute alone: a new interval may beat sooner than a full one after the last', () => {
+          expect(next(fire(beat({ anchorMs: NOW - 60_000, lastFiredBeatMs: NOW - 15_000 })))?.lastFiredBeatMs).toBe(
+            NOW,
+          );
+        });
       });
     });
 
