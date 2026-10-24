@@ -51,11 +51,6 @@ node --import tsx packages/db/scripts/analyze-workout-candidates.ts --format jso
 
 Dev database, 2026-10-24. Climbs counted at each layout's popular angle.
 
-◇ injected env (0) from ../../.boardsesh/dev-db.env // tip: ⌁ auth for agents [www.vestauth.com]
-◇ injected env (0) from ../../.env.local // tip: ⌘ override existing { override: true }
-◇ injected env (12) from ../web/.env.local // tip: ⌘ suppress logs { quiet: true }
-◇ injected env (0) from ../web/.env.development.local // tip: ⌘ override existing { override: true }
-
 #### No quality filter (minAscents 0, minRating 0)
 
 | board | layout | angle | core grades | climbs | median per grade | fewest per grade | volume 20 at one grade | grade focus 15 | pyramid 5 steps x 1 | ladder 5 steps x 2 |

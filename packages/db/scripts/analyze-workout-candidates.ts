@@ -9,9 +9,10 @@
  *
  *   minAscents {0,1,5,10,50,100} x minRating {0,2,3,3.5} x benchmarks only {no,yes}
  *
- * and how often a typical plan (volume 20, grade focus 15, pyramid 5x1, ladder
- * 5x2, built by the real generator on the board's real grade table) fills across the grades climbers actually target. The predicates mirror
- * the server search (create-climb-filters.ts): rounded display_difficulty,
+ * and how often a typical plan fills across the grades climbers actually
+ * target. The plans are volume 20, grade focus 15, pyramid 5x1 and ladder 5x2,
+ * each built by the real generator on the board's real grade table. The
+ * predicates mirror the server search (create-climb-filters.ts): rounded display_difficulty,
  * ascensionist_count >= minAscents, quality_average >= minRating,
  * benchmark_difficulty > 0, and is_listed / not draft / not hidden.
  *

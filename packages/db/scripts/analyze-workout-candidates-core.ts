@@ -32,9 +32,9 @@ export const DEFAULT_MIN_RATING = 2;
 export function tierOf(value: number | null, thresholds: readonly number[]): number {
   let tier = 0;
   if (value === null || Number.isNaN(value)) return tier;
-  thresholds.forEach((threshold, index) => {
+  for (const [index, threshold] of thresholds.entries()) {
     if (value >= threshold) tier = index;
-  });
+  }
   return tier;
 }
 
