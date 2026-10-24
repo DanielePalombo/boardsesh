@@ -1514,6 +1514,10 @@ production, keeps sending the queries it shipped with. Two rules follow (#5370):
 
 - **Backend first.** Deploy a new field before the OTA that queries it. An OTA that lands first
   fails those requests until the backend catches up.
+  The same holds on the train: tester builds and train OTAs query the production backend, which
+  deploys from `main`. A PR into `release/next` fails CI (`train-schema-on-main`) when a mobile
+  query is rejected by `main`'s schema, so land the server half on `main` first and merge `main`
+  into the train (#6111).
 - **Never remove what installed builds still query.** Mark the field `@deprecated` and remove it
   only after those builds are gone: the store release that stopped querying it has been out for a
   full adoption cycle, and PostHog's `OTA Update Status` event, grouped by `runtimeVersion` (see
@@ -1774,6 +1778,8 @@ against the staged commit. A 503, missing release SHA, unavailable Git history,
 or different schema fails closed. It does not poll or wait on a runner.
 The same one-shot check guards direct main dispatches, including native-build
 republishes; `release/next` retains its separate fingerprint guard.
+A PR into `release/next` is also checked against `main`'s committed schema in CI, because train
+builds talk to the production backend (`train-schema-on-main`, #6111).
 
 The staged bundle is visible only to someone who chooses Staging in the picker.
 That person may encounter a feature waiting for the backend change; the production
