@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vite-plus/test';
 import {
+  MAX_REST_CADENCE_ELAPSED_MS,
   REST_CADENCE_CAS_ATTEMPTS,
   REST_CADENCE_FIRE_EARLY_TOLERANCE_MS,
   REST_CADENCE_FIRE_LATE_TOLERANCE_MS,
+  REST_CADENCE_LATE_CLAMP_MS,
   REST_CADENCE_REVISION_EPOCH_MS,
   applyRestCadenceAction,
   buildRestCadenceChange,
   claimableRestCadenceBeatMs,
   commitRestCadenceAction,
+  isHistoricalRestCadenceTick,
   parseRestCadence,
   restCadenceRevisionFloor,
   sameRestCadence,
@@ -167,11 +170,15 @@ describe('applyRestCadenceAction', () => {
       ).toMatchObject({ isRunning: true, pausedElapsedSeconds: 0, anchorMs: NOW });
     });
 
-    it('clamps a late tick to a minute ago, so a replayed tick cannot fire an instant advance', () => {
+    it('leaves a running rest where it is for a tick an hour old, so a replayed tick cannot fire an instant advance', () => {
+      // Before #6729's twin this clamped the tick to a minute ago and moved the anchor up to NOW - 60 s,
+      // turning a rest that ran out 8.5 minutes ago into one due in 30 s.
       const longRest = clock({ anchorMs: NOW - 10 * 60_000 });
-      expect(next(reduce(longRest, { action: 'TICK', tickStatus: 'send', elapsedMs: 3_600_000 }))?.anchorMs).toBe(
-        NOW - 60_000,
-      );
+      expect(
+        next(
+          reduce(longRest, { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: 3_600_000 }),
+        )?.anchorMs,
+      ).toBe(NOW - 10 * 60_000);
     });
 
     it('the first tick of a session anchors where the climber logged it', () => {
@@ -183,9 +190,11 @@ describe('applyRestCadenceAction', () => {
 
     it('onTheMinute holds its beat and only starts a clock that has no anchor', () => {
       const beat = clock({ ...ON_THE_MINUTE, anchorMs: NOW - 42_000 });
-      expect(next(reduce(beat, { action: 'TICK', tickStatus: 'attempt', elapsedMs: 3_000 }))).toMatchObject({
+      expect(
+        next(reduce(beat, { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'attempt', elapsedMs: 3_000 })),
+      ).toMatchObject({
         anchorMs: NOW - 42_000,
-        lastTick: { queueItemUuid: null, status: 'attempt' },
+        lastTick: { queueItemUuid: 'item-2', status: 'attempt' },
       });
       const waiting = clock({ ...ON_THE_MINUTE, anchorMs: null });
       expect(next(reduce(waiting, { action: 'TICK', tickStatus: 'send', elapsedMs: 3_000 }))?.anchorMs).toBe(
@@ -300,6 +309,204 @@ describe('applyRestCadenceAction', () => {
           expect(next(fireAt(lateTick, B + 60_000))?.lastFiredBeatMs).toBe(B + 60_000);
         },
       );
+    });
+
+    describe('a tick logged more than a minute before it landed is history and never moves the wall (#6729 twin)', () => {
+      const SIXTY: RestCadenceConfig = { ...AFTER_TICK, targetSeconds: 60 };
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const fireAt = (state: RestCadenceState, nowMs: number) =>
+        applyRestCadenceAction(state, { action: 'FIRE', expectedRevision: 1 }, nowMs, ME);
+      const at = (state: RestCadenceState, input: RestCadenceInput, nowMs: number) =>
+        next(applyRestCadenceAction(state, input, nowMs, ME))!;
+      const B = NOW;
+      /** A tick or send advance at B: the anchor and the last tick are gone, and B is the fired beat. */
+      const advancedAt = (advanceOn: 'tick' | 'send') => {
+        const due = clock({
+          ...SIXTY,
+          advanceOn,
+          anchorMs: B - 60_000,
+          lastTick: { queueItemUuid: 'item-1', status: 'send' },
+        });
+        const advanced = next(fireAt(due, B))!;
+        expect(advanced).toMatchObject({ anchorMs: null, lastTick: null, lastFiredBeatMs: B });
+        return advanced;
+      };
+      /** Every second from `fromMs` to `toMs`: no beat is claimable and every FIRE is refused. */
+      const expectNothingClaimable = (state: RestCadenceState, fromMs: number, toMs: number) => {
+        for (let nowMs = fromMs; nowMs <= toMs; nowMs += 1_000) {
+          expect(claimableRestCadenceBeatMs(state, nowMs)).toBeNull();
+          expect(fireAt(state, nowMs)).toEqual({ applicable: false });
+        }
+      };
+
+      it('is judged on the tick’s own age: exactly a minute is fresh, a millisecond more is history', () => {
+        expect(isHistoricalRestCadenceTick(undefined)).toBe(false);
+        expect(isHistoricalRestCadenceTick(0)).toBe(false);
+        expect(isHistoricalRestCadenceTick(REST_CADENCE_LATE_CLAMP_MS)).toBe(false);
+        expect(isHistoricalRestCadenceTick(REST_CADENCE_LATE_CLAMP_MS + 1)).toBe(true);
+      });
+
+      it.each(['tick', 'send'] as const)(
+        "afterTick + %s: yesterday's send on the climb just lit leaves nothing to claim; a send now advances once",
+        (advanceOn) => {
+          const advanced = advancedAt(advanceOn);
+          const yesterday = at(
+            advanced,
+            { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: DAY_MS },
+            B + 2_000,
+          );
+          // Before: the floor anchored it at B with lastTick naming item-2, so a FIRE at B + 60 s moved the wall.
+          expect(yesterday).toMatchObject({
+            lastTick: null,
+            anchorMs: B + 2_000 - MAX_REST_CADENCE_ELAPSED_MS,
+            isRunning: true,
+          });
+          expectNothingClaimable(yesterday, B + 2_000, B + 10 * 60_000);
+
+          const sentNow = at(
+            yesterday,
+            { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: 1_000 },
+            B + 20_000,
+          );
+          expect(sentNow).toMatchObject({
+            lastTick: { queueItemUuid: 'item-2', status: 'send' },
+            anchorMs: B + 19_000,
+          });
+          expect(fireAt(sentNow, B + 79_000 - REST_CADENCE_FIRE_EARLY_TOLERANCE_MS - 1)).toEqual({ applicable: false });
+          const fired = next(fireAt(sentNow, B + 79_000))!;
+          expect(fired.lastFiredBeatMs).toBe(B + 79_000);
+          expect(fireAt(fired, B + 79_500)).toEqual({ applicable: false });
+        },
+      );
+
+      it.each(['tick', 'send'] as const)(
+        'afterTick + %s: a send logged exactly a minute back earns the advance; one a millisecond older does not',
+        (advanceOn) => {
+          const advanced = advancedAt(advanceOn);
+          const tickAged = (elapsedMs: number) =>
+            at(advanced, { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs }, B + 2_000);
+          const fresh = tickAged(REST_CADENCE_LATE_CLAMP_MS);
+          const history = tickAged(REST_CADENCE_LATE_CLAMP_MS + 1);
+          expect(fresh.lastTick).toEqual({ queueItemUuid: 'item-2', status: 'send' });
+          expect(history.lastTick).toBeNull();
+          // Both rest from the advance. The historical one's own rest ran out only 1 ms ago, inside the
+          // FIRE late tolerance, so it keeps the floor rather than its own time.
+          expect(fresh.anchorMs).toBe(B);
+          expect(history.anchorMs).toBe(B);
+          expect(next(fireAt(fresh, B + 60_000))?.lastFiredBeatMs).toBe(B + 60_000);
+          expect(fireAt(history, B + 60_000)).toEqual({ applicable: false });
+        },
+      );
+
+      it('on a running rest it moves nothing and earns nothing; a send logged now earns the advance', () => {
+        // Under send, the climber fell on this climb 30 s into a 90 s rest: the rest runs, the rule is not met.
+        const running = clock({
+          advanceOn: 'send',
+          anchorMs: NOW - 30_000,
+          lastTick: { queueItemUuid: 'item-1', status: 'attempt' },
+        });
+        for (const elapsedMs of [REST_CADENCE_LATE_CLAMP_MS + 1, 10 * 60_000, DAY_MS]) {
+          const ticked = at(
+            running,
+            { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs },
+            NOW,
+          );
+          // Before: the same anchor, and lastTick became this send, so the FIRE at NOW + 60 s applied.
+          expect(ticked).toEqual(running);
+        }
+        expect(fireAt(running, NOW + 60_000)).toEqual({ applicable: false });
+        const sentNow = at(running, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' }, NOW);
+        expect(next(fireAt(sentNow, NOW + 90_000))?.lastFiredBeatMs).toBe(NOW + 90_000);
+      });
+
+      it.each([
+        ['paused', clock({ isRunning: false, pausedElapsedSeconds: 20, anchorMs: NOW - 20_000 })],
+        ['waiting for a tick', clock({ anchorMs: null })],
+      ])('with no rest running (%s), a tick from yesterday starts a rest that is already over', (_label, idle) => {
+        const yesterday = at(
+          idle,
+          { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs: DAY_MS },
+          NOW,
+        );
+        expect(yesterday).toMatchObject({
+          anchorMs: NOW - MAX_REST_CADENCE_ELAPSED_MS,
+          isRunning: true,
+          lastTick: null,
+        });
+        expectNothingClaimable(yesterday, NOW, NOW + 10 * 60_000);
+        const sentNow = at(idle, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' }, NOW);
+        expect(next(fireAt(sentNow, NOW + 90_000))?.lastFiredBeatMs).toBe(NOW + 90_000);
+      });
+
+      it('with no rest running, one whose rest would still be live keeps the floor, so the wall never moves twice in seconds', () => {
+        // afterTick + deadline, 90 s: an advance at B restarts the rest from B, a pause lands at B + 1 s,
+        // and a tick logged 88 s back lands at B + 2 s. At its own time (B - 86 s) it would fall due at B + 4 s.
+        const advanced = next(fireAt(clock({ anchorMs: B - 90_000 }), B))!;
+        expect(advanced).toMatchObject({ anchorMs: B, lastFiredBeatMs: B });
+        const paused = at(advanced, { action: 'PAUSE' }, B + 1_000);
+        const ticked = at(
+          paused,
+          { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send', elapsedMs: 88_000 },
+          B + 2_000,
+        );
+        expect(claimableRestCadenceBeatMs({ ...ticked, anchorMs: B - 86_000 }, B + 4_000)).toBe(B + 4_000);
+        expect(ticked).toMatchObject({ anchorMs: B, isRunning: true });
+        expect(fireAt(ticked, B + 4_000)).toEqual({ applicable: false });
+        expect(next(fireAt(ticked, B + 90_000))?.lastFiredBeatMs).toBe(B + 90_000);
+      });
+
+      it('onTheMinute: it fills an empty anchor no earlier than the last advance, so no beat lands seconds after it', () => {
+        // A stage boundary left the grid waiting right after a beat fired at B.
+        const waiting = clock({ ...ON_THE_MINUTE, anchorMs: null, lastFiredBeatMs: B });
+        const ticked = at(
+          waiting,
+          { action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send', elapsedMs: DAY_MS },
+          B + 2_000,
+        );
+        // At its own time (a whole number of minutes back) a beat would fall due on the spot, 2 s after B.
+        const unfloored = { ...ticked, anchorMs: B + 2_000 - MAX_REST_CADENCE_ELAPSED_MS };
+        expect(claimableRestCadenceBeatMs(unfloored, B + 2_000)).toBe(B + 2_000);
+        expect(ticked).toMatchObject({ anchorMs: B, lastTick: null });
+        expect(fireAt(ticked, B + 2_000)).toEqual({ applicable: false });
+        expect(next(fireAt(ticked, B + 60_000))?.lastFiredBeatMs).toBe(B + 60_000);
+      });
+    });
+
+    describe('a tick naming no queue item keeps the last tick, as the phone does', () => {
+      const fireAt = (state: RestCadenceState, nowMs: number) =>
+        applyRestCadenceAction(state, { action: 'FIRE', expectedRevision: 1 }, nowMs, ME);
+
+      it.each([
+        ["the wall climb's send", { queueItemUuid: 'item-1', status: 'send' } as const],
+        ['no tick yet', null],
+      ])('keeps %s and still restarts the rest', (_label, lastTick) => {
+        const ticked = next(reduce(clock({ lastTick }), { action: 'TICK', tickStatus: 'attempt', elapsedMs: 2_000 }));
+        expect(ticked).toMatchObject({ lastTick, anchorMs: NOW - 2_000 });
+      });
+
+      it('under send, a send naming no queue item never earns the advance; the same send on the climb does', () => {
+        const waiting = clock({ advanceOn: 'send', anchorMs: null });
+        // Before: lastTick became { queueItemUuid: null, status: 'send' } and the FIRE at NOW + 90 s applied.
+        const offTheWall = next(reduce(waiting, { action: 'TICK', tickStatus: 'send' }))!;
+        expect(offTheWall).toMatchObject({ anchorMs: NOW, lastTick: null });
+        expect(fireAt(offTheWall, NOW + 90_000)).toEqual({ applicable: false });
+        const onTheWall = next(reduce(waiting, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' }))!;
+        expect(fireAt(onTheWall, NOW + 90_000).applicable).toBe(true);
+      });
+
+      it('under send, an attempt naming no queue item never takes the place of the send that earned the advance', () => {
+        const sent = clock({
+          advanceOn: 'send',
+          anchorMs: NOW - 10_000,
+          lastTick: { queueItemUuid: 'item-1', status: 'send' },
+        });
+        // Before: lastTick became { queueItemUuid: null, status: 'attempt' } and the send rule refused.
+        const elsewhere = next(reduce(sent, { action: 'TICK', tickStatus: 'attempt' }))!;
+        expect(elsewhere).toMatchObject({ anchorMs: NOW, lastTick: { queueItemUuid: 'item-1', status: 'send' } });
+        expect(fireAt(elsewhere, NOW + 90_000).applicable).toBe(true);
+        const onTheClimb = next(reduce(sent, { action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'attempt' }))!;
+        expect(fireAt(onTheClimb, NOW + 90_000)).toEqual({ applicable: false });
+      });
     });
   });
 

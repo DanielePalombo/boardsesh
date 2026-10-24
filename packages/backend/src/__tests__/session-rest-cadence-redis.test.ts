@@ -15,6 +15,7 @@ import { KEYS, TTL } from '../services/distributed-state/constants';
 import { RedisSessionStore } from '../services/redis-session-store';
 import { RoomManager } from '../services/room-manager';
 import {
+  MAX_REST_CADENCE_ELAPSED_MS,
   REST_CADENCE_FIRE_EARLY_TOLERANCE_MS,
   REST_CADENCE_FIRE_LATE_TOLERANCE_MS,
   commitRestCadenceAction,
@@ -423,6 +424,123 @@ describe.skipIf(!redisAvailable)('crew rest clock storage on Redis', () => {
         NOW + 1_019_000,
       ]);
       expect(redisOutcomes.map((commit) => commit.stored.cadence?.lastFiredBeatMs ?? null)).toContain(NOW + 250_000);
+      expect(memoryOutcomes).toEqual(redisOutcomes);
+    } finally {
+      await onRedis.shutdown();
+      onRedis.reset();
+      inMemory.reset();
+    }
+  });
+
+  it('keeps a historical or off-the-wall tick from moving the wall, the same on Redis and on the in-memory fallback', async () => {
+    const sessionId = newSessionId();
+    const onRedis = new RoomManager();
+    await onRedis.initialize(instanceOneRedis);
+    const inMemory = new RoomManager();
+    const sendRule = {
+      mode: 'afterTick',
+      targetSeconds: 60,
+      autoAdvance: true,
+      advanceOn: 'send',
+      source: 'stage',
+    } as const;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const tick = (queueItemUuid: string | null, status: 'send' | 'attempt', elapsedMs: number): RestCadenceInput => ({
+      action: 'TICK',
+      tickQueueItemUuid: queueItemUuid,
+      tickStatus: status,
+      elapsedMs,
+    });
+    // The beats that fire: B, then C, D and E.
+    const B = NOW + 61_000;
+    const C = B + 129_000;
+    const D = C + 61_000;
+    const E = D + 130_000;
+    const steps: Array<{ nowMs: number; input: RestCadenceInput }> = [
+      { nowMs: NOW, input: { action: 'ARM', config: sendRule, elapsedMs: 0 } },
+      { nowMs: NOW + 1_000, input: tick('item-1', 'send', 0) },
+      { nowMs: B, input: { action: 'FIRE' } },
+      // Yesterday's send on the climb just lit: it anchors at its own time (bounded at 4 h) and keeps the
+      // cleared last tick. Before, it anchored at B with lastTick item-2, and this FIRE at B + 60 s applied.
+      { nowMs: B + 2_000, input: tick('item-2', 'send', DAY_MS) },
+      { nowMs: B + 60_000, input: { action: 'FIRE' } },
+      // A send logged now authorizes the advance, which applies once.
+      { nowMs: B + 70_000, input: tick('item-2', 'send', 1_000) },
+      { nowMs: C, input: { action: 'FIRE' } },
+      { nowMs: C + 500, input: { action: 'FIRE' } },
+      // The boundary: a send a millisecond over a minute old earns nothing; one exactly a minute old does,
+      // and its rest (from C + 1 s) runs out at D, a second before the FIRE.
+      { nowMs: C + 2_000, input: tick('item-3', 'send', 60_001) },
+      { nowMs: C + 60_000, input: { action: 'FIRE' } },
+      { nowMs: C + 61_000, input: tick('item-3', 'send', 60_000) },
+      { nowMs: D + 1_000, input: { action: 'FIRE' } },
+      // A send naming no queue item (another climb, another angle) restarts the rest and earns nothing.
+      { nowMs: D + 5_000, input: tick(null, 'send', 0) },
+      { nowMs: D + 65_000, input: { action: 'FIRE' } },
+      // Nor does an attempt naming none take the place of the send that did.
+      { nowMs: D + 66_000, input: tick('item-4', 'send', 0) },
+      { nowMs: D + 70_000, input: tick(null, 'attempt', 0) },
+      { nowMs: E, input: { action: 'FIRE' } },
+      // On a running rest a historical tick changes nothing, so nothing is written.
+      { nowMs: E + 1_000, input: tick('item-5', 'attempt', 0) },
+      { nowMs: E + 30_000, input: tick('item-5', 'send', DAY_MS) },
+      { nowMs: E + 61_000, input: { action: 'FIRE' } },
+    ];
+    const run = async (manager: RoomManager) => {
+      const outcomes = [];
+      for (const { nowMs, input } of steps) {
+        const fenced =
+          input.action === 'FIRE'
+            ? { ...input, expectedRevision: (await manager.getSessionRestCadence(sessionId)).revision }
+            : input;
+        outcomes.push(await manager.updateSessionRestCadence(sessionId, fenced, 'phone', nowMs));
+      }
+      return outcomes;
+    };
+    try {
+      const redisOutcomes = await run(onRedis);
+      const memoryOutcomes = await run(inMemory);
+      expect(redisOutcomes.map((commit) => commit.applied)).toEqual([
+        // ARM, TICK, FIRE.
+        true,
+        true,
+        true,
+        // Yesterday's send applies (the anchor moves) but the FIRE it would have earned is refused.
+        true,
+        false,
+        // A send now, its FIRE, the same beat again.
+        true,
+        true,
+        false,
+        // 60 001 ms: refused FIRE. 60 000 ms: FIRE.
+        true,
+        false,
+        true,
+        true,
+        // No queue item: refused FIRE.
+        true,
+        false,
+        // A send, an attempt naming none, FIRE.
+        true,
+        true,
+        true,
+        // An attempt, a historical send that changes nothing, FIRE refused under send.
+        true,
+        false,
+        false,
+      ]);
+      const lastTicks = redisOutcomes.map((commit) => commit.stored.cadence?.lastTick ?? null);
+      expect(lastTicks[3]).toBeNull();
+      expect(lastTicks[8]).toBeNull();
+      expect(lastTicks[10]).toEqual({ queueItemUuid: 'item-3', status: 'send' });
+      expect(lastTicks[12]).toBeNull();
+      expect(lastTicks[15]).toEqual({ queueItemUuid: 'item-4', status: 'send' });
+      expect(lastTicks[18]).toEqual({ queueItemUuid: 'item-5', status: 'attempt' });
+      expect(redisOutcomes[3].stored.cadence?.anchorMs).toBe(B + 2_000 - MAX_REST_CADENCE_ELAPSED_MS);
+      expect(redisOutcomes[18].stored.cadence?.anchorMs).toBe(E + 1_000);
+      expect(redisOutcomes.map((commit) => commit.stored.cadence?.lastFiredBeatMs ?? null)).toEqual(
+        expect.arrayContaining([B, C, D, E]),
+      );
       expect(memoryOutcomes).toEqual(redisOutcomes);
     } finally {
       await onRedis.shutdown();

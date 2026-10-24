@@ -351,6 +351,71 @@ describe('setSessionRestCadence', () => {
     expect(ticked.change.restCadence?.setByParticipantId).toBe('builder-phone');
   });
 
+  describe('a tick logged more than a minute before it landed (#6729 twin)', () => {
+    const SEND_RULE = { ...SETTINGS_CONFIG, targetSeconds: 60, advanceOn: 'send', source: 'stage' } as const;
+    const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
+
+    /** Armed under send, sent on item-1, advanced at NOW + 61 s: no anchor, no last tick. */
+    async function advancedOnSend() {
+      await setRestCadence({ action: 'ARM', config: SEND_RULE, elapsedMs: 0 });
+      vi.setSystemTime(NOW + 1_000);
+      await setRestCadence({ action: 'TICK', tickQueueItemUuid: 'item-1', tickStatus: 'send' });
+      vi.setSystemTime(NOW + 61_000);
+      const before = await roomManager.getSessionRestCadence(SESSION_ID);
+      const fired = await setRestCadence({ action: 'FIRE', expectedRevision: before.revision });
+      expect(fired.applied).toBe(true);
+      expect(fired.change.restCadence).toMatchObject({ anchorAt: null, lastTickStatus: null });
+    }
+
+    it('applies, publishes a stale anchor and keeps the cleared last tick, so the FIRE it would have earned is refused', async () => {
+      await advancedOnSend();
+      vi.setSystemTime(NOW + 63_000);
+      const ticked = await setRestCadence({
+        action: 'TICK',
+        tickQueueItemUuid: 'item-2',
+        tickStatus: 'send',
+        elapsedMs: FOUR_HOURS_MS,
+      });
+      expect(ticked.applied).toBe(true);
+      expect(ticked.change.restCadence).toMatchObject({
+        anchorAt: String(NOW + 63_000 - FOUR_HOURS_MS),
+        isRunning: true,
+        lastTickQueueItemUuid: null,
+        lastTickStatus: null,
+      });
+      expect(pubsubMock.publishSessionEvent).toHaveBeenLastCalledWith(SESSION_ID, ticked.change);
+
+      pubsubMock.publishSessionEvent.mockClear();
+      vi.setSystemTime(NOW + 121_000);
+      const refused = await setRestCadence({ action: 'FIRE', expectedRevision: ticked.change.revision });
+      expect(refused.applied).toBe(false);
+      expect(pubsubMock.publishSessionEvent).not.toHaveBeenCalled();
+
+      // A send logged now earns it.
+      const sentNow = await setRestCadence({ action: 'TICK', tickQueueItemUuid: 'item-2', tickStatus: 'send' });
+      expect(sentNow.change.restCadence).toMatchObject({ lastTickQueueItemUuid: 'item-2', lastTickStatus: 'send' });
+      vi.setSystemTime(NOW + 181_000);
+      const fired = await setRestCadence({ action: 'FIRE', expectedRevision: sentNow.change.revision });
+      expect(fired.applied).toBe(true);
+    });
+
+    it('rejects an elapsed past 4 h without writing, so a client caps the age it sends there', async () => {
+      await advancedOnSend();
+      const stored = await roomManager.getSessionRestCadence(SESSION_ID);
+      pubsubMock.publishSessionEvent.mockClear();
+      await expect(
+        setRestCadence({
+          action: 'TICK',
+          tickQueueItemUuid: 'item-2',
+          tickStatus: 'send',
+          elapsedMs: FOUR_HOURS_MS + 1,
+        }),
+      ).rejects.toThrow(/Invalid input/);
+      expect(await roomManager.getSessionRestCadence(SESSION_ID)).toEqual(stored);
+      expect(pubsubMock.publishSessionEvent).not.toHaveBeenCalled();
+    });
+  });
+
   it('DISARM turns the clock off for everyone and keeps the revision climbing', async () => {
     await setRestCadence({ action: 'ARM', config: SETTINGS_CONFIG });
     const off = await setRestCadence({ action: 'DISARM' });
