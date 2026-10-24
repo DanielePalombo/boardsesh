@@ -24,6 +24,7 @@ import {
   planPlayNext,
   playNextInsertPosition,
   MAX_SYNCED_QUEUE_ITEMS,
+  clampQueueAroundCurrent,
 } from '@boardsesh/queue';
 import type {
   Climb,
@@ -1674,11 +1675,19 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   // and broadcasts to party peers when a session exists. In party mode a sync
   // failure would leave peers on the old queue, so reconcile like other failed
   // session mutations.
+  //
+  // Clamped to MAX_SYNCED_QUEUE_ITEMS as a backstop: `Mutation.setQueue` THROWS
+  // on a longer payload (see packages/shared/queue/src/limits.ts). The window
+  // keeps the current climb. Callers that can say what fit clamp first (the
+  // playlist replace toasts it); this only stops a caller of `setQueue` that
+  // forgot from sending a payload the server refuses. The session seed and
+  // re-seed push the live queue themselves and clamp it the same way.
   const setQueue = useCallback(
     (queue: ClimbQueueItem[], currentClimbQueueItem?: ClimbQueueItem | null) => {
       if (privacyRevocationGeneration !== getPrivacyRevocationGeneration()) return;
+      const syncableQueue = clampQueueAroundCurrent(queue, currentClimbQueueItem);
       invalidateQueuedQueueMutations();
-      applyQueueSnapshot(queue, currentClimbQueueItem, captureQueueMutationOrigin());
+      applyQueueSnapshot(syncableQueue, currentClimbQueueItem, captureQueueMutationOrigin());
     },
     [applyQueueSnapshot, captureQueueMutationOrigin, invalidateQueuedQueueMutations, privacyRevocationGeneration],
   );
