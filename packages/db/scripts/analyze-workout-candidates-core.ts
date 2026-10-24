@@ -65,10 +65,21 @@ export function allFilterCombos(): FilterCombo[] {
   return combos;
 }
 
-/** Climbs per grade that pass one filter combo. */
+/**
+ * Tier index of a filter value. Groups only carry tiers, so a value that is not
+ * one of the thresholds cannot be answered; `indexOf`'s -1 would pass every
+ * group and quietly report the unfiltered count.
+ */
+function thresholdTier(name: string, value: number, thresholds: readonly number[]): number {
+  const tier = thresholds.indexOf(value);
+  if (tier === -1) throw new Error(`${name} ${value} is not one of the measured thresholds (${thresholds.join(', ')})`);
+  return tier;
+}
+
+/** Climbs per grade that pass one filter combo. Throws for a threshold outside the measured grid. */
 export function countByGrade(groups: readonly TierGroup[], combo: FilterCombo): Map<number, number> {
-  const ascentsTier = MIN_ASCENTS_THRESHOLDS.indexOf(combo.minAscents as (typeof MIN_ASCENTS_THRESHOLDS)[number]);
-  const ratingTier = MIN_RATING_THRESHOLDS.indexOf(combo.minRating as (typeof MIN_RATING_THRESHOLDS)[number]);
+  const ascentsTier = thresholdTier('minAscents', combo.minAscents, MIN_ASCENTS_THRESHOLDS);
+  const ratingTier = thresholdTier('minRating', combo.minRating, MIN_RATING_THRESHOLDS);
   const counts = new Map<number, number>();
   for (const group of groups) {
     if (group.ascentsTier < ascentsTier) continue;
