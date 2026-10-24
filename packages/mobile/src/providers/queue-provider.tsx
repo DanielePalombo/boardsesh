@@ -2263,10 +2263,16 @@ export function QueueProvider({ children }: { children: ReactNode }) {
     // Mirrors nextClimb: swipes are list-first (issue #4829), so backward
     // navigation can land on a playlist peek too — mint it into a real queue
     // item before it reaches the WS mutation.
+    // The board only decides which queue entry stands for the list's previous
+    // climb, so a climb from another layout between two of the list's climbs
+    // can't make the swipe add a copy (#6664). Same inputs as nextClimb.
     const prevItem = findPreviousQueueItemWithSuggestions(
       queue,
       currentClimbQueueItem,
       playlistSuggestionSourceRef.current,
+      undefined,
+      toActiveBoardCompatibilityConfig(activeBoardRef.current),
+      isReachableClimbRef.current,
     );
     if (!prevItem) return;
     const { item, converted } = resolveCommittableQueueItem(prevItem);
@@ -2359,15 +2365,16 @@ export function QueueProvider({ children }: { children: ReactNode }) {
 
   // No-op unless the incoming source matches the active one (same playlist +
   // activated climb + board) — so a late async refresh can't clobber a newer
-  // activation. Mirrors the reducer's REFRESH semantics.
+  // activation. Mirrors the reducer's REFRESH semantics. Says whether it took
+  // the source, so a caller waiting on the refresh knows its track is the one
+  // the climber walks (#6664).
   const refreshPlaylistSuggestionSource = useCallback(
-    (source: PlaylistSuggestionSource) => {
+    (source: PlaylistSuggestionSource): boolean => {
+      const sameAccount = privacyRevocationGeneration === getPrivacyRevocationGeneration();
       setPlaylistSuggestionSourceState((current) =>
-        privacyRevocationGeneration === getPrivacyRevocationGeneration() &&
-        playlistSuggestionSourceMatches(current, source)
-          ? source
-          : current,
+        sameAccount && playlistSuggestionSourceMatches(current, source) ? source : current,
       );
+      return sameAccount && playlistSuggestionSourceMatches(playlistSuggestionSourceRef.current, source);
     },
     [privacyRevocationGeneration],
   );

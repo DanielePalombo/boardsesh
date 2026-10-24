@@ -4,8 +4,8 @@ How every list of climbs in the mobile app behaves today, where those lists disa
 each other, and the one model we are moving to. Issue #6230, part of the climbing-experience
 epic #6238.
 
-This page is documentation only. Nothing here changes the app. The changes are the
-follow-ups at the bottom (F1 to F6), filed once climbers have read this page.
+This page started as documentation only. The changes are the follow-ups at the bottom
+(F1 to F6), filed on 2026-10-23.
 
 Code references are to `main` at `1f9bc776a3` (2026-10-18). Mobile paths are under
 `packages/mobile/`, shared paths under `packages/shared/`. Line numbers drift; the function
@@ -27,6 +27,13 @@ Three in-app bug reports say the same thing in their own words:
 - #5924 (app 2.5.0, 2026-10-01): "When swiping down a climb in a playlist it returns to the
   all playlists page instead of the playlist you were on."
 
+And after this page went up, a climber answered the Discord check below (2026-10-23):
+
+> "The playlist is more of a conceptual misalignment for me. When I'm on a list view and I select
+> a climb I always think swipe left/right is relative to that list I just came from."
+
+That is rules 1 and 2 of the model, so the follow-ups are now filed.
+
 Three fixes have already shipped against this, and the model below builds on them:
 
 - #4829 (closed 2026-09-06): swipes in the player walk the list you opened the climb from,
@@ -46,7 +53,7 @@ Player wording is being agreed with #6229. Until then this page uses these words
 | Word                         | Meaning                                                                                                                        | In code                                              |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | List                         | Any screen that shows climbs in rows: search results, a playlist, your logbook, a session, the queue.                          | —                                                    |
-| Track, shown as "From …"     | The list the player is walking. Today the player does not name it anywhere.                                                    | `playlistSuggestionSource`                           |
+| Track, shown as "From …"     | The list the player is walking. Since F1 the header's stats line names it: "From Projects · 4 of 23" (the count only when it is known to be right). | `playlistSuggestionSource`, `resolveTrackLabel`      |
 | Queue                        | Your climbs in order: **History** (climbs before the current one), **Now** (the current climb), **Up next**. In a crew, the room's queue. | `queue`, `currentClimbQueueItem`                     |
 | Preview                      | The player shows a climb without making it current.                                                                             | `previewQueueItem`                                   |
 | Browsing (back chip)         | A preview whose swipes are guaranteed not to touch the wall.                                                                    | `WallPillState 'browsing'`                           |
@@ -68,7 +75,7 @@ Three terms keep the tables short.
 | --- | --- | --- |
 | Commit | A new queue entry for the climb is inserted right after the current climb and becomes current, even if that climb is already queued further on. Only three taps reuse an existing entry: re-tapping the current climb, a queue-sheet row, and a board-history row whose climb has a queue entry. | `setCurrentClimb`, `src/providers/queue-provider.tsx:2068`; the reducer skips the insert only for the same entry uuid (`packages/shared/queue/src/reducer.ts:289`), and every list tap mints one (`src/lib/climb-to-queue-item.ts:106`) |
 | Trackless preview | The player shows the climb without committing it and has no list to walk. The climb is not in the queue, so swiping and the Next and Previous buttons are disabled. | `packages/shared/play-view/src/queue-navigation.ts:269-270`, `canNext` at `:449` |
-| Track end | For a committed climb: when the player reaches the end of the list it is walking, Next carries on into whatever is queued after the current climb. For a preview (wrong-board, or a crew tap with the flag on) the climb on screen is not in the queue, so Next simply stops at the end of the list. | Committed: `queue-navigation.ts:260-267`. Preview: `:269-270` (previous: `:338-339`) |
+| Track end | Since F1 (#6664): at the last climb of the list it is walking, Next or one more forward swipe opens an end card, "Keep going with your queue (N)", N being Up next. From a committed climb its action goes to the next queued climb (a preview of it when swipes are view-only); from a preview it goes back to the queue's Now. With nothing Up next the card says the list is finished. Previous stops at the list's first climb. While more of the list is still loading (the next page, or the load that follows a tap) the card waits and Next stays off until it lands. Rest-timer auto-advance stops here too, with "End of the list" on its pill. Before F1, a committed climb fell into the queue here and a preview stopped dead. | `selectNextQueueItemWithSuggestions` (`atTrackEnd`), `resolveTrackEndCard`, `TrackEndCard.tsx` |
 
 **The crew column has two halves.** Everything that makes a tap a private look in a crew
 (#4281) sits behind the PostHog flag `shared-session-browse`
@@ -80,8 +87,8 @@ drives the wall, and the "flag on" behaviour below is built but nobody has it ye
 
 | Surface | How you get there | Tap (solo) | Next after the tap | End of the list |
 | --- | --- | --- | --- | --- |
-| Search results | Climbs tab | Commits, flagged `suggested`, with the results as the track (`app/(tabs)/climbs/index.tsx:1302-1326`). With Light on tap off: a trackless preview (`:1313-1318`). | Walks the results | Track end. The track holds about 250 climbs after the tapped one (rounded up to a page of 100; never past the first 1,000 results). |
-| Setter page | For You setter card, the setter's name in the player, Home's "See all" | Replaces the queue with the setter's climbs; "Start playlist?" first if anything is queued after the current climb (`app/(tabs)/climbs/setter/[username].tsx:61-69`). | Walks the queue, which is now the list | Stops at the end of the queue |
+| Search results | Climbs tab | Commits, flagged `suggested`, with the results as the track (`app/(tabs)/climbs/index.tsx:1302-1326`). With Light on tap off: a trackless preview (`:1313-1318`). | Walks the results | Track end. The first load holds about 250 climbs after the tapped one (rounded up to a page of 100); since F1 one more page loads as the climber nears its end, up to the first 1,000 results. |
+| Setter page | For You setter card, the setter's name in the player, Home's "See all" | Replaces the queue with the setter's climbs this board can draw; "Start playlist?" first if anything is queued after the current climb (`src/components/SetterPlaylistScreen.tsx`, behind both setter routes). | Walks the list, which the queue now holds climb for climb, under the setter's name | Track end |
 | Playlist | Discover › a playlist | As the setter page (`usePlaylistActivation` in `app/(tabs)/discover/[playlist_uuid].tsx`). The Material app bar's play button does the same with the first climb. The **Add to queue** row appends instead. With a sort or filter on, all three use the sorted, filtered list on screen (see [Sorting and filtering a playlist](#sorting-and-filtering-a-playlist)). | As the setter page | As the setter page |
 | For You and smart lists (Projects, Liked Climbs and the rest) | Discover › For You | As the setter page (`app/(tabs)/discover/smart/[type].tsx:119-128`) | As the setter page | As the setter page |
 | Logbook | You › Logbook | Commits, no track, not flagged `suggested` (`src/components/you/LogbookTab.tsx:504-510`, then `use-play-selection-controller.ts:184-186`) | Walks the queue | Stops at the end of the queue |
@@ -225,7 +232,7 @@ Same gesture, five outcomes, depending on which screen the row is on.
   `app/(tabs)/climbs/index.tsx:1291-1326`, `src/lib/playlists/use-playlist-activation.ts:976-989`.
 - **Replace the queue.** Playlists, For You lists and setter pages swap the whole queue for the
   list, after a "Start playlist?" prompt if anything is queued after the current climb:
-  `use-playlist-activation.ts:910-948`, `app/(tabs)/climbs/setter/[username].tsx:62-69`. The
+  `use-playlist-activation.ts:910-948`, `src/components/SetterPlaylistScreen.tsx:65-72`. The
   replace also drops your History, which the prompt doesn't mention, and with nothing queued
   after the current climb there is no prompt at all (`use-playlist-activation.ts:926`).
 - **Insert, no track.** Logbook, sessions and profile climbs insert the climb with no list to
@@ -244,6 +251,10 @@ Light on tap only changes the first of these. Search is the only list that reads
 says.
 
 ### 2. Next goes somewhere you can't see
+
+Fixed by F1 (#6664): the player names the list, swipes stop at both ends with an end card,
+tracks page past the first load, and "Start playlist" keeps a track named after the playlist.
+What follows is how it was.
 
 The player doesn't say which list it is walking, and the walk ends silently.
 
@@ -375,10 +386,20 @@ _Tapping a playlist climb with 3 climbs queued after the current one. (1) Start 
 
 ### 8. Getting back
 
-- Closing the player from a playlist can land you on the all-playlists page instead of the
-  playlist (#5924).
-- A setter list in For You opens in the Climbs tab, not Discover, so Back goes somewhere else:
-  `app/(tabs)/discover/index.tsx:382-384`.
+Fixed by F5 (#6668):
+
+- Closing the player from a playlist landed on Discover's main page instead of the playlist
+  (#5924). Discover reset its stack on every `blur`, and opening the player blurs the tab
+  under it. #5927 made the reset wait for a real tab change (`usePopToTopOnTabBlur`), and a
+  test now checks that one close pops only the player (`use-play-swipe-dismiss.test.tsx`).
+- The player is a `transparentModal` over the live tab on every shell (native tabs, JS tabs,
+  the iPad compact player and the browser app), so the list under it never unmounts and keeps
+  its scroll position. No list in [Before and after](#before-and-after) remounts, re-keys or
+  resets its query when the player opens or closes.
+- A setter list in For You opened in the Climbs tab, so Back left Discover. It now opens
+  Discover's own copy of the route, `app/(tabs)/discover/setter/[username].tsx`, which renders
+  the same screen as the Climbs one. The setter's name in the player and Home's "See all"
+  still open the Climbs copy; #6572 (the Climbs stack has no anchor) is unchanged.
 
 ### 9. Similar climbs
 
@@ -403,22 +424,21 @@ previews instead (`:325`).
 
 ### 11. The queue sheet
 
-- It shows the last 2 History rows (`src/components/play-drawer/QueueList.tsx:42`); the shared
-  model's default is 5 (`packages/shared/play-view/src/queue-list-model.ts:3`).
-- Suggestions follow Up next with no header and no divider (`QueueList.tsx:142-190`), so they
-  read as queued climbs.
-- The sheet is titled Up next (`QueueSheetHeader.tsx:110`), but its climb count is the whole
-  queue, History and the current climb included (`QueueSheet.tsx:296`).
+- It shows the last 2 History rows. That is the shared model's default
+  (`packages/shared/play-view/src/queue-list-model.ts`); a QA follow-up cut it from 5 on purpose.
+- The sheet labels its sections History, Up next and Suggestions, each only when it has rows,
+  with a divider before Suggestions (`QueueList.tsx`), so suggestions no longer read as queued
+  climbs.
+- The count in the sheet header is the Up next count: the climbs after the current one
+  (`QueueSheet.tsx`).
 - Tapping a queue row clears the track (`use-queue-sheet-handlers.ts:65`); tapping a suggestion
   sets one (`:94`).
 - A workout queues as one flat run: the preview's sections (warm-up and so on) don't survive
   into the queue (`src/components/session-screen/pre-session/use-workout-preview.ts:269-273`).
-- The comment at `src/components/queue-control/persistent-queue-bar.tsx:10` still describes a
-  swipe on the mini-player that was removed; the bar only has a tap. Fix it in F6.
 
 <img src="images/list-model/queue-sheet.png" alt="The queue sheet: History, the current climb, Up next and unlabelled suggestions" width="320">
 
-_The queue sheet. (1) History. (2) The current climb. (3) Up next. (4) Suggestions, with no header or divider; with no playlist playing they are the board's most-sent climbs. The title says Up next, but its count of 4 includes History and the current climb._
+_The queue sheet. (1) History. (2) The current climb. (3) Up next. (4) Suggestions; with no playlist playing they are the board's most-sent climbs. This screenshot predates F6: it shows no section labels or divider, and a count of 4 that includes History and the current climb._
 
 ## The model: play from a list, queue on purpose
 
@@ -444,12 +464,13 @@ Seven rules. Each one reuses a part that already exists in the code: the list tr
 ![Lists feed the player as tracks; the queue only fills on purpose; Put on the wall lights the board](diagrams/climb-lists-model.svg)
 
 Only rule 3 needs a sync design choice, because the current climb lives inside the queue
-today. Two ways to do it, decided in F3 rather than here:
+today. Two ways to do it:
 
 - **(a)** Run the existing browse-origin cleanup whenever no crewmate is connected (today it
   only runs with no session at all), and send the removals to the server when a solo session
-  exists. Smaller. Recommended.
+  exists. Smaller, but it cleans up after the cause instead of removing it.
 - **(b)** Let the current climb live outside the queue. This is the blocker named on #3841.
+  **Chosen (2026-10-23)**, in F3 (#6666). It needs its own sync design in `docs/` before code.
 
 The other direction we considered, "playing a list makes it the queue", was rejected: in a
 crew it rewrites everyone's queue on every tap, and a long list runs past the 500-climb queue
@@ -468,10 +489,10 @@ player names that list, walks it, and stops at its end card.
 
 | Surface                                  | Today                                                                                     | After                                                                                              |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Search results                           | Inserts the climb into the queue (a second copy if it was already queued) and walks the results; past the end, walks the queue. | Plays from the results. Nothing is added to Up next (F1, F3).                                      |
-| Playlist                                 | Replaces the queue, after "Start playlist?" if anything is queued. Play-all on Material only. | Plays from the playlist. Play button in both looks. Add to queue copies it in. The switch keeps today's replace (F4). |
-| For You and smart lists                  | Replaces the queue, same prompt.                                                          | Plays from the list (F4).                                                                          |
-| Setter page                              | Replaces the queue, same prompt.                                                          | Plays from the setter's list (F4).                                                                 |
+| Search results                           | Inserts the climb into the queue (a second copy if it was already queued) and walks the results, named "From Search results", to the end card (F1). | Plays from the results. Nothing is added to Up next (F1, F3).                                      |
+| Playlist                                 | Replaces the queue, after "Start playlist?" if anything is queued, and walks it as the named playlist to the end card (F1). Play-all on Material only. | Plays from the playlist. Play button in both looks. Add to queue copies it in. The switch keeps today's replace (F4). |
+| For You and smart lists                  | Replaces the queue, same prompt; walks it as the named list (F1).                         | Plays from the list (F4).                                                                          |
+| Setter page                              | Replaces the queue, same prompt; walks it as the setter's list (F1).                      | Plays from the setter's list (F4).                                                                 |
 | Logbook                                  | Inserts the climb; swipes walk the queue.                                                 | Plays from the logbook (F2).                                                                       |
 | Session detail                           | Inserts the climb; swipes walk the queue.                                                 | Plays from the session's ticks (F2).                                                               |
 | Profile climbs                           | Inserts the climb; swipes walk the queue.                                                 | Plays from the profile list (F2).                                                                  |
@@ -521,7 +542,9 @@ Post this page in Discord before filing F1 to F6, and ask @brownbeagle whether i
 | `packages/shared/queue/src/playlist-suggestions.ts`                    | Tracks, peeks and the browse-origin prune (`pruneSuggestedQueueItemsAfterCurrent`).                            |
 | `packages/shared/queue/src/reducer.ts`                                 | Insert-after-current on activation (lines 289-299).                                                            |
 | `packages/shared/play-view/src/browse-defaults.ts`                     | The crew gate, `shouldDefaultToBrowse`.                                                                        |
-| `packages/shared/playlists-react/src/fetch-playlist-suggestion-climbs.ts` | The 250-climb track cap and the 20-page replace drain.                                                      |
+| `packages/shared/playlists-react/src/fetch-playlist-suggestion-climbs.ts` | A track's first load, the one-page `fetchPlaylistTrackPage`, the 1,000-climb track bound and the 20-page replace drain. |
+| `src/lib/playlists/track-pager.ts`, `src/components/play-drawer/use-track-paging.ts` | Paging a track past what is loaded, one page as the climber nears its end.                               |
+| `packages/shared/play-view/src/track-label.ts`, `src/components/play-drawer/track-end.ts` | The header's "From Projects · 4 of 23" and the end card model.                                  |
 | `src/lib/playlists/use-playlist-activation.ts`                         | Every list tap that goes through a track: wrong board, crew preview, replace, insert.                         |
 | `src/components/play-drawer/use-play-selection-controller.ts`          | Opens without a track (logbook, sessions, profile, feed) and the similar-climbs tap.                          |
 | `src/components/play-drawer/play-drawer-navigation.ts`                 | Whether a swipe stays a preview or commits.                                                                    |
@@ -532,13 +555,14 @@ Post this page in Discord before filing F1 to F6, and ask @brownbeagle whether i
 
 ## Follow-ups
 
-Not filed yet. They are filed, and linked here, after the Discord check above.
+Filed on 2026-10-23 under #6238: F1 #6664, F2 #6665, F3 #6666, F4 #6667, F5 #6668, F6 #6669.
+A race found while filing them is #6670: swiping before a playlist finishes loading can jump back to the tapped climb.
 
 | ID | What changes for the climber                                                                                             | Closes or rescopes             | Notes                                                                          |
 | -- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------ | ------------------------------------------------------------------------------ |
 | F1 | The player names the list it is walking and stops at its end with "Keep going with your queue (N)".                     | Closes #3841                   | Header wording with #6229. Removes the 250-climb track cap or pages past it. Today only a committed climb falls back into the queue at a list's end; previews (wrong board, crew) stop dead, so the end card needs its own way into the queue for them. |
 | F2 | Every list opens a climb the same way. Record history and the board history sheet stop taking a crew's wall.            | Closes #5157                   | Home taps follow F2 (#6289). The crew half only reaches climbers once `shared-session-browse` is turned on; that ramp is its own decision. |
-| F3 | Looking at a climb stops adding it to Up next, opening a climb that is already queued stops adding a second copy, and connecting after a long gap doesn't light an old climb. | #4979                          | Risk 4/5: changes what the server's queue holds. Pick (a) or (b) above.       |
+| F3 | Looking at a climb stops adding it to Up next, opening a climb that is already queued stops adding a second copy, and connecting after a long gap doesn't light an old climb. | #4979                          | Risk 4/5: changes what the server's queue holds. Option (b) above.            |
 | F4 | Playlists, For You and setter pages play from the list without wiping the queue. The iOS playlist header gets a play button. | Rescopes #3511              | Adds the "Tapping a playlist loads it into my queue" switch, default off.     |
 | F5 | Closing the player returns you to the list and scroll position you came from.                                            | Closes #5924                   |                                                                                |
 | F6 | The queue sheet labels Up next, History and Suggestions.                                                                 | —                              | Also fixes the stale swipe comment in `persistent-queue-bar.tsx:10`.          |

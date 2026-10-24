@@ -10,6 +10,10 @@ const nextClimb = vi.fn();
 const showToast = vi.fn();
 const keepAwakeCalls: { active: boolean; tag: string }[] = [];
 let canNext = true;
+let atTrackEnd = false;
+let moreToLoad = false;
+let suggestionSource: { playlistUuid: string } | null = null;
+const trackPagingInputs: Record<string, unknown>[] = [];
 let isSharedSession = false;
 let inAppBoardConnection = 'connectedByMe';
 let settings: Record<string, unknown> = {};
@@ -48,14 +52,24 @@ vi.mock('@boardsesh/play-view', async (importOriginal) => ({
     nextItem: null,
     prevItem: null,
     remainingCount: 0,
+    atTrackEnd,
   }),
 }));
 
 vi.mock('../../../providers/queue-provider', () => ({
-  useQueueActions: () => ({ nextClimb }),
-  useQueueData: () => ({ queue: [], currentClimbQueueItem: null }),
+  useQueueActions: () => ({ nextClimb, getQueueSnapshot: vi.fn(), refreshPlaylistSuggestionSource: vi.fn() }),
+  useQueueData: () => ({ queue: [], currentClimbQueueItem: { uuid: 'queue-current', climb: { uuid: 'current' } } }),
   useIsSharedSession: () => isSharedSession,
-  usePlaylistSuggestionSource: () => null,
+  usePlaylistSuggestionSource: () => suggestionSource,
+}));
+
+// The pager is pinned in its own tests; here, only whether more of the list is
+// still on its way, and that the scheduler asks for it.
+vi.mock('../../../lib/playlists/track-pager', () => ({ canLoadMoreOfTrack: () => moreToLoad }));
+vi.mock('../../play-drawer/use-track-paging', () => ({
+  useTrackPaging: (inputs: Record<string, unknown>) => {
+    trackPagingInputs.push(inputs);
+  },
 }));
 
 vi.mock('../../../lib/graphql/use-active-board', () => ({
@@ -112,6 +126,10 @@ beforeEach(() => {
   resetRestTimerStoreForTests();
   keepAwakeCalls.length = 0;
   canNext = true;
+  atTrackEnd = false;
+  moreToLoad = false;
+  suggestionSource = null;
+  trackPagingInputs.length = 0;
   isSharedSession = false;
   inAppBoardConnection = 'connectedByMe';
   currentNowMs = T0;
@@ -272,6 +290,97 @@ describe('the end of the queue', () => {
     advance(120_000);
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(nextClimb).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #6664: swipes and Next stop at the end of the list being walked, and so
+// does the hands-free beat. The queue behind the list is still there.
+describe('the end of a list', () => {
+  it('says the list ended, not the queue', () => {
+    canNext = false;
+    atTrackEnd = true;
+    armWithTick();
+    render(<RestTimerAutoAdvanceScheduler />);
+
+    advance(60_000);
+    expect(nextClimb).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('mobile.restTimer.listEndedToast', 'info');
+    expect(getRestTimerState()).toMatchObject({ queueEnded: true, listEnded: true });
+  });
+
+  it('waits without a word while more of the list is loading, then takes the beat when it lands', () => {
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    canNext = false;
+    atTrackEnd = true;
+    moreToLoad = true;
+    armWithTick();
+    const { rerender } = render(<RestTimerAutoAdvanceScheduler />);
+
+    advance(60_000);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(nextClimb).not.toHaveBeenCalled();
+    // Not latched as ended: the pill must not say "End of the list" meanwhile.
+    expect(getRestTimerState()).toMatchObject({ queueEnded: false });
+
+    // The page lands as a longer track. The beat was due already, so it goes
+    // now, not after another whole rest (#6664 second review).
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    canNext = true;
+    atTrackEnd = false;
+    moreToLoad = false;
+    act(() => rerender(<RestTimerAutoAdvanceScheduler />));
+    expect(nextClimb).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops the waiting beat if the climber stops driving the wall before the page lands', () => {
+    // A late page must not move a crew's shared queue from a passenger's phone.
+    isSharedSession = true;
+    inAppBoardConnection = 'connectedByMe';
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    canNext = false;
+    atTrackEnd = true;
+    moreToLoad = true;
+    armWithTick();
+    const { rerender } = render(<RestTimerAutoAdvanceScheduler />);
+    advance(60_000);
+
+    inAppBoardConnection = 'heldByPeer';
+    act(() => rerender(<RestTimerAutoAdvanceScheduler />));
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    canNext = true;
+    atTrackEnd = false;
+    moreToLoad = false;
+    act(() => rerender(<RestTimerAutoAdvanceScheduler />));
+    expect(nextClimb).not.toHaveBeenCalled();
+  });
+
+  it('says the list ended once the page it waited for ends the track', () => {
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    canNext = false;
+    atTrackEnd = true;
+    moreToLoad = true;
+    armWithTick();
+    const { rerender } = render(<RestTimerAutoAdvanceScheduler />);
+    advance(60_000);
+
+    // The page failed or was the last: the track ends where it is.
+    suggestionSource = { playlistUuid: 'playlist:projects' };
+    moreToLoad = false;
+    act(() => rerender(<RestTimerAutoAdvanceScheduler />));
+    expect(nextClimb).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('mobile.restTimer.listEndedToast', 'info');
+  });
+
+  it('pages the list the climber is on with the player closed', () => {
+    suggestionSource = { playlistUuid: 'smart:projects:user' };
+    armWithTick();
+    render(<RestTimerAutoAdvanceScheduler />);
+
+    expect(trackPagingInputs.at(-1)).toMatchObject({
+      source: suggestionSource,
+      displayedClimbUuid: 'current',
+      previewTrack: false,
+    });
   });
 });
 

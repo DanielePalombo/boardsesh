@@ -5,7 +5,7 @@ import { ScrollEdgeListReset, useScrollEdgeBackdrop } from '../../../src/hooks/u
 import { useRefocusCount } from '../../../src/hooks/use-refocus-count';
 import { useLiveClimbFilters, type ClimbFilterSelection } from '../../../src/hooks/use-live-climb-filters';
 import type { WindowAnchorPoint } from '../../../src/components/navigation/AnchoredPopover.types';
-import { memo, useState, useCallback, useMemo, useRef, useEffect, type ComponentProps } from 'react';
+import { memo, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -44,7 +44,7 @@ import {
 import { getTallWideScope } from '@boardsesh/board-constants';
 import { boardSupportsMirroring, getBoardCapabilities } from '@boardsesh/board-config';
 import { ClimbProgressProvider, type ClimbProgressTarget } from '../../../src/providers/climb-progress-provider';
-import { ClimbListRow } from '../../../src/components/ClimbListRow';
+import { ActiveAwareClimbListRow } from '../../../src/components/ActiveAwareClimbListRow';
 import { ClimbListRowSkeleton } from '../../../src/components/ClimbListRowSkeleton';
 import {
   DEFAULT_CLIMB_ROW_SURFACE,
@@ -89,10 +89,10 @@ import {
 } from '../../../src/lib/dimension-chips';
 import { shouldShowQuickActionsTip } from '../../../src/lib/onboarding/quick-actions-tip';
 import { hapticMedium } from '../../../src/lib/haptics';
-import { useDrawerHost, usePreviewedClimbUuid } from '../../../src/providers/drawer-host-provider';
+import { useDrawerHost } from '../../../src/providers/drawer-host-provider';
 import { useTheme, useAppColorScheme } from '../../../src/providers/theme-provider';
 import { selectByVariant } from '../../../src/theme/variants';
-import { useActiveClimbUuid, useIsSharedSession, useQueueActions } from '../../../src/providers/queue-provider';
+import { useIsSharedSession, useQueueActions } from '../../../src/providers/queue-provider';
 import { ClimbSearchProvider, useClimbSearch, type GradeBound } from '../../../src/providers/climb-search-provider';
 import { setSetting, useSetting } from '../../../src/settings';
 import { climbToQueueItem } from '../../../src/lib/climb-to-queue-item';
@@ -124,6 +124,8 @@ import { useOfflineCatalogState } from '../../../src/offline/use-offline-catalog
 import { OfflineCatalogCta } from '../../../src/components/offline/OfflineCatalogCta';
 import { OfflineState } from '../../../src/components/OfflineState';
 import { SEARCH_CLIMBS, type SearchClimbsQueryResponse } from '../../../src/lib/graphql/operations';
+import { useFetchCachedSearchClimbsCount } from '../../../src/lib/graphql/hooks/search-climbs-count-query';
+import { useStoredUserId } from '../../../src/hooks/use-current-user-id';
 import { usePlaylistActivation } from '../../../src/lib/playlists/use-playlist-activation';
 import { useFrozenSearchBasis } from '../../../src/lib/playlists/use-frozen-search-basis';
 import { toQueueClimb, toQueueClimbs } from '../../../src/lib/climb-types';
@@ -246,26 +248,6 @@ export default function ClimbList() {
   );
 }
 
-// Reads the active-climb selector itself, so navigating climbs re-renders only
-// these cheap row wrappers (and the two ClimbListRows whose `selected` flips) —
-// never ClimbListInner or the FlashList. ClimbListRow stays presentational (a
-// plain `selected` prop), so PlaylistDetailView's rows are unaffected.
-const ActiveAwareClimbListRow = memo(function ActiveAwareClimbListRow(
-  props: Omit<ComponentProps<typeof ClimbListRow>, 'selected'>,
-) {
-  const activeClimbUuid = useActiveClimbUuid();
-  // The highlight means "the climb you last had up", which is not always the
-  // queue's current climb. A row tap can open a view-only preview that never
-  // writes the queue, and `activeClimbUuid` by construction only moves when the
-  // queue does — so keying the highlight on it alone left a climber tapping down
-  // a filtered list with no feedback that anything had been selected at all.
-  // The previewed uuid clears itself on the next committing open, so exactly one
-  // row is ever selected.
-  const previewedClimbUuid = usePreviewedClimbUuid();
-  const selectedClimbUuid = previewedClimbUuid ?? activeClimbUuid;
-  return <ClimbListRow {...props} selected={props.climb.uuid === selectedClimbUuid} />;
-});
-
 function ClimbListInner() {
   const {
     data: activeBoard,
@@ -348,6 +330,7 @@ function ClimbListInner() {
   }, [screenshotGradeSetupKey]);
   const { t } = useTranslation('climbs');
   const { t: tCommon } = useTranslation('common');
+  const { t: tSession } = useTranslation('session');
   const { openClimbActions, openAddToPlaylist, openBoardSheet, openPlayDrawer, usesDetailPane } = useDrawerHost();
   const [lightOnClimbTap] = useSetting('lightOnClimbTap');
   // The grade row is hidden until the Grade chip opens it. Then it stays, across
@@ -1261,10 +1244,10 @@ function ClimbListInner() {
   // Reads the frozen basis rather than taking the filters as dependencies, so one
   // drain cannot straddle two orderings and the callback identity stays stable
   // across list refetches.
-  const fetchSearchPage = useCallback(
-    async ({ page, pageSize }: { page: number; pageSize: number }) => {
-      const { filters: basisFilters, boardFilters: basisBoardFilters, name: basisName } = searchBasis.read();
-      const input = withGradeSource(
+  const searchInputForPage = useCallback(
+    (basis: ReturnType<typeof searchBasis.read>, page: number, pageSize: number) => {
+      const { filters: basisFilters, boardFilters: basisBoardFilters, name: basisName } = basis;
+      return withGradeSource(
         mergeBoardFilters(
           toClimbSearchInput(
             filtersForBoard(basisFilters, boardName),
@@ -1276,16 +1259,43 @@ function ClimbListInner() {
         ),
         boardseshGradesActive,
       );
+    },
+    [boardName, layoutId, sizeId, setIds, angle, boardseshGradesActive],
+  );
+  const fetchSearchPageFor = useCallback(
+    async (basis: ReturnType<typeof searchBasis.read>, page: number, pageSize: number) => {
       // Same offline-aware source the list uses, so the play-drawer swipe keeps
       // paging climbs with no signal on a downloaded board.
-      const response = await offlineAwareRequest<SearchClimbsQueryResponse>(SEARCH_CLIMBS, { input });
+      const response = await offlineAwareRequest<SearchClimbsQueryResponse>(SEARCH_CLIMBS, {
+        input: searchInputForPage(basis, page, pageSize),
+      });
       return {
         climbs: toQueueClimbs(response.searchClimbs.climbs),
         hasMore: response.searchClimbs.hasMore,
       };
     },
-    [searchBasis, boardName, layoutId, sizeId, setIds, angle, boardseshGradesActive],
+    [searchInputForPage],
   );
+  const fetchSearchPage = useCallback(
+    ({ page, pageSize }: { page: number; pageSize: number }) => fetchSearchPageFor(searchBasis.read(), page, pageSize),
+    [fetchSearchPageFor, searchBasis],
+  );
+  // Every row tap re-captures the basis, crew and preview taps included, which
+  // leave the committed track alone. A track's later pages keep the search it
+  // was built from.
+  const snapshotSearchPageFetcher = useCallback(() => {
+    const basis = searchBasis.read();
+    return ({ page, pageSize }: { page: number; pageSize: number }) => fetchSearchPageFor(basis, page, pageSize);
+  }, [fetchSearchPageFor, searchBasis]);
+  // The search pages carry no count (counting every page would cost the server
+  // a count per page), so the player's "4 of 230" asks for one per tap, for the
+  // same frozen search the pages walk, through the count cache.
+  const fetchCachedCount = useFetchCachedSearchClimbsCount();
+  const { userId: storedUserId } = useStoredUserId(true);
+  const fetchSearchTotal = useCallback(() => {
+    const { page: _page, pageSize: _pageSize, ...countInput } = searchInputForPage(searchBasis.read(), 0, 1);
+    return fetchCachedCount(countInput, storedUserId);
+  }, [fetchCachedCount, searchBasis, searchInputForPage, storedUserId]);
 
   const allQueueClimbs = useMemo(() => toQueueClimbs(visibleClimbs), [visibleClimbs]);
 
@@ -1293,6 +1303,11 @@ function ClimbListInner() {
     sourceId: 'climblist',
     allClimbs: allQueueClimbs,
     fetchPage: fetchSearchPage,
+    snapshotFetchPage: snapshotSearchPageFetcher,
+    fetchTotal: fetchSearchTotal,
+    label: tSession('playView.track.searchResults'),
+    // The rows are this same search's pages, from the top, on the active board.
+    loadedRowsArePages: true,
     // In a crew, a row tap browses instead of taking everyone's wall: the drawer
     // opens on the tapped climb with these results seeded as its swipe track, so
     // the climber can walk the list and put up only the one they choose.

@@ -6,11 +6,11 @@
 // "the wall changed under a climber", so each rule below is paired with a test
 // that asserts it does NOT fire.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
 import { AppState } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { computeNavigationStateWithSuggestions } from '@boardsesh/play-view';
-import { isClimbOnReachableBoard } from '@boardsesh/queue';
+import { isClimbOnReachableBoard, type PlaylistSuggestionSource } from '@boardsesh/queue';
 import { useReachableBoardKeys } from '../../providers/queue/use-reachable-board-keys';
 import { toBoardName } from '@boardsesh/board-config';
 import {
@@ -22,6 +22,8 @@ import {
 import { useActiveBoard } from '../../lib/graphql/use-active-board';
 import { useBoardConnectionState } from '../ble/use-board-connection-state';
 import { useToast } from '../../providers/toast-provider';
+import { canLoadMoreOfTrack } from '../../lib/playlists/track-pager';
+import { useTrackPaging } from '../play-drawer/use-track-paging';
 import { useKeepAwakeWhile } from '../../hooks/use-keep-awake-while';
 import { useSetting } from '../../settings';
 import { useRestTimerState } from '../../hooks/use-rest-timer';
@@ -42,6 +44,9 @@ import {
 
 const KEEP_AWAKE_TAG = 'rest-timer';
 
+/** The scheduler pages only the committed track; it has no preview to update. */
+const keepPreviewSource: Dispatch<SetStateAction<PlaylistSuggestionSource | null>> = () => {};
+
 export function RestTimerAutoAdvanceScheduler() {
   const { t } = useTranslation('session');
   const timerState = useRestTimerState();
@@ -49,9 +54,25 @@ export function RestTimerAutoAdvanceScheduler() {
   const [autoAdvance] = useSetting('restTimerAutoAdvance');
   const [mode] = useSetting('restTimerMode');
 
-  const { nextClimb } = useQueueActions();
+  const { nextClimb, getQueueSnapshot, refreshPlaylistSuggestionSource } = useQueueActions();
   const { queue, currentClimbQueueItem } = useQueueData();
   const playlistSuggestionSource = usePlaylistSuggestionSource();
+  // A long list keeps going with the player closed too (#6664): the player
+  // pages the track only while it is open, and a hands-free session walks the
+  // list from here. The page is asked for well before the last loaded climb, so
+  // it has landed by the time a beat gets there.
+  const getCommittedSuggestionSource = useCallback(
+    () => getQueueSnapshot().playlistSuggestionSource,
+    [getQueueSnapshot],
+  );
+  useTrackPaging({
+    source: playlistSuggestionSource,
+    displayedClimbUuid: currentClimbQueueItem?.climb?.uuid,
+    previewTrack: false,
+    setPreviewSource: keepPreviewSource,
+    getCommittedSource: getCommittedSuggestionSource,
+    refreshCommittedSource: refreshPlaylistSuggestionSource,
+  });
   const isSharedSession = useIsSharedSession();
   const { inAppBoardConnection } = useBoardConnectionState();
   const { data: activeBoard } = useActiveBoard();
@@ -83,6 +104,9 @@ export function RestTimerAutoAdvanceScheduler() {
   // only bind a plain `t(...)` identifier call — and the key would be reported
   // as orphaned even though it is used.
   const queueEndedMessage = t('mobile.restTimer.queueEndedToast');
+  // A list's end is not the queue's: what is queued is still there, one tap on
+  // the player's end card away (#6664).
+  const listEndedMessage = t('mobile.restTimer.listEndedToast');
   const advanceInputsRef = useRef({
     queue,
     currentClimbQueueItem,
@@ -90,6 +114,7 @@ export function RestTimerAutoAdvanceScheduler() {
     activeBoard,
     showToast,
     queueEndedMessage,
+    listEndedMessage,
   });
   advanceInputsRef.current = {
     queue,
@@ -98,16 +123,24 @@ export function RestTimerAutoAdvanceScheduler() {
     activeBoard,
     showToast,
     queueEndedMessage,
+    listEndedMessage,
   };
 
+  // A beat that came due at the end of what is loaded while more of the list is
+  // still on its way. Taken when the page lands (see the effect below).
+  const awaitingPageRef = useRef<{ cycleId: number; deadlineMs: number } | null>(null);
+
   const fireAdvance = useCallback(
-    (expectedCycleId: number, scheduledDeadlineMs: number) => {
+    (expectedCycleId: number, scheduledDeadlineMs: number, afterPage = false) => {
+      // A beat that waited for a page came due while the climber watched, so
+      // its deadline is late on purpose, not stale.
+      //
       // ORDERING-PROOF background guard. Nothing orders the AppState 'active'
       // listener ahead of the timer queue on resume — RN flushes both off the
       // same UIApplicationDidBecomeActive, in no guaranteed order — so a timeout
       // that came due while the phone was in a pocket can land here first. Check
       // the deadline rather than trusting the listener to have re-anchored.
-      if (isAutoAdvanceDeadlineStale(scheduledDeadlineMs, nowMs())) {
+      if (!afterPage && isAutoAdvanceDeadlineStale(scheduledDeadlineMs, nowMs())) {
         reanchorRestTimerAfterBackground(nowMs(), scheduledDeadlineMs);
         return;
       }
@@ -123,7 +156,7 @@ export function RestTimerAutoAdvanceScheduler() {
       // `nextClimb` is a SILENT no-op at a dead end, so never call it blind —
       // the beat would keep running with the wall never changing and nothing
       // said. Ask the same selector the play drawer uses for its Next affordance.
-      const { canNext } = computeNavigationStateWithSuggestions(
+      const { canNext, atTrackEnd } = computeNavigationStateWithSuggestions(
         inputs.queue,
         inputs.currentClimbQueueItem,
         inputs.playlistSuggestionSource,
@@ -132,8 +165,16 @@ export function RestTimerAutoAdvanceScheduler() {
       );
 
       if (!canNext) {
-        noteRestTimerQueueEnded();
-        inputs.showToast(inputs.queueEndedMessage, 'info');
+        // More of the list is still on its way: wait for it without a word, and
+        // take this beat when it lands. Latching "ended" instead would say "End
+        // of the list" meanwhile, and clearing the latch re-anchors the rest, so
+        // the climber would wait one whole rest more (#6664 second review).
+        if (atTrackEnd && canLoadMoreOfTrack(inputs.playlistSuggestionSource)) {
+          awaitingPageRef.current = { cycleId: expectedCycleId, deadlineMs: scheduledDeadlineMs };
+          return;
+        }
+        noteRestTimerQueueEnded({ listEnded: atTrackEnd });
+        inputs.showToast(atTrackEnd ? inputs.listEndedMessage : inputs.queueEndedMessage, 'info');
         return;
       }
 
@@ -220,6 +261,20 @@ export function RestTimerAutoAdvanceScheduler() {
     }, remainingMs);
     return () => clearTimeout(timeout);
   }, [anchorMs, armed, cycleId, isRunning, scheduled, targetSeconds]);
+
+  // The page a due beat was waiting for has landed (or the track ended): try the
+  // beat again. Only for the cycle it was due in; a manual Next or a new tick
+  // starts another cycle, and the claim inside would refuse it anyway. Only
+  // while the beat would still be scheduled: pausing, switching auto-advance
+  // off or handing the wall to a crewmate meanwhile drops it, so a late page
+  // can't move a shared queue from a passenger's phone.
+  useEffect(() => {
+    const awaiting = awaitingPageRef.current;
+    if (!awaiting) return;
+    awaitingPageRef.current = null;
+    if (!wantsAdvance || cycleId !== awaiting.cycleId) return;
+    fireAdvance(awaiting.cycleId, awaiting.deadlineMs, true);
+  }, [playlistSuggestionSource, wantsAdvance, cycleId, fireAdvance]);
 
   // The queue was refilled (or the board switched) while the dead-end latch was
   // set. Pick the beat back up instead of staying dead until the next tick. Only
