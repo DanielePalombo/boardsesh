@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { brandColors, brandColorsDark } from '@boardsesh/velvet-tokens';
-import { brandAccentColor, brandControlTint, sliderControlColors, switchControlColors } from '../expo-ui-modifiers';
+import {
+  brandAccentColor,
+  brandControlTint,
+  sliderControlColors,
+  switchControlColors,
+  textFieldBrandColors,
+  textInputBrandColors,
+} from '../expo-ui-modifiers';
 
 describe('brand control colours', () => {
   it('tints controls with the foreground violet and keeps the fill for white-text surfaces', () => {
@@ -22,5 +29,23 @@ describe('brand control colours', () => {
 
   it('fills the Android Slider with the control tint', () => {
     expect(sliderControlColors(brandColorsDark)).toEqual({ thumbColor: '#A78BFA', activeTrackColor: '#A78BFA' });
+  });
+});
+
+describe('text input brand colours', () => {
+  it('gives Android an opaque caret and handles with a translucent highlight', () => {
+    expect(textInputBrandColors(brandColorsDark, 'android')).toEqual({
+      cursorColor: '#A78BFA',
+      selectionHandleColor: '#A78BFA',
+      selectionColor: 'rgba(167, 139, 250, 0.4)',
+    });
+  });
+
+  it('gives iOS only an opaque selection tint', () => {
+    expect(textInputBrandColors(brandColorsDark, 'ios')).toEqual({ selectionColor: '#A78BFA' });
+  });
+
+  it('draws the Compose caret in the foreground tint', () => {
+    expect(textFieldBrandColors(brandColorsDark).cursorColor).toBe('#A78BFA');
   });
 });

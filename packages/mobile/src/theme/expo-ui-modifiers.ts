@@ -30,6 +30,8 @@
 // Add control-specific Android colour mappers here as more primitives land, each
 // reading one of those two so they can't drift.
 
+import { withAlpha } from '@boardsesh/velvet-tokens';
+
 /**
  * The subset of resolved brand colours the native-control bridge reads. The
  * theme's `brandColors` (`useTheme().brandColors`) satisfies this structurally,
@@ -134,8 +136,9 @@ export function sliderControlColors(brandColors: BrandControlColors): {
  * (unfocused outline, error red, label, supporting text) reads the Compose
  * Material theme. Returned as a minimal object — every `TextFieldColors` field is
  * optional — so this shared file needs no `@expo/ui/jetpack-compose` import; the
- * `.android.tsx` file passes it straight to the field's `colors` prop. Both fields
- * read `brandAccentColor` so they can't drift from the other primitives.
+ * `.android.tsx` file passes it straight to the field's `colors` prop. The outline
+ * reads `brandAccentColor`; the cursor reads `brandControlTint` because a caret is
+ * foreground drawn on a card (primaryFill is 2.45:1 on the dark card).
  */
 export function textFieldBrandColors(brandColors: BrandControlColors): {
   focusedIndicatorColor: string;
@@ -143,8 +146,32 @@ export function textFieldBrandColors(brandColors: BrandControlColors): {
 } {
   return {
     focusedIndicatorColor: brandAccentColor(brandColors),
-    cursorColor: brandAccentColor(brandColors),
+    cursorColor: brandControlTint(brandColors),
   };
+}
+
+/**
+ * Brand cursor / selection props for a React Native `TextInput`.
+ *
+ * Android: RN falls back `cursorColor` and `selectionHandleColor` to
+ * `selectionColor`, but `selectionColor` is also the text highlight, which RN
+ * (ReactTextInputManager.kt) applies exactly as given. An opaque value would hide
+ * the selected text, while a translucent value alone would give a translucent
+ * caret (cursor and handles are drawn with SRC_IN, which keeps the alpha). So the
+ * caret and handles get the opaque tint and the highlight gets a translucent one.
+ *
+ * Other platforms: on iOS `selectionColor` is the caret and highlight tint, and
+ * iOS draws its own translucent highlight, so it stays opaque.
+ */
+export function textInputBrandColors(
+  brandColors: BrandControlColors,
+  platform: string,
+): { cursorColor?: string; selectionColor: string; selectionHandleColor?: string } {
+  const tint = brandControlTint(brandColors);
+  if (platform === 'android') {
+    return { cursorColor: tint, selectionHandleColor: tint, selectionColor: withAlpha(tint, 0.4) };
+  }
+  return { selectionColor: tint };
 }
 
 /**
