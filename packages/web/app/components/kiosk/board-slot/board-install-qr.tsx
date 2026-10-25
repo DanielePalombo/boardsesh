@@ -9,11 +9,9 @@
 // won't scan (a QR needs a light quiet zone), so we render black modules on a
 // white card and keep the caption dark-on-white too.
 //
-// TARGET NOTE: /b/{slug} opens the WEB board page (which carries install CTAs)
-// everywhere, and is iOS-universal-link eligible. It does NOT yet open the
-// mobile app straight to the board — that needs a native mobile app/b/[slug]
-// route + an Android /b autoVerify intent filter (see the tracked follow-up
-// issue). The web board page is the current fallback.
+// TARGET NOTE: /b/{slug} opens the app on iOS (universal link) and Android
+// (`/b/` intent filter), via the app/b/[board_slug] route. Without the app it
+// falls back to the web board page, which carries install CTAs.
 
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';

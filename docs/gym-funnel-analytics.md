@@ -230,7 +230,9 @@ PostHog saw nothing.
 `WEB_ONLY_PATH_PREFIXES`, which emits `NOT /gym/*` plus one entry per locale
 prefix (`NOT /es/gym/*`, `NOT /fr/gym/*`, `NOT /de/gym/*`) above the catch-all.
 That keeps the gym page, `/gym/{slug}/poster` and `/gym/{slug}/manage` in the
-browser. `/gyms` is not matched and still opens the app.
+browser. `/gyms` is not matched and still opens the app. `/poster` is listed
+the same way for the board poster print page (`/poster/b/{slug}`); the
+`/b/{slug}` code that page prints still opens the app.
 
 Four things to know before reading an iOS scan count:
 
@@ -239,9 +241,11 @@ Four things to know before reading an iOS scan count:
   week after that. Allow a week before treating "no iOS scans" as a real zero.
   `https://app-site-association.cdn-apple.com/a/v1/www.boardsesh.com` shows the
   copy Apple is serving.
-- **Android was never affected.** The store build only opens `/join`,
-  `/preview` and `/auth/reset-password` in the app, so a poster scan has always
-  reached the web page there.
+- **Android was never affected.** The store build opens `/join`, `/preview`,
+  `/b/`, the board-route prefixes (`/kilter/`, `/tension/` and the rest, plus
+  their `/es`, `/fr`, `/de` forms) and `/auth/reset-password` in the app. It
+  does not claim `/gym` or `/poster`, so a gym poster scan has always reached
+  the web page there.
 - **Climbers who already have the app are in the count, and the page cannot
   hand them back to it.** Their scan now loads the gym page and fires
   `Gym QR Scanned`, but they cannot install. The board links on the page are
