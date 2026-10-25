@@ -1,6 +1,14 @@
 {
-  "generatedAt": "2026-10-25T20:25:08.296Z",
+  "generatedAt": "2026-10-25T20:52:20.518Z",
   "entries": [
+    {
+      "prNumber": 6769,
+      "category": "new",
+      "title": "The climb you're on stays put when you reorder or clear your queue.",
+      "mergedAt": "2026-10-25T20:47:20Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6769",
+      "body": "Play next on a climb from History puts it first in Up next.\nUndo brings back your History exactly as it was."
+    },
     {
       "prNumber": 6834,
       "category": "fixed",

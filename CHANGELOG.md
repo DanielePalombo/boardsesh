@@ -12,6 +12,9 @@ A new version shipped to the App Store and Play Store.
 
 ### New
 
+- The climb you're on stays put when you reorder or clear your queue. ([#6769](https://github.com/boardsesh/boardsesh/pull/6769))
+  Play next on a climb from History puts it first in Up next.
+  Undo brings back your History exactly as it was.
 - Your queue plays first. Add a climb to Up next and it comes before the list picks back up. ([#6798](https://github.com/boardsesh/boardsesh/pull/6798))
   After your queued climbs, the list continues from where you left it.
 - Print a poster for your Spraywall or board from Share link. Climbers scan it and land straight on your wall. ([#6805](https://github.com/boardsesh/boardsesh/pull/6805))
