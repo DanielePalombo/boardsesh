@@ -1082,7 +1082,8 @@ Settings → Climbs & grades → Climb list opens `/settings/climb-list`; the Cl
 
 ### Android settings previews
 
-Board look and Climb view use `MoreFormRN` on Android. Their RN carousel and
+On Android, `MoreForm` renders any model with a `custom` row through `MoreFormRN`
+(Board look, Custom look, Climb view, Climb list, Watch pairing). Their RN carousel and
 live preview stay in the RN view tree: a Compose `RNHostView` custom row can
 report the expected height while drawing blank on Android. iOS keeps its native form.
 The RN form owns the screen's single scroll surface. Select rows use standalone

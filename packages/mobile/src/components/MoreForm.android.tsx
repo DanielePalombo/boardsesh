@@ -17,7 +17,6 @@
 // tree renders props and invokes handlers.
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Host } from '@expo/ui';
 import {
   LazyColumn,
@@ -38,20 +37,10 @@ import {
   DropdownMenuItem,
   BasicTextField,
   Slider,
-  RNHostView,
   CircularProgressIndicator,
   useNativeState,
 } from '@expo/ui/jetpack-compose';
-import {
-  fillMaxWidth,
-  padding,
-  alpha,
-  weight,
-  clickable,
-  height,
-  size,
-  semantics,
-} from '@expo/ui/jetpack-compose/modifiers';
+import { fillMaxWidth, padding, alpha, weight, clickable, size, semantics } from '@expo/ui/jetpack-compose/modifiers';
 import { StyleSheet, type ColorValue, type ImageSourcePropType } from 'react-native';
 import { useTheme } from '../providers/theme-provider';
 import {
@@ -66,9 +55,11 @@ import {
   assertNeverRow,
   guardedButtonPress,
   isButtonRowPressable,
+  modelHasCustomRow,
   selectedOptionLabel,
   useOpensOutsideAppHint,
 } from './MoreForm.logic';
+import { MoreFormRN } from './MoreForm.rn';
 import { materialStepCount, useSliderCommit } from './MoreForm.slider';
 import type {
   MoreButtonRow,
@@ -477,20 +468,8 @@ function renderRow(row: MoreRow, colors: RowColors): ReactNode {
     case 'slider':
       return <SliderRow key={row.key} row={row} colors={colors} />;
     case 'custom':
-      // The one place React Native content lives inside the Compose tree.
-      //
-      // The nested GestureHandlerRootView is not belt-and-braces: @expo/ui hosts
-      // RN on a surface the app's root GestureHandlerRootView does not cover, so
-      // without one every RNGH gesture inside silently does nothing (#4320, and
-      // see the same fix in InteractiveCreateBoard).
-      //
-      // The height is pinned rather than negotiated via `matchContents`, for the
-      // reason given on MoreCustomRow.
-      return (
-        <RNHostView key={row.key} matchContents={false} modifiers={[fillMaxWidth(), height(row.height)]}>
-          <GestureHandlerRootView style={{ height: row.height }}>{row.content}</GestureHandlerRootView>
-        </RNHostView>
-      );
+      // MoreForm routes models with custom rows to MoreFormRN, so this is unreachable.
+      return null;
     default:
       return assertNeverRow(row);
   }
@@ -527,7 +506,13 @@ function SliderRow({ row, colors }: { row: MoreSliderRow; colors: RowColors }) {
   );
 }
 
-export function MoreForm({ model }: MoreFormProps) {
+// Compose RNHostView rows report their height but draw blank on Android
+// (#6500, #6585, #6546), so any model with React Native content renders in the RN tree.
+export function MoreForm(props: MoreFormProps) {
+  return modelHasCustomRow(props.model) ? <MoreFormRN model={props.model} /> : <ComposeMoreForm {...props} />;
+}
+
+function ComposeMoreForm({ model }: MoreFormProps) {
   const { brandColors, systemColors, colorScheme } = useTheme();
   const colors: RowColors = {
     brandColors,
