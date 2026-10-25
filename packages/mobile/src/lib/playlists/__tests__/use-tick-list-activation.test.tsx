@@ -58,6 +58,12 @@ describe('describeTickRow', () => {
     expect(describeTickRow(makeTick({ frames: null })).climb).toBeNull();
   });
 
+  // The tap keeps a mirrored send's own row only if the climb says it is mirrored.
+  it('carries a mirrored send onto its climb', () => {
+    expect(describeTickRow(makeTick({ isMirror: true })).climb).toMatchObject({ mirrored: true });
+    expect(describeTickRow(makeTick()).climb).toMatchObject({ mirrored: false });
+  });
+
   it('reads each tick once', () => {
     const tick = makeTick();
 
