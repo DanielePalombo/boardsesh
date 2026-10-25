@@ -147,6 +147,7 @@
   "boardPoster": {
     "metaTitle": "Póster QR de {{boardName}}",
     "fallbackTitle": "Póster QR",
+    "metaDescription": "Un código QR listo para imprimir. Los escaladores lo escanean para ver los bloques de aquí y registrar sus encadenes.",
     "scanStep": "Escanea el código con la cámara",
     "openSource": "Boardsesh es gratis y de código abierto.",
     "printedOn": "Impreso en {{monthYear}}",

@@ -147,6 +147,7 @@
   "boardPoster": {
     "metaTitle": "Affiche QR pour {{boardName}}",
     "fallbackTitle": "Affiche QR",
+    "metaDescription": "Un code QR prêt à imprimer. Les grimpeurs le scannent pour voir les blocs d'ici et faire la croix.",
     "scanStep": "Scanne le code avec ton appareil photo",
     "openSource": "Boardsesh est gratuit et open source.",
     "printedOn": "Imprimé en {{monthYear}}",

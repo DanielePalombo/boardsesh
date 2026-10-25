@@ -111,7 +111,7 @@ export async function generateMetadata(props: BoardPosterRouteProps): Promise<Me
   return {
     ...createNoIndexMetadata({
       title: subject ? t('boardPoster.metaTitle', { boardName: subject.board.name }) : t('boardPoster.fallbackTitle'),
-      description: t('gymPage.poster.metaDescription'),
+      description: t('boardPoster.metaDescription'),
       locale,
     }),
     // An unlisted wall's URL holds its capability; the photo and every other

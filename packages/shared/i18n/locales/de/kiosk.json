@@ -147,6 +147,7 @@
   "boardPoster": {
     "metaTitle": "QR-Poster für {{boardName}}",
     "fallbackTitle": "QR-Poster",
+    "metaDescription": "Ein druckfertiger QR-Code. Scann ihn, um die Boulder hier zu sehen und deine Begehungen einzutragen.",
     "scanStep": "Scann den Code mit deiner Kamera",
     "openSource": "Boardsesh ist kostenlos und Open Source.",
     "printedOn": "Gedruckt: {{monthYear}}",

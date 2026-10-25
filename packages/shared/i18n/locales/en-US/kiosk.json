@@ -147,6 +147,7 @@
   "boardPoster": {
     "metaTitle": "QR poster for {{boardName}}",
     "fallbackTitle": "QR poster",
+    "metaDescription": "A print-ready QR code. Climbers scan it to see the climbs here and log their sends.",
     "scanStep": "Scan the code with your camera",
     "openSource": "Boardsesh is free and open source.",
     "printedOn": "Printed {{monthYear}}",

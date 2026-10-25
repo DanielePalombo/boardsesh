@@ -289,9 +289,14 @@ describe('board poster metadata', () => {
     expect(metadata.alternates).toBeUndefined();
     expect(metadata.referrer).toBe('no-referrer');
     expect(metadata.title).toEqual({ absolute: 'QR poster for Sharma big spraywall | Boardsesh' });
+    // The board poster's own line, not the gym poster's: it names neither the
+    // board nor its kind, so a refused request can carry the same one.
+    expect(metadata.description).toBe(
+      'A print-ready QR code. Climbers scan it to see the climbs here and log their sends.',
+    );
   });
 
-  it('does not name a board the poster refuses', async () => {
+  it('does not name a board the poster refuses, and answers it exactly like a missing one', async () => {
     resolveBoardBySlug.mockResolvedValue(boardFixture({ name: 'Secret Wall', isPublic: false, isUnlisted: true }));
     fetchSprayWallPageData.mockResolvedValue(wallData());
     const metadata = await generateMetadata({
@@ -299,6 +304,13 @@ describe('board poster metadata', () => {
       searchParams: Promise.resolve({}),
     });
 
+    resolveBoardBySlug.mockResolvedValue(null);
+    const missingMetadata = await generateMetadata({
+      params: Promise.resolve({ board_slug: 'secret-wall' }),
+      searchParams: Promise.resolve({}),
+    });
+
     expect(JSON.stringify(metadata)).not.toContain('Secret Wall');
+    expect(metadata).toEqual(missingMetadata);
   });
 });
