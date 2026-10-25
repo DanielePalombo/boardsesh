@@ -103,11 +103,13 @@ export function workoutStageName(kind: WorkoutStageKind, t: TranslateWorkoutStag
 /**
  * "Warm-up · 2 of 5", the player's subtitle part for a workout climb, or
  * "Cool-down · 2 of 5" after the last block. A climb with a round counts within
- * its round instead: "4x4 · Round 2 of 4 · 3 of 4".
+ * its round instead: "4x4 · Round 2 of 4 · 3 of 4". A stage with one round in
+ * the queue (a 1-round 4x4, or one whose other rounds are gone) leaves the round
+ * out: "4x4 · 2 of 4", never "Round 1 of 1".
  */
 export function formatWorkoutStagePosition(position: WorkoutRunPosition, t: TranslateWorkoutStage): string {
   const stage = workoutStageName(position.kind, t, position.isCoolDown === true);
-  if (position.round) {
+  if (position.round && position.round.roundCount > 1) {
     return t('mobile.session.workoutStageRoundPosition', {
       stage,
       round: position.round.round,
@@ -121,4 +123,20 @@ export function formatWorkoutStagePosition(position: WorkoutRunPosition, t: Tran
     position: position.positionInStage,
     total: position.stageSize,
   });
+}
+
+/**
+ * The player's subtitle part with the try the climber is on, for a stage that
+ * stays on a climb until it is sent: "Limit Bouldering · 2 of 3 · Try 3". With
+ * no try number (every other stage, or the climb is sent) it is
+ * `formatWorkoutStagePosition` alone.
+ */
+export function formatWorkoutStagePositionWithTry(
+  position: WorkoutRunPosition,
+  tryNumber: number | null,
+  t: TranslateWorkoutStage,
+): string {
+  const stagePosition = formatWorkoutStagePosition(position, t);
+  if (tryNumber === null) return stagePosition;
+  return t('mobile.workoutRunner.positionWithTry', { position: stagePosition, number: tryNumber });
 }

@@ -12,9 +12,10 @@ vi.mock('../../PressableSurface', async () => {
       createElement(Pressable, { ...props, onPress: props.disabled ? undefined : props.onPress }),
   };
 });
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, fireEvent, render } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
+import type { Climb } from '@boardsesh/shared-schema';
 
 const themeState = vi.hoisted(() => ({ variant: 'liquidGlass' as 'liquidGlass' | 'material' }));
 afterEach(() => {
@@ -197,6 +198,8 @@ const haptics = vi.hoisted(() => ({ hapticMedium: vi.fn(), hapticSelection: vi.f
 vi.mock('../../../lib/haptics', () => haptics);
 
 import { PlayDrawerActionBar } from '../PlayDrawerActionBar';
+import { useWorkoutOutcomeHold } from '../use-workout-outcome-hold';
+import { WALL_MOVED_GRACE_MS } from '../workout-outcome';
 
 const baseProps = {
   canSwipePrevious: true,
@@ -914,5 +917,228 @@ describe('PlayDrawerActionBar haptics', () => {
     expect(onToggleFavorite).toHaveBeenCalledTimes(1);
     expect(haptics.hapticSelection).toHaveBeenCalledTimes(2);
     expect(haptics.hapticMedium).not.toHaveBeenCalled();
+  });
+});
+
+// The row's own taps are covered by use-workout-one-tap.test.tsx; here only where
+// it goes, what it pushes out, and that it is handed the climb and the tick
+// sheet opener.
+const workoutOutcomeRow = vi.hoisted(() => ({ onFell: vi.fn() }));
+vi.mock('../WorkoutOutcomeRow', () => ({
+  WorkoutOutcomeRow: ({
+    target,
+    wallLeftAtMs,
+    onOpenLogSheet,
+  }: {
+    target: { queueItemUuid: string };
+    wallLeftAtMs?: number | null;
+    onOpenLogSheet: () => void;
+  }) =>
+    createElement(
+      'button',
+      {
+        'data-workout-outcome': target.queueItemUuid,
+        'data-wall-left-at': wallLeftAtMs == null ? '' : String(wallLeftAtMs),
+        onClick: onOpenLogSheet,
+      },
+      // Where the real row's Fell sits: the left of the second row.
+      createElement('span', {
+        'data-workout-outcome-fell': 'true',
+        onClick: (event: Event) => {
+          event.stopPropagation();
+          workoutOutcomeRow.onFell(target.queueItemUuid);
+        },
+      }),
+    ),
+}));
+
+describe('PlayDrawerActionBar (timed workout block)', () => {
+  const workoutOutcome = {
+    climb: { uuid: 'climb-1' } as unknown as Climb,
+    queueItemUuid: 'item-1',
+    sessionId: 'session-1',
+    boardName: 'tension',
+    layoutId: 9,
+    sizeId: 1,
+    setIds: '1',
+    angle: 40,
+    isMirror: false,
+  };
+  const workoutProps = { ...baseProps, workoutOutcome };
+
+  it('gives the whole second row to Fell / Sent for the climb up', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, workoutProps));
+
+    expect(container.querySelector('[data-workout-outcome]')?.getAttribute('data-workout-outcome')).toBe('item-1');
+    expect(container.querySelector(`[data-label="${FAVORITE_LABEL}"]`)).toBeNull();
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
+    expect(container.querySelector(`[data-label="${SHARE_LABEL}"]`)).toBeNull();
+    // Mirror keeps the first slot, Log the middle; the queue steps into ⋯.
+    expect(actions(container)).toEqual([ACTION_ICONS.mirror, ACTION_ICONS.previous, ACTION_ICONS.next]);
+    expect(container.querySelector(`[data-label="${QUEUE_LABEL}"]`)).toBeNull();
+    expect(container.querySelector('[data-icon="tick.outline"]')).toBeTruthy();
+  });
+
+  it('keeps the queue in the first slot on a board without mirror', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...workoutProps, supportsMirroring: false }));
+
+    expect(labels(container)[0]).toBe(QUEUE_LABEL);
+    expect(container.querySelector('[data-workout-outcome]')).toBeTruthy();
+  });
+
+  it('hands the row the tick sheet opener, for a spray climb that needs a grade', () => {
+    const onTickPress = vi.fn();
+    const { container } = render(createElement(PlayDrawerActionBar, { ...workoutProps, onTickPress }));
+
+    fireEvent.click(container.querySelector('[data-workout-outcome]') as HTMLElement);
+
+    expect(onTickPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('brings the row back with every small button switched off', () => {
+    const allOff = {
+      order: ['mirror', 'favorite', 'angle', 'share', 'queue'] as const,
+      visible: { mirror: false, favorite: false, angle: false, share: false, queue: false },
+    };
+    const { container } = render(createElement(PlayDrawerActionBar, { ...workoutProps, buttons: allOff }));
+
+    expect(container.querySelector('[data-workout-outcome]')).toBeTruthy();
+  });
+
+  it('gives way to the busy-wall question', () => {
+    const { container } = render(
+      createElement(PlayDrawerActionBar, {
+        ...workoutProps,
+        commitButton: 'confirm' as const,
+        onCommit: vi.fn(),
+        onKeepTheirs: vi.fn(),
+      }),
+    );
+
+    expect(container.querySelector('[data-commit-bar]')).toBeTruthy();
+    expect(container.querySelector('[data-workout-outcome]')).toBeNull();
+  });
+
+  it('puts the bulb back in its slot over the connect pill', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...workoutProps, connectPill: true }));
+
+    expect(container.querySelector('[data-connect-pill]')).toBeNull();
+    expect(container.querySelector('[data-ble]')).toBeTruthy();
+    expect(container.querySelector('[data-workout-outcome]')).toBeTruthy();
+  });
+
+  it('never reaches a signed-out reader', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...workoutProps, viewer: 'anonymous' as const }));
+
+    expect(container.querySelector('[data-workout-outcome]')).toBeNull();
+    expect(container.querySelector(`[data-label="${SHARE_LABEL}"]`)).toBeTruthy();
+  });
+
+  it('leaves the bar as it was outside a timed block', () => {
+    const { container } = render(createElement(PlayDrawerActionBar, { ...baseProps, workoutOutcome: null }));
+
+    expect(container.querySelector('[data-workout-outcome]')).toBeNull();
+    expect(container.querySelector(`[data-label="${FAVORITE_LABEL}"]`)).toBeTruthy();
+  });
+});
+
+// The bug this pins (#6231 simulator QA): at the end of an on-the-minute block
+// the beat moved the wall onto a climb outside it, the player's gate turned off
+// at once, and a tap on its way to Fell opened Choose Angle. The player now
+// holds Fell / Sent for the climb the wall left (`useWorkoutOutcomeHold`) and
+// hands the bar the held row.
+describe('PlayDrawerActionBar (the wall leaves a timed block)', () => {
+  const START_MS = 1_760_000_000_000;
+  const limitTarget = {
+    climb: { uuid: 'climb-1', name: 'Crimp line' } as unknown as Climb,
+    queueItemUuid: 'item-1',
+    sessionId: 'session-1',
+    boardName: 'kilter',
+    layoutId: 1,
+    sizeId: 10,
+    setIds: '1,20',
+    angle: 40,
+    isMirror: false,
+  };
+
+  type HeldBarProps = {
+    live: typeof limitTarget | null;
+    committedQueueItemUuid: string;
+    onToggleFavorite: () => void;
+    onOpenAngleSelector: () => void;
+  };
+
+  /** What PlayCore does: the hold decides the row, the bar draws it. */
+  function HeldBar({ live, committedQueueItemUuid, onToggleFavorite, onOpenAngleSelector }: HeldBarProps) {
+    const shown = useWorkoutOutcomeHold({
+      live,
+      committedQueueItemUuid,
+      displayedQueueItemUuid: committedQueueItemUuid,
+      sessionId: 'session-1',
+      canLog: true,
+    });
+    return createElement(PlayDrawerActionBar, {
+      ...baseProps,
+      onToggleFavorite,
+      onOpenAngleSelector,
+      workoutOutcome: shown?.target ?? null,
+      workoutOutcomeWallLeftAtMs: shown?.wallLeftAtMs ?? null,
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START_MS);
+    workoutOutcomeRow.onFell.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function renderThroughTheBeat() {
+    const onToggleFavorite = vi.fn();
+    const onOpenAngleSelector = vi.fn();
+    const handlers = { onToggleFavorite, onOpenAngleSelector };
+    const rendered = render(
+      createElement(HeldBar, { live: limitTarget, committedQueueItemUuid: 'item-1', ...handlers }),
+    );
+    // The beat: the wall moves to the cool-down climb, which has no Fell / Sent.
+    rendered.rerender(createElement(HeldBar, { live: null, committedQueueItemUuid: 'item-cool', ...handlers }));
+    return { ...rendered, ...handlers };
+  }
+
+  it('a Fell tap 300 ms after the beat lands on Fell for the climb it left, not on the angle or the heart', () => {
+    const { container, onToggleFavorite, onOpenAngleSelector } = renderThroughTheBeat();
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    const row = container.querySelector('[data-workout-outcome]');
+    expect(row?.getAttribute('data-workout-outcome')).toBe('item-1');
+    expect(row?.getAttribute('data-wall-left-at')).toBe(String(START_MS));
+    expect(container.querySelector(`[data-label="${ANGLE_LABEL}"]`)).toBeNull();
+    expect(container.querySelector(`[data-label="${FAVORITE_LABEL}"]`)).toBeNull();
+
+    fireEvent.click(container.querySelector('[data-workout-outcome-fell]') as HTMLElement);
+
+    expect(workoutOutcomeRow.onFell).toHaveBeenCalledWith('item-1');
+    expect(onOpenAngleSelector).not.toHaveBeenCalled();
+    expect(onToggleFavorite).not.toHaveBeenCalled();
+  });
+
+  it('brings the normal row back after the grace, and it works', () => {
+    const { container, onToggleFavorite, onOpenAngleSelector } = renderThroughTheBeat();
+
+    act(() => {
+      vi.advanceTimersByTime(WALL_MOVED_GRACE_MS);
+    });
+
+    expect(container.querySelector('[data-workout-outcome]')).toBeNull();
+    fireEvent.click(container.querySelector(`[data-label="${ANGLE_LABEL}"]`) as HTMLElement);
+    fireEvent.click(container.querySelector(`[data-label="${FAVORITE_LABEL}"]`) as HTMLElement);
+    expect(onOpenAngleSelector).toHaveBeenCalledTimes(1);
+    expect(onToggleFavorite).toHaveBeenCalledTimes(1);
+    expect(workoutOutcomeRow.onFell).not.toHaveBeenCalled();
   });
 });

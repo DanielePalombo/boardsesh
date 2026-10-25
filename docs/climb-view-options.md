@@ -22,7 +22,7 @@ Fixed, and why:
 | ---------------------------------------- | --------------------------------------------------------------------------- |
 | Log                                      | The core loop. Always the centre of the big row.                            |
 | Board light                              | Wall control must not move under a climber's thumb. Always the right slot.  |
-| Put on the wall, busy-wall question, connect pill | Session states, not preferences. They show up in the small row when they need it. |
+| Put on the wall, busy-wall question, connect pill, Fell / Sent | Session states, not preferences. They show up in the small row when they need it. |
 | Playback slider                          | Belongs to the board, so it always sits next to it.                         |
 | Top row ⌄ · list · rest timer · ⋯        | ⋯ is how a hidden button comes back. The list you're playing from ("Projects · 4 of 23") sits between ⌄ and the timer and costs the board nothing. |
 
@@ -50,10 +50,15 @@ Small row   [first half of the rest] ········ [last half]
   ~120 pt on a 375 pt phone. Only the busy-wall question (`commitButton: 'confirm'`, "Keep Sam's" / "Put mine up")
   replaces the whole row. Whatever the pill, the button and the question push out, and every button the climber
   switched off, is flagged in `hidden`, and ⋯ carries a row for each.
+- **Fell / Sent** (`workoutOutcome: true`, `secondaryRow: 'workoutOutcome'`) takes the whole small row while the climb
+  on the wall is in a timed workout block: its stage paces the rest timer (a 4x4, limit bouldering, on the minute).
+  See [One-tap Fell / Sent](#one-tap-fell--sent). The order of the session states is busy-wall question > Put on the
+  wall > Fell / Sent > connect pill > the climber's buttons. The lead slot keeps its button, the bulb stays in its
+  slot (the pill gives way), and every small-row button steps into ⋯ while the pair shows.
 - **Nothing left to draw**, no pill and no commit button: there is no small row (`secondaryRow: []`). The board gets
   52 pt back (the 8 pt gap and the 44 pt row; the 12 pt bottom padding moves to the big row). Put on the wall, the
-  busy-wall question and the connect pill bring the row back while they need it, so a row with every button
-  switched off still appears with Put on the wall alone in it. Share switched on keeps the row even on a draft, where it
+  busy-wall question, Fell / Sent and the connect pill bring the row back while they need it, so a row with every
+  button switched off still appears with Put on the wall alone in it. Share switched on keeps the row even on a draft, where it
   can't draw (`['spacer']`, held at the row's usual 64 pt): it is the one button that comes and goes climb to
   climb, and the board must not jump mid-swipe. The angle depends on the board, not the climb, so an angle-only
   row on a fixed-angle board does collapse.
@@ -75,6 +80,63 @@ offers a row only while its flag is up (`play-drawer-menu-rows.ts`), so an actio
 Change angle form their own group after the queue rows. Both are disabled on another board's climb, like every row
 that writes or touches the wall. The Mirror row runs the same `handleMirror` as the button (shared-session
 orientation included); Change angle opens the player's own angle sheet, so it presents above `/play`.
+
+### One-tap Fell / Sent
+
+In a timed workout block (#6231, #5380) every go gets logged, so the small row becomes two 44 pt buttons. Both save
+through `useTickSaver`, the same path as the Log ascent sheet, so the rest timer and the workout's tick log get the
+tick's status and queue item exactly as from the sheet (`docs/workout-stages.md` › Pacing).
+
+- **Fell** logs one try at once (`attempt`, 1 try). Nothing waits for the end of the climb, so an early End, a killed
+  app or a dead signal loses no falls.
+- **Sent** logs a flash when the climber has no tick on the climb at this angle and no fall on this queue item
+  earlier in the block, else a send (`deriveAscentType`). While the logbook is still loading it says send, as the
+  sheet does.
+- **A spray climb nobody has sent** needs a grade, which only the sheet asks for, so Sent opens Log ascent instead.
+  Fell still logs at once: a try sets no grade. The queue's copy of the climb never hears of a send, so once the
+  climber's own send is in this block's tick log (this queue item) or their logbook (this angle), later Sents log in
+  one tap again.
+- **One tap at a time.** A second tap within 700 ms (`ONE_TAP_GUARD_MS`), on either button, is dropped, and so is a
+  tap while a save is still in flight. A fumbled double tap logs one go, never a fall and a send.
+- **Just after the wall moves on.** An on-the-minute beat advances whether the climber logged or not, so a tap within
+  2 s (`WALL_MOVED_GRACE_MS`) of the climb on the wall changing logs for the climb it left, against that queue item
+  (`TickSaveFields.queueItem`), with that climb's own flash rule. Every one-tap names its queue item this way, and
+  the saver still holds it to `attributeTickToQueueItem`'s angle rule: a tap at another angle than the item is up at
+  (the board moved, the queue has not regraded yet) saves the tick but counts it for no queue item. Nobody gets a go on a climb that fast after it
+  lights up. A first ascent there can't open the sheet (it would open on the new climb), so the row says to swipe
+  back to it. A new copy of the same queue item is not a move.
+- **The row stays through the grace when the wall leaves the block** (`useWorkoutOutcomeHold`). When the beat moves
+  the wall onto a climb outside the timed block, the gate turns false at once, and the normal row would put the heart
+  and the angle button where Fell was, under a finger already on its way (simulator QA: a Fell tap just after the
+  last beat opened Choose Angle). So the player keeps Fell / Sent for the climb it left for the same 2 s, then swaps.
+  Taps in that window log there, exactly as above; one past it is dropped, never sent to the new climb. The hints
+  name that climb ("Logs one try on Crimp line, the previous climb") and the saved line is the full sentence, since
+  the board already shows the next one. The hold starts only when the committed climb changed with the player still
+  on it; a swipe to browse, the gate coming back, the switch-board gate or a sign-out ends it at once. PlayCore reads
+  the held row for the bar layout, ⋯, the connect pill and the opening layout key, so the row and the board change
+  once, at the swap.
+- **The wall at the tap.** The row leaves `useTickSaver`'s `active` out, so each save takes the board as it is right
+  then: a board bound from the bulb mid-block is on the next tick. The sheet snapshots it when it opens instead.
+- **When it shows** (`shouldShowWorkoutOutcome`): the climb on screen is the committed current one (not a climb the
+  climber swiped to or a preview), its run stage has `pacing` (keyed on the pacing, not the stage kinds, so any
+  future timed block gets it too), the climber is signed in, it is not another board's climb and not a draft. A
+  crew phone without the run never shows it. While it shows, the connect pill can't, so the pill's day budget is not
+  spent (`deriveFirstConnectPillWouldConnect`'s `workoutOutcome`).
+- **The row says what a tap did, not a toast.** The player is a native modal on iOS, and the root toast overlay draws
+  behind it (a toast fired from the player is never seen there). So after a save the tapped button reads "Try logged"
+  (Fell) or "Flash logged" / "Send logged" (Sent) with a check for 2 s (`SAVED_NOTICE_MS`), and both buttons stay
+  live. When the go was for the climb the wall just left, the line names it ("Flash logged · Crimp line"). The
+  buttons keep their Fell / Sent accessibility labels; the full sentence is announced. A failure, or where to log a
+  first ascent, needs reading, so it takes the whole row for 5 s (`MESSAGE_NOTICE_MS`) or until tapped, then the
+  buttons come back. The success haptic plays with the line; a failure's comes from `useTickSaver`. Tick Logged and
+  Quick Tick Failed report `surface: 'mobile_workout_runner'`, with no Quick Tick Opened before them.
+- **A save outlives the row.** Swiping to a preview, the end of the hold after the wall left the timed block or
+  closing the player unmounts the row while a save can still be in flight. `useTickSaver` runs the side effects (rest timer, the workout's tick
+  log, Tick Logged, the confirmation) off the `mutateAsync` promise, which settles either way, never off a per-call
+  `mutate` callback, which React Query drops once the caller is gone. With no row left to say it, that late save
+  falls back to the toast, which shows once the player is closed.
+- The pair holds the row's usual 64 pt, so the board moves only for a climber who switched every small button off.
+  The opening-layout cache keys on it (`controlsFingerprint`).
 
 ### Above the board
 
@@ -122,6 +184,8 @@ The sections below the climb keep their own AsyncStorage record (`playDrawerSect
 | Store, hooks, Restore defaults          | `packages/mobile/src/lib/player-buttons-preference.ts`                          |
 | Layout rule                             | `packages/mobile/src/components/play-drawer/action-bar-layout.ts`               |
 | Bar                                     | `packages/mobile/src/components/play-drawer/PlayDrawerActionBar.tsx`            |
+| Fell / Sent row and its taps            | `packages/mobile/src/components/play-drawer/WorkoutOutcomeRow.tsx`, `use-workout-one-tap.ts` |
+| Fell / Sent hold after the wall leaves  | `packages/mobile/src/components/play-drawer/use-workout-outcome-hold.ts`        |
 | Placement, callout offset, ⋯ wiring     | `packages/mobile/src/components/play-drawer/PlayCore.tsx`                       |
 | View options sheet (both tabs)          | `packages/mobile/src/components/play-drawer/PlayDrawerSectionsSheet.tsx`        |
 | Shared labels and actions               | `packages/mobile/src/components/settings/use-player-button-controls.ts`         |

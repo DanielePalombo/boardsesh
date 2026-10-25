@@ -60,6 +60,8 @@ import { PlayDrawerActionBar } from './PlayDrawerActionBar';
 import { PlayDrawerActionsMenu } from './PlayDrawerActionsMenu';
 import { resolveQueuedSlotUuid } from './play-drawer-menu-rows';
 import { resolveActionBarLayout, type ActionBarCommitButton } from './action-bar-layout';
+import { shouldShowWorkoutOutcome, type WorkoutOutcomeTarget } from './workout-outcome';
+import { useWorkoutOutcomeHold } from './use-workout-outcome-hold';
 import { WallStatePill } from './WallStatePill';
 import { WallStateCallout } from './WallStateCallout';
 import {
@@ -1025,6 +1027,59 @@ export function PlayCore({
     : commitBarModel.showPutOnWall
       ? 'putOnWall'
       : null;
+  // A timed workout block's one-tap Fell / Sent (#6231): the climb on the wall,
+  // in a stage that paces the rest, that this climber can log from here. It
+  // takes the second row (`workoutOutcome` below), so the connect pill can't be
+  // on screen with it and must not spend one of its days.
+  const showWorkoutOutcome =
+    sessionId !== null &&
+    shouldShowWorkoutOutcome({
+      run: workoutRun,
+      displayedQueueItemUuid: displayedQueueItemUuid ?? null,
+      committedQueueItemUuid: currentClimbQueueItem?.uuid ?? null,
+      signedIn: isAuthenticated && !isAnonymous,
+      boardMismatch: showBoardMismatch,
+      isDraft: displayedClimb?.is_draft === true,
+    });
+  // What a Fell / Sent tap logs against (`showWorkoutOutcome` above).
+  const liveWorkoutOutcome = useMemo<WorkoutOutcomeTarget | null>(() => {
+    const committedQueueItemUuid = currentClimbQueueItem?.uuid ?? null;
+    if (!showWorkoutOutcome || !displayedClimb || committedQueueItemUuid === null || sessionId === null) return null;
+    return {
+      climb: displayedClimb,
+      queueItemUuid: committedQueueItemUuid,
+      sessionId,
+      boardName,
+      layoutId,
+      sizeId,
+      setIds,
+      angle,
+      isMirror: isMirrored,
+    };
+  }, [
+    showWorkoutOutcome,
+    currentClimbQueueItem?.uuid,
+    displayedClimb,
+    sessionId,
+    boardName,
+    layoutId,
+    sizeId,
+    setIds,
+    angle,
+    isMirrored,
+  ]);
+  // When the wall leaves the timed block (an on-the-minute beat onto a climb
+  // outside it), Fell / Sent stays a moment for the climb it left, so a tap
+  // already on its way lands there and not on the angle or the heart. Everything
+  // below reads this, so the row swaps once, after the hold.
+  const workoutOutcomeShown = useWorkoutOutcomeHold({
+    live: liveWorkoutOutcome,
+    committedQueueItemUuid: currentClimbQueueItem?.uuid ?? null,
+    displayedQueueItemUuid: displayedQueueItemUuid ?? null,
+    sessionId,
+    canLog: isAuthenticated && !isAnonymous && !showBoardMismatch,
+  });
+  const workoutOutcome = workoutOutcomeShown?.target ?? null;
   // The connect-step test's pill (#5654, PR 7, treatment only): the bulb with a
   // label, while this phone has never connected, and only where a tap on the
   // bulb would CONNECT this phone (see `deriveFirstConnectPillWouldConnect`).
@@ -1033,6 +1088,7 @@ export function PlayCore({
     hasBluetooth: bluetooth !== null,
     boardMismatch: showBoardMismatch,
     commitMode: commitBarModel.mode === 'commit',
+    workoutOutcome: workoutOutcome !== null,
     sharedSession: isSharedSession,
     wallHeldByOtherUser: bluetooth?.wallHeldByOtherUser ?? false,
     tapConnects: lightbulbPressAction === 'connect',
@@ -1550,6 +1606,7 @@ export function PlayCore({
         isAnonymous,
         connectPill: showConnectPill,
         commitButton,
+        workoutOutcome: workoutOutcome !== null,
         showLightbulb: hasBluetooth,
         hasShare: !displayedClimbIsDraft,
         angleAvailable,
@@ -1561,6 +1618,7 @@ export function PlayCore({
       isAnonymous,
       showConnectPill,
       commitButton,
+      workoutOutcome,
       hasBluetooth,
       displayedClimbIsDraft,
       angleAvailable,
@@ -1606,6 +1664,7 @@ export function PlayCore({
             isTickBarActive,
             commitButton,
             showConnectPill,
+            workoutOutcome !== null,
             bluetooth !== null,
             boardSupportsMirroring(boardName, layoutId),
             actionBarLayout.secondaryRow,
@@ -1752,6 +1811,9 @@ export function PlayCore({
       // the whole row: Keep theirs / Put mine up, where the second
       // tap on the filled button is the commit.
       commitButton={commitButton}
+      // A timed workout block: the second row is one-tap Fell / Sent.
+      workoutOutcome={workoutOutcome}
+      workoutOutcomeWallLeftAtMs={workoutOutcomeShown?.wallLeftAtMs ?? null}
       wallClimbName={wallClimb.name}
       wallClimbUuid={wallClimbUuid}
       commitLabel={commitBarModel.commitLabel}
