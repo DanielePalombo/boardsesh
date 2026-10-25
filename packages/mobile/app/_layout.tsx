@@ -308,6 +308,9 @@ type RecoveryState =
   | { kind: 'no-fix-available' }
   | { kind: 'failed' };
 
+// Router 58 anchors external modal links over index so Back has a home route.
+export const unstable_settings = { anchor: 'index' };
+
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   // A route chunk that failed to load (web only; the native predicate is
   // constant false) gets its own screen: this one's "Try again" and "Go home"
@@ -801,7 +804,6 @@ function RootLayout() {
                                                                               headerShown: false,
                                                                               contentStyle: undefined,
                                                                             }}
-                                                                            initialRouteName="index"
                                                                           >
                                                                             <Stack.Screen
                                                                               name="privacy-consent"

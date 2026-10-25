@@ -796,9 +796,6 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig & { newArchE
       // deobfuscate Java/Kotlin frames. No-op when the env var is unset (local
       // prebuild, PR builds); never moves the fingerprint (env isn't hashed).
       './plugins/with-android-sentry-proguard-uuid',
-      // Pins the generated Android wrapper below Gradle 9 until React Native's
-      // included Foojay toolchain resolver plugin is compatible with Gradle 9.
-      './plugins/with-android-gradle-wrapper-version',
       // Register this before @bacons/apple-targets so Expo's mod chain runs it
       // after the widget target has been created, while keeping the provider last.
       './plugins/with-boardsesh-widget-build-settings',
@@ -837,11 +834,9 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig & { newArchE
       // entitlement-merge ordering concern like the share-intent dedup above —
       // it sets its own distinct keys.
       './plugins/with-healthkit',
-      // #5293 (BOARDSESH-8S): calls modules/react-flag-overrides from the
-      // generated AppDelegate.swift, between the React Native factory init and
-      // startReactNative, to turn on the SchedulerDelegate invalidation guard.
-      // iOS-only mod. Throws at prebuild if the Expo template's anchors move.
-      './plugins/with-scheduler-delegate-invalidation',
+      // #5293 (BOARDSESH-8S): RN 0.88 removed the Scheduler invalidation flag.
+      // Compile the source patch that preserves its enabled lifetime guard.
+      './plugins/with-react-native-source-builds',
       // AppCheckCore (pulled in by Google Sign-In) is a Swift pod that depends
       // on GoogleUtilities and RecaptchaInterop, which don't define modules by
       // default. Without this fix CocoaPods refuses to link them as static
