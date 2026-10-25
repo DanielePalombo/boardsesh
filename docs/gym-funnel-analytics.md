@@ -223,7 +223,9 @@ PostHog saw nothing.
 `WEB_ONLY_PATH_PREFIXES`, which emits `NOT /gym/*` plus one entry per locale
 prefix (`NOT /es/gym/*`, `NOT /fr/gym/*`, `NOT /de/gym/*`) above the catch-all.
 That keeps the gym page, `/gym/{slug}/poster` and `/gym/{slug}/manage` in the
-browser. `/gyms` is not matched and still opens the app.
+browser. `/gyms` is not matched and still opens the app. `/poster` is listed
+the same way for the board poster print page (`/poster/b/{slug}`); the
+`/b/{slug}` code that page prints still opens the app.
 
 Four things to know before reading an iOS scan count:
 

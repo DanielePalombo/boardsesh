@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test';
 import { GET } from '@/app/.well-known/apple-app-site-association/route';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/app/lib/i18n/config';
-import { gymQrUrl } from '@/app/lib/gym-attribution';
+import { boardQrUrl, gymQrUrl } from '@/app/lib/gym-attribution';
 import {
   APPLE_APP_ID,
   buildAppleAppSiteAssociation,
@@ -73,7 +73,8 @@ describe('apple-app-site-association paths', () => {
   });
 
   it('still opens the board link the poster QR prints in the app', () => {
-    expect(opensInApp(paths, '/b/home-wall?src=qr&medium=board')).toBe(true);
+    // The URL `boardQrUrl` builds for a board poster, query and all.
+    expect(opensInApp(paths, boardQrUrl('home-wall', 'board'))).toBe(true);
     expect(opensInApp(paths, '/b/home-wall?wall=abc&src=qr&medium=board')).toBe(true);
   });
 
