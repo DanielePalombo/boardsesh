@@ -61,8 +61,10 @@ vi.mock('../../../PressableSurface', () => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number; formattedCount?: string }) => {
+    t: (key: string, options?: { count?: number; formattedCount?: string; grade?: string; plannedGrade?: string }) => {
       if (key === 'mobile.climbRow.frameCount') return `${options?.count} frames`;
+      if (key === 'mobile.session.preWorkoutPreviewBorrowedGrade')
+        return `${options?.grade} for ${options?.plannedGrade}`;
       if (key === 'sends') return `${options?.formattedCount ?? options?.count} sends`;
       if (key === 'playView.tickBar.starRating') return `${options?.count} stars`;
       return key;
@@ -75,7 +77,15 @@ vi.mock('../../../Icon', () => ({ Icon: () => createElement('span', { 'data-test
 vi.mock('../../../Text', () => ({
   Text: ({ children }: { children?: ReactNode }) => createElement('span', null, children),
 }));
-vi.mock('../../../../hooks/use-grade-format', () => ({ useGradeFormat: () => ({ formatGrade: () => 'V4' }) }));
+// The caption formats its two grade ids with the real shared scale (18 is
+// 6b/V4, 20 is 6c/V5) under the climber's format, mocked here as V.
+const gradeFormatPreference = vi.hoisted(() => ({ gradeFormat: 'v-grade' as 'v-grade' | 'font' | 'both' }));
+vi.mock('../../../../hooks/use-grade-format', () => ({
+  useGradeFormat: () => ({
+    gradeFormat: gradeFormatPreference.gradeFormat,
+    formatGrade: () => 'V4',
+  }),
+}));
 vi.mock('../../../../providers/theme-provider', () => ({
   useTheme: () => ({ systemColors: {}, brandColors: { primary: '#000' }, opacity: { disabled: 0.5 } }),
 }));
@@ -116,6 +126,8 @@ function renderRow(overrides: {
   refreshDisabled: boolean;
   item?: ClimbQueueItem;
   onPress?: (item: ClimbQueueItem) => void;
+  borrowedGrade?: number | null;
+  plannedGrade?: number | null;
 }) {
   return render(
     createElement(WorkoutPreviewRow, {
@@ -131,6 +143,7 @@ function renderRow(overrides: {
 
 beforeEach(() => {
   surfaces.entries = [];
+  gradeFormatPreference.gradeFormat = 'v-grade';
   resetClimbRowDisplayForTests();
 });
 
@@ -227,5 +240,75 @@ describe('WorkoutPreviewRow refresh button', () => {
     expect(refreshButton()?.disabled).toBe(false);
     const climbArea = getByLabelText('Test Climb, V4, 12 sends, 4 stars, setter');
     expect(climbArea.getAttribute('data-role')).toBe('none');
+  });
+});
+
+describe('WorkoutPreviewRow borrowed from a nearby grade', () => {
+  it('says which grade the climb fills in for, and speaks it', () => {
+    const { getByText } = renderRow({
+      isRefreshing: false,
+      refreshDisabled: false,
+      borrowedGrade: 18,
+      plannedGrade: 20,
+    });
+
+    getByText('V4 for V5');
+    expect(rowButton()?.label).toBe('Test Climb, V4, V4 for V5, 12 sends, 4 stars, setter');
+  });
+
+  // 4b borrowed for 4a: both are V0, so "V0 for V0" would say nothing.
+  it('adds the Font grade when both grades read the same V grade, and speaks it', () => {
+    const { getByText } = renderRow({
+      isRefreshing: false,
+      refreshDisabled: false,
+      borrowedGrade: 11,
+      plannedGrade: 10,
+    });
+
+    getByText('V0 / 4B for V0 / 4A');
+    expect(rowButton()?.label).toBe('Test Climb, V4, V0 / 4B for V0 / 4A, 12 sends, 4 stars, setter');
+  });
+
+  it('keeps the climber’s Font format when it already tells the grades apart', () => {
+    gradeFormatPreference.gradeFormat = 'font';
+
+    const { getByText } = renderRow({
+      isRefreshing: false,
+      refreshDisabled: false,
+      borrowedGrade: 11,
+      plannedGrade: 10,
+    });
+
+    getByText('4B for 4A');
+  });
+
+  it('shows no caption on a row at its planned grade', () => {
+    const { queryByText } = renderRow({ isRefreshing: false, refreshDisabled: false });
+
+    expect(queryByText(/ for /)).toBeNull();
+    expect(rowButton()?.label).toBe('Test Climb, V4, 12 sends, 4 stars, setter');
+  });
+
+  it('shows no caption when either grade is off the board scale', () => {
+    const { queryByText } = renderRow({
+      isRefreshing: false,
+      refreshDisabled: false,
+      borrowedGrade: 99,
+      plannedGrade: 20,
+    });
+
+    expect(queryByText(/ for /)).toBeNull();
+  });
+
+  it('re-renders when a refresh moves the row back to its planned grade', () => {
+    const props = { board, isActive: false, isRefreshing: false, refreshDisabled: false, onRefresh: vi.fn() };
+    const { getByText, queryByText, rerender } = render(
+      createElement(WorkoutPreviewRow, { ...props, item, borrowedGrade: 18, plannedGrade: 20 }),
+    );
+    getByText('V4 for V5');
+
+    rerender(createElement(WorkoutPreviewRow, { ...props, item, borrowedGrade: null, plannedGrade: null }));
+
+    expect(queryByText('V4 for V5')).toBeNull();
   });
 });

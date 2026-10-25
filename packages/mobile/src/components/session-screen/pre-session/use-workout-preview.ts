@@ -18,6 +18,8 @@ import { screenshotModeRandom } from '../../../lib/screenshot-mode';
 import { useSearchGradeSourceActive } from '../../../lib/graphql/hooks/search-grade-source';
 import { fetchGradePool } from './select-climbs-for-plan';
 import {
+  borrowForShortSlots,
+  borrowScaleFor,
   buildPoolsReusing,
   fetchFilters,
   filtersSignature,
@@ -164,6 +166,7 @@ export type UseWorkoutPreviewOptions = {
 };
 
 const EMPTY_DATA = (): WorkoutPreviewData => ({ items: [], pools: new Map(), usedUuids: new Set() });
+const NO_GRADES: GeneratorGradeScale = [];
 const EMPTY_STAGES: readonly WorkoutStage[] = [];
 
 // The settings that change a block's slots: equal keys plan the same grades.
@@ -284,13 +287,18 @@ export function useWorkoutPreview(
   const committedFetchKeyRef = useRef<string | null>(null);
   const rowKeyByStageIdRef = useRef<ReadonlyMap<string, string>>(new Map());
   const workoutPlanRef = useRef<WorkoutPlan | null>(null);
+  // The grade scale the committed preview borrows along (`borrowScaleFor`): a
+  // short slot borrows on a shuffle and a row refresh too.
+  const committedGradesRef = useRef<GeneratorGradeScale>(NO_GRADES);
   // Monotonic token: a build/clear only commits if it's still the latest.
   const genTokenRef = useRef(0);
   const committedPreviewKeyRef = useRef<string | null>(null);
   // Rows with a refresh fetch in flight (guards double-tap races).
   const inFlightSlotsRef = useRef<Set<string>>(new Set());
-  const toastRef = useRef({ showToast, t });
-  toastRef.current = { showToast, t };
+  // What a row refresh says when every climb that fits the row is on screen.
+  const noOtherClimbMessage = t('mobile.session.preWorkoutPreviewNoOtherClimb');
+  const toastRef = useRef({ showToast, t, noOtherClimbMessage });
+  toastRef.current = { showToast, t, noOtherClimbMessage };
 
   // Latest inputs behind refs so the public callbacks stay referentially stable
   // (empty deps) and never re-trigger the debounce effect by identity.
@@ -337,6 +345,7 @@ export function useWorkoutPreview(
       dataRef.current = EMPTY_DATA();
       planRef.current = [];
       workoutPlanRef.current = null;
+      committedGradesRef.current = NO_GRADES;
       committedFetchKeyRef.current = null;
       setCommittedPreviewKey(null);
       setItems([]);
@@ -413,22 +422,38 @@ export function useWorkoutPreview(
           setStatus('ready');
           return;
         }
-        const { pools, poolDemands, poolTopUpTiers, exhaustedPoolKeys } = await buildPoolsReusing(
-          plan,
-          // A newer build stops this one's searches before their next request.
-          { ...ctx, isCurrent: () => token === genTokenRef.current },
-          fetchPoolRef.current,
-          canReuse ? previous.data : undefined,
-        );
+        // A newer build stops this one's searches before their next request.
+        const fetchCtx: PreviewFetchContext = { ...ctx, isCurrent: () => token === genTokenRef.current };
+        const cache = canReuse ? previous.data : undefined;
+        const built = await buildPoolsReusing(plan, fetchCtx, fetchPoolRef.current, cache);
         if (token !== genTokenRef.current) return; // superseded by a newer build
         const avoided = getAvoidedClimbUuidsRef.current?.() ?? NO_AVOIDED_CLIMBS;
         const keptItems = canReuse
           ? keptRowsFor(plan, rowKeyByStageId, previous.plan, previous.rowKeyByStageId, previous.data.items)
           : [];
-        const { items: nextItems, usedUuids } = selectItemsFromPools(plan, pools, avoided, keptItems, poolTopUpTiers);
+        // A grade that came up short borrows from the grades next to it.
+        const borrowScale = borrowScaleFor(grades);
+        const { pools, poolDemands, poolTopUpTiers, exhaustedPoolKeys } = await borrowForShortSlots(
+          plan,
+          built,
+          fetchCtx,
+          fetchPoolRef.current,
+          borrowScale,
+          { cache, avoidClimbUuids: avoided, keptItems },
+        );
+        if (token !== genTokenRef.current) return; // superseded by a newer build
+        const { items: nextItems, usedUuids } = selectItemsFromPools(
+          plan,
+          pools,
+          avoided,
+          keptItems,
+          poolTopUpTiers,
+          borrowScale,
+        );
         dataRef.current = { items: nextItems, pools, usedUuids, poolDemands, poolTopUpTiers, exhaustedPoolKeys };
         planRef.current = plan;
         workoutPlanRef.current = workoutPlan;
+        committedGradesRef.current = borrowScale;
         committedFetchKeyRef.current = fetchKey;
         rowKeyByStageIdRef.current = rowKeyByStageId;
         setCommittedPreviewKey(nextPreviewKey, nextBoardKey);
@@ -468,11 +493,16 @@ export function useWorkoutPreview(
           { ...ctx, isCurrent: () => token === genTokenRef.current },
           fetchPoolRef.current,
           avoided,
+          committedGradesRef.current,
         );
         if (token !== genTokenRef.current) return;
         if (result.changed) {
           dataRef.current = result.state;
           setItems(result.state.items);
+        } else if (result.nothingNew) {
+          // Same rows; keep the pools it searched so the next tap need not.
+          dataRef.current = result.state;
+          toastRef.current.showToast(toastRef.current.noOtherClimbMessage);
         }
       } catch {
         // Best-effort: leave the old climb in place; the spinner clears below.
@@ -501,7 +531,7 @@ export function useWorkoutPreview(
       boardseshGradesRef.current,
     );
     if (committedPreviewKeyRef.current !== currentPreviewKey || planRef.current.length === 0) return;
-    const { poolDemands, poolTopUpTiers, exhaustedPoolKeys } = dataRef.current;
+    const { poolDemands, poolTopUpTiers, exhaustedPoolKeys, refetchedPoolKeys } = dataRef.current;
     // Within each pool's tiers, so the climbs you have not sent stay first.
     const pools = reshufflePools(dataRef.current.pools, poolTopUpTiers, screenshotModeRandom());
     const avoided = getAvoidedClimbUuidsRef.current?.() ?? NO_AVOIDED_CLIMBS;
@@ -511,8 +541,18 @@ export function useWorkoutPreview(
       avoided,
       undefined,
       poolTopUpTiers,
+      committedGradesRef.current,
     );
-    dataRef.current = { items: nextItems, pools, usedUuids, poolDemands, poolTopUpTiers, exhaustedPoolKeys };
+    // The same pools, reshuffled: what a refresh already searched again stays searched.
+    dataRef.current = {
+      items: nextItems,
+      pools,
+      usedUuids,
+      poolDemands,
+      poolTopUpTiers,
+      exhaustedPoolKeys,
+      refetchedPoolKeys,
+    };
     setItems(nextItems);
   }, []);
 
