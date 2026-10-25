@@ -93,6 +93,10 @@ vi.mock('../../providers/theme-provider', async () => {
   };
 });
 
+vi.mock('../../hooks/use-accessible-input-style', () => ({
+  useBrandInputColors: () => ({ cursorColor: '#6D28D9', selectionColor: '#6D28D966', selectionHandleColor: '#6D28D9' }),
+}));
+
 vi.mock('../../theme/ios-colors', () => ({
   iosSystemColors: { systemGray: '#888', white: '#fff' },
 }));
@@ -121,9 +125,22 @@ vi.mock('react-native-paper', () => ({
       elevation?: number;
       allowFontScaling?: boolean;
       maxFontSizeMultiplier?: number;
+      selectionColor?: string;
+      cursorColor?: string;
     }
   >(function SearchbarMock(
-    { value, placeholder, onChangeText, style, inputStyle, elevation, allowFontScaling, maxFontSizeMultiplier },
+    {
+      value,
+      placeholder,
+      onChangeText,
+      style,
+      inputStyle,
+      elevation,
+      allowFontScaling,
+      maxFontSizeMultiplier,
+      selectionColor,
+      cursorColor,
+    },
     ref,
   ) {
     return createElement('input', {
@@ -134,6 +151,8 @@ vi.mock('react-native-paper', () => ({
       'data-elevation': String(elevation ?? ''),
       'data-has-input-style': inputStyle ? 'true' : 'false',
       'data-line-height': readStyleField(inputStyle, 'lineHeight'),
+      'data-selection-color': selectionColor ?? '',
+      'data-cursor-color': cursorColor ?? '',
       'data-allow-font-scaling': String(allowFontScaling),
       'data-max-font-size-multiplier': String(maxFontSizeMultiplier),
       value,
@@ -244,6 +263,9 @@ describe('SearchHeader', () => {
     expect(searchbar?.getAttribute('data-radius')).toBe('22');
     expect(searchbar?.getAttribute('data-elevation')).toBe('0');
     expect(searchbar?.getAttribute('data-has-input-style')).toBe('true');
+    // Paper's own selectionColor is one opaque fill; the brand caret/highlight must override it.
+    expect(searchbar?.getAttribute('data-selection-color')).toBe('#6D28D966');
+    expect(searchbar?.getAttribute('data-cursor-color')).toBe('#6D28D9');
 
     // getText/set({silent}) are backed by local state, so they work regardless of
     // Paper owning the inner TextInput.
