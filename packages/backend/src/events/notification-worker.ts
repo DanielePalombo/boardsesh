@@ -477,8 +477,9 @@ export class NotificationWorker {
     // A type that can be stored without its actor also matches a row stored
     // that way: the actor was hidden from this recipient, so a NULL row is the
     // same notification. Every such type names one actor per entity (a
-    // proposal has one proposer), so this cannot swallow a second person. Other types never match NULL: a NULL there is a deleted
-    // account, not this actor.
+    // proposal has one proposer), so this cannot swallow a second person.
+    // Other types never match NULL: a NULL there is a deleted account, not
+    // this actor.
     const sameActor = notifiesWithoutActor(type)
       ? sql`(actor_id = ${actorId} OR actor_id IS NULL)`
       : sql`actor_id = ${actorId}`;
