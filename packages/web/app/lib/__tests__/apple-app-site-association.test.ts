@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test';
 import { GET } from '@/app/.well-known/apple-app-site-association/route';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@/app/lib/i18n/config';
-import { gymQrUrl } from '@/app/lib/gym-attribution';
+import { boardQrUrl, gymQrUrl } from '@/app/lib/gym-attribution';
 import {
   APPLE_APP_ID,
   buildAppleAppSiteAssociation,
@@ -64,6 +64,20 @@ describe('apple-app-site-association paths', () => {
     }
   });
 
+  it('keeps the board poster print page in the browser, with or without locale', () => {
+    expect(opensInApp(paths, '/poster/b/home-wall')).toBe(false);
+    expect(opensInApp(paths, '/poster/b/home-wall?wall=abc')).toBe(false);
+    for (const locale of nonDefaultLocales) {
+      expect(opensInApp(paths, `/${locale}/poster/b/x`)).toBe(false);
+    }
+  });
+
+  it('still opens the board link the poster QR prints in the app', () => {
+    // The URL `boardQrUrl` builds for a board poster, query and all.
+    expect(opensInApp(paths, boardQrUrl('home-wall', 'board'))).toBe(true);
+    expect(opensInApp(paths, '/b/home-wall?wall=abc&src=qr&medium=board')).toBe(true);
+  });
+
   it('still opens the gym directory in the app, which has that screen', () => {
     expect(opensInApp(paths, '/gyms')).toBe(true);
     expect(opensInApp(paths, '/gyms/mine')).toBe(true);
@@ -97,6 +111,10 @@ describe('apple-app-site-association paths', () => {
       'NOT /es/gym/*',
       'NOT /fr/gym/*',
       'NOT /de/gym/*',
+      'NOT /poster/*',
+      'NOT /es/poster/*',
+      'NOT /fr/poster/*',
+      'NOT /de/poster/*',
       '/*',
     ]);
   });
