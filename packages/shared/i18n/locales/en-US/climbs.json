@@ -658,7 +658,6 @@
       "rangeHoldHint": "Touch and hold to make a range with the selected angle"
     },
     "climbRow": {
-      "addToQueue": "Add to queue",
       "toggleFavorite": "Toggle favorite",
       "favorited": "Favorited",
       "share": "Share climb",
@@ -746,6 +745,7 @@
     "climbActions": {
       "preview": "Preview",
       "playNext": "Play next",
+      "playLast": "Play last",
       "nameCopied": "Name copied",
       "copyNameError": "Couldn't copy name",
       "copyNameHint": "Press and hold to copy the name",
