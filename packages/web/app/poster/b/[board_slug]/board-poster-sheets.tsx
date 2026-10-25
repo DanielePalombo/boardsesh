@@ -20,7 +20,8 @@ import styles from './board-poster.module.css';
  * reads them through `--poster-qr-box`. The plain poster keeps the design's
  * 110 mm. The photo poster's code grew from 82 to 104 mm and the card's from 62
  * to 68 mm after print QA found both only scanned at arm's length; the photo
- * gave up 14 mm of height to make room.
+ * gave up 20 mm of height to make room. Every code sits wholly inside the
+ * sheet, its white quiet zone included.
  */
 const PLAIN_QR_MM = 110;
 const PHOTO_QR_MM = 104;
@@ -275,7 +276,7 @@ function Card({ content }: { content: BoardPosterContent }) {
 }
 
 /**
- * Four cards on one sheet, 93 × 127 mm each, with dashed cut lines: for hold
+ * Four cards on one sheet, 93 × 124 mm each, with dashed cut lines: for hold
  * boxes, posts, a home wall's door, a front desk.
  */
 export function CardSheet({ content }: { content: BoardPosterContent }) {
@@ -287,11 +288,11 @@ export function CardSheet({ content }: { content: BoardPosterContent }) {
       <Card content={content} />
       {/* Cut lines: the outer frame and the centre cross, drawn once each, as
           SVG strokes so they print with background graphics off. */}
-      <svg className={styles.cutLines} viewBox="0 0 186 254" preserveAspectRatio="none" aria-hidden>
+      <svg className={styles.cutLines} viewBox="0 0 186 248" preserveAspectRatio="none" aria-hidden>
         <g fill="none" stroke="#000000" strokeWidth="0.2" strokeDasharray="2 1.6" strokeOpacity="0.55">
-          <rect x="0.1" y="0.1" width="185.8" height="253.8" />
-          <line x1="93" y1="0" x2="93" y2="254" />
-          <line x1="0" y1="127" x2="186" y2="127" />
+          <rect x="0.1" y="0.1" width="185.8" height="247.8" />
+          <line x1="93" y1="0" x2="93" y2="248" />
+          <line x1="0" y1="124" x2="186" y2="124" />
         </g>
       </svg>
     </main>

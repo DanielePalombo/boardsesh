@@ -4,8 +4,13 @@ import { CLIMB_SESSION_COOKIE } from '@/app/lib/climb-session-cookie';
 import { DEFAULT_LOCALE, LOCALE_COOKIE, LOCALE_HEADER } from '@/app/lib/i18n/config';
 import { PATHNAME_HEADER } from '@/app/lib/request-pathname-header';
 
-const { getClimbViewPageCacheTTL, getListPageCacheTTL, hasUserSpecificFilters, isSprayWallCapabilityRequest } =
-  await import('@/app/lib/list-page-cache');
+const {
+  getClimbViewPageCacheTTL,
+  getListPageCacheTTL,
+  hasUserSpecificFilters,
+  isBoardPosterRequest,
+  isSprayWallCapabilityRequest,
+} = await import('@/app/lib/list-page-cache');
 const { middleware, config } = await import('@/middleware');
 
 function sp(params: Record<string, string> = {}): URLSearchParams {
@@ -824,10 +829,16 @@ describe('middleware cache headers on the board poster (/poster/b/...)', () => {
     expect(response.headers.get('Vercel-CDN-Cache-Control')).toBe('no-store');
   });
 
-  it('treats every poster path as no-store, with or without a capability', () => {
-    expect(isSprayWallCapabilityRequest('/poster/b/main-kilter', new URLSearchParams())).toBe(true);
-    expect(isSprayWallCapabilityRequest('/poster', new URLSearchParams())).toBe(false);
-    expect(isSprayWallCapabilityRequest('/b/main-kilter', new URLSearchParams())).toBe(false);
+  it('treats every poster path as a poster, with or without a capability', () => {
+    expect(isBoardPosterRequest('/poster/b/main-kilter')).toBe(true);
+    expect(isBoardPosterRequest('/poster')).toBe(false);
+    expect(isBoardPosterRequest('/b/main-kilter')).toBe(false);
+  });
+
+  it('leaves the spray capability rule to /b/ links that carry ?wall=', () => {
+    const withWall = new URLSearchParams({ wall: '11111111-1111-4111-8111-111111111111' });
+    expect(isSprayWallCapabilityRequest('/poster/b/main-kilter', withWall)).toBe(false);
+    expect(isSprayWallCapabilityRequest('/b/main-kilter', withWall)).toBe(true);
   });
 });
 

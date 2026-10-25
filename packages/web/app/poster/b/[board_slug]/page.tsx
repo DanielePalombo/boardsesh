@@ -16,7 +16,7 @@
 // Who gets a poster is `boardPosterTarget` in `lib/board-poster.ts`; every
 // refusal is the same 404, so this route never says whether a private board or
 // an unlisted wall exists. The response is never cached anywhere
-// (`isSprayWallCapabilityRequest` covers `/poster/b/`): it prints the board's
+// (`isBoardPosterRequest` in middleware): it prints the board's
 // visibility as of this request, and an unlisted wall's URL carries its
 // capability.
 

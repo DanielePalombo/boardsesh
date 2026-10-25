@@ -15,45 +15,18 @@
 // step's line budget and moves the attribute.
 
 import React, { useLayoutEffect, useRef } from 'react';
+import { fitToBudget, parseLineBudgets, type LineBudgets } from './poster-fit';
 import styles from './poster-fit-text.module.css';
 
 type PosterFitTextProps = {
   text: string;
   className?: string;
   /** How many lines each step may take, largest type first. The last step clamps. */
-  lineBudgets: readonly number[];
+  lineBudgets: LineBudgets;
   /** The step the server guessed from the text's length; what prints without JavaScript. */
   initialStep: number;
   as?: 'h1' | 'h2';
 };
-
-/** Distinct line boxes the element's text occupies, read off the rendered layout. */
-function countRenderedLines(element: HTMLElement): number {
-  const range = document.createRange();
-  range.selectNodeContents(element);
-  // jsdom implements no layout; a renderer without rects reads as one line.
-  if (typeof range.getClientRects !== 'function') return 1;
-  const lineTops = new Set<number>();
-  for (const rect of Array.from(range.getClientRects())) {
-    if (rect.width > 0) lineTops.add(Math.round(rect.top));
-  }
-  return lineTops.size;
-}
-
-/** Set the largest step whose line count is within its budget, else the last (clamped) step. */
-function fitToBudget(element: HTMLElement, lineBudgets: readonly number[]): void {
-  element.setAttribute('data-fit-measuring', '');
-  let chosenStep = lineBudgets.length - 1;
-  for (let step = 0; step < lineBudgets.length; step += 1) {
-    element.setAttribute('data-fit-step', String(step));
-    if (countRenderedLines(element) <= lineBudgets[step]) {
-      chosenStep = step;
-      break;
-    }
-  }
-  element.setAttribute('data-fit-step', String(chosenStep));
-  element.removeAttribute('data-fit-measuring');
-}
 
 export default function PosterFitText({ text, className, lineBudgets, initialStep, as = 'h1' }: PosterFitTextProps) {
   const elementRef = useRef<HTMLHeadingElement>(null);
@@ -63,8 +36,12 @@ export default function PosterFitText({ text, className, lineBudgets, initialSte
   useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element) return undefined;
-    const budgets = budgetKey.split(',').map(Number);
-    const fit = () => fitToBudget(element, budgets);
+    const budgets = parseLineBudgets(budgetKey);
+    // A malformed key keeps the server's step rather than measuring nothing.
+    if (!budgets) return undefined;
+    const fit = () => {
+      fitToBudget(element, budgets);
+    };
     fit();
     // A web font (or a slow system font fallback) can land after first layout
     // and change every line break; measure again once fonts settle, and once

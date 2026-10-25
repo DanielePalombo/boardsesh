@@ -8,10 +8,13 @@
  * phone camera pointed at a page taped to a wall. The gym poster
  * (`gym-poster.module.css`) and the kiosk's install tile make the same call.
  *
- * ONE PAGE ON A4 AND ON US LETTER. Every sheet is 186 × 254 mm: A4 is the
+ * ONE PAGE ON A4 AND ON US LETTER. Every sheet is 186 × 248 mm: A4 is the
  * narrower paper (210 mm) and Letter the shorter (279.4 mm), so at the 12 mm
- * @page margin the box both can print is 186 × 255.4 mm. The height is fixed,
- * and clipped vertically, so no block can ever start a second sheet; every
+ * @page margin the box both can print is 186 × 255.4 mm. The 7 mm left over is
+ * slack for Safari, whose printed headers and footers eat into the page on
+ * Letter. Nothing sits outside the 186 mm width either — Firefox's "fit to
+ * page width" shrinks the whole sheet to fit anything that sticks out. The
+ * height is fixed, and clipped, so no block can ever start a second sheet; every
  * block that can grow is bounded instead (the name by `PosterFitText`'s clamp,
  * the rest by the flexible gaps between them), and the worst cases — a
  * 200-character name, an unlisted wall, an LED board's legal lines, German —
@@ -58,11 +61,8 @@
   box-sizing: border-box;
   position: relative;
   width: 186mm;
-  height: 254mm;
-  /* Clip below, never sideways: a code's white quiet zone hangs into the side
-   * margin (blank paper either way) so its dark modules line up with the text. */
-  overflow-x: visible;
-  overflow-y: clip;
+  height: 248mm;
+  overflow: clip;
   display: flex;
   flex-direction: column;
   background: #ffffff;
@@ -205,18 +205,14 @@
   margin-top: 3mm;
 }
 
-/* The quiet zone hangs into the page margin, so the printed modules line up
- * with the text edge above and below. */
-.plainQr {
-  margin-left: calc(-1 * var(--poster-qr-quiet));
-}
-
 .plainStepsColumn {
   flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: var(--poster-qr-quiet) 0 var(--poster-qr-quiet) 3mm;
+  /* No left padding: the code's own white quiet zone is the gap. The top and
+   * bottom padding line the first step and the note up with its dark modules. */
+  padding: var(--poster-qr-quiet) 0;
 }
 
 .plainSteps {
@@ -330,7 +326,7 @@
   display: block;
   box-sizing: border-box;
   width: 186mm;
-  height: 106mm;
+  height: 100mm;
   margin-top: 4mm;
   object-fit: cover;
   /* Keep the top of the wall, lose the floor and the mats. */
@@ -343,17 +339,17 @@
   position: relative;
   display: flex;
   min-height: var(--poster-qr-box);
-  /* The text column stops 8 mm short of the code's printed modules. */
-  padding: var(--poster-qr-quiet) calc(var(--poster-qr-box) - var(--poster-qr-quiet) + 8mm) var(--poster-qr-quiet) 0;
+  /* The text column stops 4 mm short of the code's white quiet zone. */
+  padding: var(--poster-qr-quiet) calc(var(--poster-qr-box) + 4mm) var(--poster-qr-quiet) 0;
   margin-top: 3mm;
 }
 
-/* The quiet zone sits in the right page margin, so the dark modules line up
- * with the photo's right edge. */
+/* Flush with the photo's right edge, quiet zone included: the white margin
+ * stays inside the sheet. */
 .photoQr {
   position: absolute;
   top: 0;
-  right: calc(-1 * var(--poster-qr-quiet));
+  right: 0;
 }
 
 .photoInfo {
@@ -470,7 +466,7 @@
 .cardSheet {
   display: grid;
   grid-template-columns: 93mm 93mm;
-  grid-template-rows: 127mm 127mm;
+  grid-template-rows: 124mm 124mm;
 }
 
 .cutLines {
@@ -478,7 +474,7 @@
   inset: 0;
   display: block;
   width: 186mm;
-  height: 254mm;
+  height: 248mm;
   pointer-events: none;
 }
 
@@ -487,9 +483,8 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  padding: 7mm 7.5mm 6mm;
-  overflow-x: visible;
-  overflow-y: clip;
+  padding: 6mm 7.5mm 5mm;
+  overflow: clip;
 }
 
 .cardKicker {
@@ -530,12 +525,12 @@
 
 .cardGapKicker {
   flex-grow: 1;
-  min-height: 2.5mm;
+  min-height: 1.5mm;
 }
 
 .cardGapAbove {
   flex-grow: 0.4;
-  min-height: 0.5mm;
+  min-height: 0;
 }
 
 .cardGapBelow {
@@ -545,7 +540,7 @@
 
 .cardGapFoot {
   flex-grow: 1.6;
-  min-height: 2mm;
+  min-height: 1.5mm;
 }
 
 .cardQr {

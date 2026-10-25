@@ -6,9 +6,11 @@
 // `board-poster.module.css` as `[data-fit-step='N']` rules; the budgets here
 // must match the clamps there step for step.
 
+import type { LineBudgets } from '@/app/components/poster/poster-fit';
+
 export type NameFitProfile = {
   /** Lines each step may take. The last step clamps with an ellipsis. */
-  lineBudgets: readonly number[];
+  lineBudgets: LineBudgets;
   /**
    * The longest name the server expects each step (but the last) to hold.
    * Only a first guess for a page printed with JavaScript off; measurement wins.
