@@ -75,6 +75,8 @@ export const QUERIES_NO_CAPTURE_SENDS: readonly string[] = [
   // Home's Fresh beta shelf (#6289), off by default; captures shoot the default Home.
   'GetRecentBetaLinks',
   'GetSessionHealthExport',
+  // F3 resync (#6666): only in now-slot mode. Screenshot mode runs no PostHog and pins no env value for queue-now-slot.
+  'GetSessionQueueStateNowSlot',
   'GetSprayWallArchive',
   'GetSprayWallArt',
   'GetSprayWallByLayout',
@@ -104,6 +106,8 @@ export const QUERIES_NO_CAPTURE_SENDS: readonly string[] = [
   'ProfilePrivacy',
   'ProposalReportReleaseContexts', // Only expanded report reasons for scoped admins.
   'QaPreviews',
+  // F3 server probe (#6666): runs only with queue-now-slot on. Screenshot mode runs no PostHog and pins no env value for it.
+  'QueueStateFieldsProbe',
   'ResourceAccessRequests',
   'ResourcePrivacy',
   'SavedClimbDocuments',

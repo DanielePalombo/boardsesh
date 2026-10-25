@@ -14,6 +14,7 @@ import type { PublishPlaybackStateInput, SessionRestCadenceSendOptions } from '@
 import type { SessionRestCadenceInput, SetSessionRestCadencePayload } from '@boardsesh/shared-schema/generated';
 import type { PlaybackStateChangedEvent, SessionSummary, SessionUser, UserBoard } from '@boardsesh/shared-schema';
 import type { SessionLiveStatsEvent } from '../../lib/graphql/operations';
+import type { CurrentChangeClock } from '../../lib/ble/stale-current-hold';
 
 /** What triggered a queue reorder — attribution for `SHARED_EVENTS.QueueReordered`. */
 export type QueueReorderSource = 'drag' | 'play-next';
@@ -51,6 +52,13 @@ type QueueContextValue = {
    * the lightbulb's lit indicator; the current climb is never cleared by either.
    */
   isSessionWallLit: boolean;
+  /**
+   * When the current climb last became a different climb (#4979,
+   * docs/current-climb-outside-queue.md section 6). Read by the Bluetooth
+   * auto-sender's stale-climb hold. Stamped for the current queue-item uuid; it
+   * changes identity only when that uuid changes or a FullSync reseeds it.
+   */
+  lastCurrentChange: CurrentChangeClock;
   /**
    * Queue a climb. Resolves `'cancelled'` when the climb belongs to another
    * board and the climber backed out of the cross-board prompt — callers that
@@ -105,6 +113,8 @@ type QueueContextValue = {
   getQueueSnapshot: () => {
     queue: ClimbQueueItem[];
     currentClimbQueueItem: ClimbQueueItem | null;
+    /** F3 now-slot mode: the History / Up next line. Null or absent in legacy mode. */
+    historyCount?: number | null;
     playlistSuggestionSource: PlaylistSuggestionSource | null;
   };
   /**
@@ -128,6 +138,13 @@ type QueueContextValue = {
     items: ClimbQueueItem[],
     options?: { activateFirstWhenIdle?: boolean; placement?: QueueAddPlacement },
   ) => number;
+  /**
+   * F3 Replay from here: the History entry `queueItemUuid` names, when the long-
+   * press menu should offer Replay from here for it. Null outside now-slot mode,
+   * with nothing current, and for any row that is not History. Reads live state
+   * without subscribing, like `getQueueSnapshot`.
+   */
+  findReplayFromHereItem: (queueItemUuid: string) => ClimbQueueItem | null;
   setCurrentClimb: (item: ClimbQueueItem, options?: SetCurrentClimbOptions) => void;
   /**
    * Correct every queued copy of a climb its setter just saved again (name,
@@ -361,6 +378,12 @@ export const QueueHasActiveClimbContext = createContext<QueueHasActiveClimbConte
 type QueueDataContextValue = {
   queue: ClimbQueueItem[];
   currentClimbQueueItem: ClimbQueueItem | null;
+  /**
+   * F3 now-slot mode: the History / Up next line while nothing is current
+   * (`upNextStart` reads it). Null or absent in legacy mode, which every reader
+   * then treats exactly as today.
+   */
+  historyCount?: number | null;
 };
 
 export const QueueDataContext = createContext<QueueDataContextValue | null>(null);
@@ -381,6 +404,7 @@ type QueueActionsContextValue = Omit<
   | 'lastConnectedBoardSerial'
   | 'participantId'
   | 'isSessionWallLit'
+  | 'lastCurrentChange'
 >;
 
 export const QueueActionsContext = createContext<QueueActionsContextValue | null>(null);
