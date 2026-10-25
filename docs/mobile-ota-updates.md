@@ -618,6 +618,40 @@ artifacts and matching Debug IDs.
 the rollout from the dashboard once it's healthy — an unfinished per-update rollout **locks**
 further publishing on that branch, so a forgotten one turns the next auto-publish red.
 
+### A parked run holds the whole lane
+
+`mobile-ota-production.yml` runs under `concurrency: mobile-ota-production` with
+`cancel-in-progress: false` and `queue: max`, and every job a direct run executes
+(`live-store-runtimes / resolve`, `publish`, `notify-train-deployment`) declares
+`environment: Production`. A job parked in `waiting` at that gate holds the lane
+for up to 30 days, and `timeout-minutes` does not help because a parked job's
+clock never starts. On 2026-10-24 run 40105607795 finished `publish`, then parked
+`notify-train-deployment` for 27 hours; 40 runs queued behind it, the daily stable
+OTA `tick` and production-deploy's `promote-mobile-ota` waited on the same group,
+and nothing alerted.
+
+`production-deploy-watchdog.yml` now covers this lane too (its
+`mobile-ota-production` matrix job, every 15 minutes, all branches). It cancels a
+run only when a listed job is `waiting` at a gate, nothing is `in_progress`, and
+no job has started or completed for 45 minutes. It never cancels an executing
+publish, however old the run: a publish killed part-way can leave one platform
+published and the other not. It never re-dispatches, since `queue: max` keeps
+every pending run. A cancelled run's unfinished jobs are not retried, so the
+Discord report says for each stopped run whether `publish` had already succeeded.
+If it had not, dispatch the workflow again for that branch unless a later run
+there publishes the same platforms (`gh workflow run mobile-ota-production.yml
+--ref <branch>`, adding `-f platform=…` for a per-platform republish). If it
+cannot read a held run's job list it goes red and names the run rather than
+reporting all clear: open that run and check it by hand. The full rules, and the
+lane-sharing workflows it does not watch, are in
+[docs/production-deploy.md](production-deploy.md#the-ota-lane).
+
+To check by hand: a run showing **waiting** in the
+[Mobile OTA Production runs](https://github.com/boardsesh/boardsesh/actions/workflows/mobile-ota-production.yml)
+list is parked; **pending** runs are queued behind it and are fine.
+`Production Deploy Watchdog` → **Run workflow** with **dry run** ticked reports
+what it would cancel on both lanes without touching anything.
+
 ### Production channel mapping and branch surfing
 
 In V3 the channel→branch mapping lives in Postgres, not in Expo's API. `eoas publish --branch X`
