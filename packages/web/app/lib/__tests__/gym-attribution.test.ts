@@ -35,6 +35,18 @@ describe('boardQrUrl', () => {
   it('percent-encodes a slug that is not URL-safe', () => {
     expect(boardQrUrl('kilter 45', 'kiosk')).toBe(`${SITE_URL}/b/kilter%2045?src=qr&medium=kiosk`);
   });
+
+  it("puts an unlisted wall's capability first, as its share link does", () => {
+    // `/b/{slug}` re-emits `wall` onto its redirect alongside the QR pair, so
+    // this exact string opens the wall instead of a 404.
+    expect(boardQrUrl('garage-wall', 'board', { wallUuid: '0144249a-3a8c-47c2-8c1e-54c0c572fe02' })).toBe(
+      'https://www.boardsesh.com/b/garage-wall?wall=0144249a-3a8c-47c2-8c1e-54c0c572fe02&src=qr&medium=board',
+    );
+  });
+
+  it('adds nothing when there is no capability to carry', () => {
+    expect(boardQrUrl('garage-wall', 'board', {})).toBe('https://www.boardsesh.com/b/garage-wall?src=qr&medium=board');
+  });
 });
 
 describe('gymQrAttributionQuery', () => {

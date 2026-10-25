@@ -19,6 +19,7 @@ import Divider from '@mui/material/Divider';
 import AddOutlined from '@mui/icons-material/AddOutlined';
 import LinkOffOutlined from '@mui/icons-material/LinkOffOutlined';
 import AddLinkOutlined from '@mui/icons-material/AddLinkOutlined';
+import PrintOutlined from '@mui/icons-material/PrintOutlined';
 import { useSession } from 'next-auth/react';
 import { useWsAuthToken } from '@/app/hooks/use-ws-auth-token';
 import { createGraphQLHttpClient } from '@/app/lib/graphql/client';
@@ -42,6 +43,8 @@ import {
 import type { StrayBoard, UserBoard } from '@boardsesh/shared-schema';
 import { boardTypeLabel } from '@boardsesh/board-constants';
 import { themeTokens } from '@/app/theme/theme-config';
+import LocaleLink from '@/app/components/i18n/locale-link';
+import { boardPosterConsoleHref } from '@/app/lib/board-poster';
 import { canManageGymBoards, canUnlinkBoard, linkableBoards } from './gym-board-permissions';
 import ConfirmDialog from './confirm-dialog';
 import type { GymManageTabProps } from './tab-props';
@@ -197,6 +200,10 @@ export default function GymBoardsTab({ gym }: GymManageTabProps) {
                       {board.name}
                     </Typography>
                     <VisibilityChip board={board} />
+                    {/* In the wrapping title row, not beside Unlink: two actions
+                        in the fixed-width secondary slot would run over the
+                        board's name on a phone. */}
+                    <BoardPosterAction board={board} />
                   </Box>
                 }
                 secondary={`${boardTypeLabel(board.boardType)} · ${board.angle}°`}
@@ -234,6 +241,30 @@ export default function GymBoardsTab({ gym }: GymManageTabProps) {
         />
       )}
     </Box>
+  );
+}
+
+/**
+ * "Print poster" for one board row (#4415), or nothing when the board gets no
+ * poster: a private Spraywall, a Spraywall with no slug yet, or an LED board
+ * that is Followers, Invite-only or Only me. `boardPosterConsoleHref` applies
+ * the poster page's own rule, so the console never offers a link that 404s for
+ * a reason it could have known.
+ */
+function BoardPosterAction({ board }: { board: UserBoard }) {
+  const { t } = useTranslation('kiosk');
+  const posterHref = boardPosterConsoleHref(board);
+  if (!posterHref) return null;
+  return (
+    <Button
+      size="small"
+      component={LocaleLink}
+      href={posterHref}
+      startIcon={<PrintOutlined />}
+      sx={{ textTransform: 'none' }}
+    >
+      {t('manage.boards.printPoster')}
+    </Button>
   );
 }
 

@@ -144,6 +144,35 @@
     "sprayWallPhotoAlt": "Photo of {{wallName}}",
     "sprayWallMeta": "{{angle}}° · {{holds}} holds"
   },
+  "boardPoster": {
+    "metaTitle": "QR poster for {{boardName}}",
+    "fallbackTitle": "QR poster",
+    "scanStep": "Scan the code with your camera",
+    "openSource": "Boardsesh is free and open source.",
+    "printedOn": "Printed {{monthYear}}",
+    "layoutLabel": "Poster layout",
+    "layouts": {
+      "photo": "Photo poster",
+      "plain": "Plain poster",
+      "cards": "Cards"
+    },
+    "unlistedNotice": "Anyone who scans this can open the Spraywall.",
+    "spray": {
+      "headline": "This Spraywall is on Boardsesh",
+      "pickStep": "Pick a climb on the photo",
+      "logStep": "Log your send or set your own",
+      "justInstalled": "Just installed? Scan again to open this Spraywall.",
+      "backAction": "Back to the Spraywall"
+    },
+    "led": {
+      "headline": "This board is on Boardsesh",
+      "pickStep": "Pick a climb and light it up",
+      "logStep": "Topped it? Log your send",
+      "justInstalled": "Just installed? Scan again to open this board.",
+      "compatibility": "Works with {{boardBrand}}.",
+      "backAction": "Back to the board"
+    }
+  },
   "manage": {
     "welcome": {
       "title": "Get your wall live",
@@ -291,6 +320,7 @@
         "unlisted": "Unlisted",
         "private": "Private"
       },
+      "printPoster": "Print poster",
       "addDialog": {
         "title": "Add one of your boards",
         "body": "Pick a board you own to link to this gym.",

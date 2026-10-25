@@ -4,7 +4,7 @@ import { CLIMB_SESSION_COOKIE } from '@/app/lib/climb-session-cookie';
 import { DEFAULT_LOCALE, LOCALE_COOKIE, LOCALE_HEADER } from '@/app/lib/i18n/config';
 import { PATHNAME_HEADER } from '@/app/lib/request-pathname-header';
 
-const { getClimbViewPageCacheTTL, getListPageCacheTTL, hasUserSpecificFilters } =
+const { getClimbViewPageCacheTTL, getListPageCacheTTL, hasUserSpecificFilters, isSprayWallCapabilityRequest } =
   await import('@/app/lib/list-page-cache');
 const { middleware, config } = await import('@/middleware');
 
@@ -806,6 +806,28 @@ describe('middleware cache headers on a spray wall share link (?wall=)', () => {
     const withWall = new URLSearchParams({ wall: '11111111-1111-4111-8111-111111111111' });
     expect(getListPageCacheTTL('/b/garage-wall/40/list', withWall)).toBeNull();
     expect(getClimbViewPageCacheTTL('/b/garage-wall/40/view/some-climb', withWall)).toBeNull();
+  });
+});
+
+// The printable board poster prints the board's visibility as of the request,
+// and an unlisted wall's poster URL carries its capability (#4415).
+describe('middleware cache headers on the board poster (/poster/b/...)', () => {
+  it.each([
+    ['public board poster', '/poster/b/main-kilter'],
+    ['poster with a layout', '/poster/b/main-kilter?layout=cards'],
+    ['unlisted wall poster', '/poster/b/garage-wall?wall=11111111-1111-4111-8111-111111111111'],
+    ['localized poster', '/es/poster/b/garage-wall?wall=11111111-1111-4111-8111-111111111111'],
+  ])('sends no-store on the %s', (_shape, url) => {
+    const response = middleware(makeRequest(url));
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(response.headers.get('CDN-Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Vercel-CDN-Cache-Control')).toBe('no-store');
+  });
+
+  it('treats every poster path as no-store, with or without a capability', () => {
+    expect(isSprayWallCapabilityRequest('/poster/b/main-kilter', new URLSearchParams())).toBe(true);
+    expect(isSprayWallCapabilityRequest('/poster', new URLSearchParams())).toBe(false);
+    expect(isSprayWallCapabilityRequest('/b/main-kilter', new URLSearchParams())).toBe(false);
   });
 });
 

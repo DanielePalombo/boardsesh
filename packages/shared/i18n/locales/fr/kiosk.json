@@ -144,6 +144,35 @@
     "sprayWallPhotoAlt": "Photo de {{wallName}}",
     "sprayWallMeta": "{{angle}}° · {{holds}} prises"
   },
+  "boardPoster": {
+    "metaTitle": "Affiche QR pour {{boardName}}",
+    "fallbackTitle": "Affiche QR",
+    "scanStep": "Scanne le code avec ton appareil photo",
+    "openSource": "Boardsesh est gratuit et open source.",
+    "printedOn": "Imprimé en {{monthYear}}",
+    "layoutLabel": "Mise en page de l'affiche",
+    "layouts": {
+      "photo": "Affiche avec photo",
+      "plain": "Affiche simple",
+      "cards": "Cartes"
+    },
+    "unlistedNotice": "Toute personne qui scanne ce code peut ouvrir le Spraywall.",
+    "spray": {
+      "headline": "Ce Spraywall est sur Boardsesh",
+      "pickStep": "Choisis un bloc sur la photo",
+      "logStep": "Fais la croix ou ouvre le tien",
+      "justInstalled": "Tu viens d'installer l'appli ? Scanne à nouveau pour ouvrir ce Spraywall.",
+      "backAction": "Retour au Spraywall"
+    },
+    "led": {
+      "headline": "Cette board est sur Boardsesh",
+      "pickStep": "Choisis un bloc et allume-le sur la board",
+      "logStep": "Enchaîné ? Fais la croix",
+      "justInstalled": "Tu viens d'installer l'appli ? Scanne à nouveau pour ouvrir cette board.",
+      "compatibility": "Compatible avec {{boardBrand}}.",
+      "backAction": "Retour à la board"
+    }
+  },
   "manage": {
     "welcome": {
       "title": "Mets ta salle en route",
@@ -291,6 +320,7 @@
         "unlisted": "Non répertoriée",
         "private": "Privée"
       },
+      "printPoster": "Imprimer l'affiche",
       "addDialog": {
         "title": "Ajoute une de tes boards",
         "body": "Choisis une board que tu possèdes pour la relier à cette salle.",

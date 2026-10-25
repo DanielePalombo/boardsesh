@@ -15,12 +15,14 @@ import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { getServerAuthToken } from '@/app/lib/auth/server-auth';
 import { getServerTranslation } from '@/app/lib/i18n/server';
-import { createNoIndexMetadata, absoluteUrl } from '@/app/lib/seo/metadata';
+import { createNoIndexMetadata } from '@/app/lib/seo/metadata';
 import { getPublicBackendHttpUrl } from '@/app/lib/backend-url';
 import { resolveGymLogoDisplayUrl } from '@/app/lib/gym-logo-display-url';
 import { fetchGymBySlug, isGymViewable } from '../fetch-gym-by-slug';
+import PosterPrintBar from '@/app/components/poster/poster-print-bar';
+import { posterTypedUrl } from '@/app/components/poster/poster-typed-url';
+import posterStyles from '@/app/components/poster/poster-sheet.module.css';
 import GymPosterQr from './gym-poster-qr';
-import GymPosterPrintBar from './gym-poster-print-bar';
 import styles from './gym-poster.module.css';
 
 type GymPosterRouteProps = {
@@ -28,23 +30,12 @@ type GymPosterRouteProps = {
 };
 
 /**
- * The line a human types when the code won't scan: `www.boardsesh.com/gym/x`,
- * clean — no `?src=qr&medium=poster`. Someone typing a URL off a wall is not a
- * scan, and asking them to key in two query params would guarantee a typo and
- * mislabel them as a scan if they got it right.
- *
- * Built from `absoluteUrl` so the host tracks the canonical site URL, then
- * stripped of its scheme: `https://` is noise on a printed line, and every
- * browser and phone keyboard adds it back.
- *
- * The slug is percent-encoded because `gymQrUrl` percent-encodes it, and these
- * two strings are printed centimetres apart on the same sheet. No slug the
- * backend generates today can differ between the two forms — but "the printed
- * code and the printed line are built by two code paths that could disagree"
- * is the exact failure this file exists to prevent, and the fix is one call.
+ * The line a human types when the code won't scan: `www.boardsesh.com/gym/x`.
+ * Percent-encoded because `gymQrUrl` percent-encodes the slug — see
+ * `posterTypedUrl` for why the printed code and the printed line must agree.
  */
 function typedFallbackUrl(gymSlug: string): string {
-  return absoluteUrl(gymPosterPath(gymSlug)).replace(/^https?:\/\//, '');
+  return posterTypedUrl(gymPosterPath(gymSlug));
 }
 
 /** The gym's own page, encoded the same way — the back link and the typed line. */
@@ -109,7 +100,7 @@ export default async function GymPosterPage(props: GymPosterRouteProps) {
   // themes because it is read off paper by a phone camera. The screen-only
   // action bar below is normal MUI.
   return (
-    <div className={styles.page}>
+    <div className={posterStyles.page}>
       <main className={styles.sheet}>
         {/* `alt=""`, deliberately: the gym's name is the <h1> immediately below,
             so a described logo makes a screen reader announce the name twice.
@@ -138,8 +129,8 @@ export default async function GymPosterPage(props: GymPosterRouteProps) {
         </div>
       </main>
 
-      <GymPosterPrintBar
-        gymHref={gymPosterPath(posterSlug)}
+      <PosterPrintBar
+        backHref={gymPosterPath(posterSlug)}
         printLabel={t('gymPage.poster.printAction')}
         backLabel={t('gymPage.poster.backToGym')}
       />

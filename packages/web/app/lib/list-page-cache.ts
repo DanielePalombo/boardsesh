@@ -21,6 +21,9 @@ const LIST_PAGE_CACHE_TTL_SECONDS = 86400;
 // in place — a cacheable redirect loop at this TTL would pin for a full day.
 const CLIMB_VIEW_PAGE_CACHE_TTL_SECONDS = 86400;
 
+/** The printable board poster, `/poster/b/{slug}` (#4415). Never cached; see `isSprayWallCapabilityRequest`. */
+const BOARD_POSTER_PATH_PREFIX = '/poster/b';
+
 /**
  * Checks whether search params contain any user-specific filters.
  * Used by SSR pages to decide whether to resolve a user session.
@@ -52,10 +55,12 @@ function hasUserSpecificQueryParams(searchParams: URLSearchParams): boolean {
 }
 
 /**
- * True for a `/b/...` request carrying a spray wall's share-link capability
- * (`?wall=<uuid>`). Takes the LOCALE-STRIPPED pathname, like the TTL helpers.
+ * True for a request whose response must never enter a shared cache: a `/b/...`
+ * request carrying a spray wall's share-link capability (`?wall=<uuid>`), and
+ * every printable board poster (`/poster/b/...`, with or without one). Takes
+ * the LOCALE-STRIPPED pathname, like the TTL helpers.
  *
- * Such a response must never enter a shared cache, for two reasons:
+ * A capability URL, for two reasons:
  *
  *  - privacy: an unlisted wall's page answers 200 only while the wall stays
  *    unlisted and unhidden. A cached copy would keep serving it at the edge for
@@ -64,10 +69,16 @@ function hasUserSpecificQueryParams(searchParams: URLSearchParams): boolean {
  *  - correctness: while www is ahead of the backend, the same URL answers 404,
  *    and a cached 404 would outlive the backend deploy that fixes it.
  *
+ * A poster, always: it prints the board's visibility as of this request (a
+ * board switched to private must stop printing on the next request, not the
+ * next day), an unlisted wall's poster URL carries the capability, and its
+ * photo is a fifteen-minute signed URL that must not outlive the page.
+ *
  * The cost is small: these URLs are noindex and only reach people the owner sent
  * the link to, so they are not part of the crawl surface the cache exists for.
  */
 export function isSprayWallCapabilityRequest(pathname: string, searchParams: URLSearchParams): boolean {
+  if (pathname.startsWith(`${BOARD_POSTER_PATH_PREFIX}/`)) return true;
   return (pathname === '/b' || pathname.startsWith('/b/')) && searchParams.has(WALL_CAPABILITY_PARAM);
 }
 

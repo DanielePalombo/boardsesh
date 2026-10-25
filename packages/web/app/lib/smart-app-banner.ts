@@ -20,9 +20,11 @@ export const SMART_APP_BANNER_META_NAME = 'apple-itunes-app';
  * Pages that are a display or a widget, not a page someone reads on their own
  * phone. A gym leaves `/kiosk/...` open on a wall screen or an iPad all day,
  * where a banner is a permanent strip over the display and "Open" walks away
- * from it. `/embed/...` is rendered inside someone else's site.
+ * from it. `/embed/...` is rendered inside someone else's site. `/poster/...`
+ * is a sheet someone is about to print: "Open" would leave the print page for
+ * the app, which is the one place the poster cannot be printed from.
  */
-const NO_BANNER_PATH_PREFIXES = ['/kiosk', '/embed'] as const;
+const NO_BANNER_PATH_PREFIXES = ['/kiosk', '/embed', '/poster'] as const;
 
 /**
  * Pages whose query string is the whole point. `/auth/reset-password` is
