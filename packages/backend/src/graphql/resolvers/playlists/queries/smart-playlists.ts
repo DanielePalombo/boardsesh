@@ -83,6 +83,24 @@ type SmartPlaylistPage = {
 type SmartClimbRef = ClimbRef;
 
 /**
+ * A logbook list's climb is the tick's CANONICAL climb (#6809). The catalog
+ * dedup folds a duplicate uuid into a canonical one in `board_climb_aliases` and
+ * keeps no `board_climbs` row for the alias, so keying on the tick's stored uuid
+ * dropped a tick on an alias from the list, never summed its attempts with the
+ * canonical climb's, and let a send logged on the alias leave the climb in
+ * Projects. Every logbook query LEFT JOINs the alias row on `tickAliasJoin` and
+ * groups on `canonicalTickClimbUuid`, the rule feed.ts and session-feed.ts read
+ * ticks by. The (board_type, alias_uuid) primary key allows one row at most, so
+ * the join never repeats a tick inside a SUM; a self-alias row maps a climb to
+ * itself. Spray climbs are never aliased, so the spray rules keep the raw uuid.
+ */
+const tickAliasJoin = and(
+  eq(dbSchema.boardClimbAliases.boardType, dbSchema.boardseshTicks.boardType),
+  eq(dbSchema.boardClimbAliases.aliasUuid, dbSchema.boardseshTicks.climbUuid),
+)!;
+const canonicalTickClimbUuid = sql<string>`COALESCE(${dbSchema.boardClimbAliases.canonicalUuid}, ${dbSchema.boardseshTicks.climbUuid})`;
+
+/**
  * Build the WHERE conditions shared by every smart-playlist query path:
  * `userId = ?` plus, when scoped, `boardType = ?`.
  */
@@ -117,12 +135,12 @@ function smartBaseConditions(
 
 /**
  * `smartBaseConditions` plus the hydrator's readable-climb rule, for the paged
- * query and its count when there is no view: a `board_climbs` row under the
- * tick's own uuid, published or the viewer's draft. `tickPrivacyCondition`
- * checks the climb through its catalog alias, so a tick on a deduped-away alias
- * uuid passed it, while the hydrator, which reads the raw uuid, found no row and
- * dropped it after the page was taken: a lost page slot and one too many in
- * `totalCount` (#6661). A view joins `board_climbs` on the raw uuid, the same rule.
+ * query, its count and the library cards: a `board_climbs` row under the tick's
+ * canonical uuid, published or the viewer's draft. A tick on a deleted climb
+ * passed `tickPrivacyCondition` for its owner, while the hydrator found no row
+ * and dropped it after the page was taken: a lost page slot and one too many in
+ * `totalCount` (#6661). A query using these must join `tickAliasJoin`. A view
+ * joins `board_climbs` on the canonical uuid instead, the same rule.
  */
 function pagedSmartConditions(
   userId: string,
@@ -132,7 +150,7 @@ function pagedSmartConditions(
   return [
     ...smartBaseConditions(userId, boardName, viewerUserId),
     climbReferenceReadableCondition(
-      { boardType: dbSchema.boardseshTicks.boardType, climbUuid: dbSchema.boardseshTicks.climbUuid },
+      { boardType: dbSchema.boardseshTicks.boardType, climbUuid: canonicalTickClimbUuid },
       viewerUserId,
     ),
   ];
@@ -172,8 +190,9 @@ function favoriteConditions(
 
 /**
  * The PROJECTS rule: the user has logged the climb and never sent it. One row
- * per (board_type, climb_uuid) with the attempt total that orders the list,
- * kept only when none of the group's ticks is a flash or send.
+ * per (board_type, canonical climb_uuid) with the attempt total that orders the
+ * list, kept only when none of the group's ticks is a flash or send, on the
+ * climb or any alias of it.
  *
  * Grouped on both columns rather than `climb_uuid` alone, so a sent Kilter climb
  * never stands in for a Tension climb that shares its uuid. The sends are read
@@ -183,13 +202,14 @@ function favoriteConditions(
 function projectClimbsSubquery(conditions: SQL[]) {
   return db
     .select({
-      climbUuid: dbSchema.boardseshTicks.climbUuid,
+      climbUuid: sql<string>`${canonicalTickClimbUuid}`.as('climb_uuid'),
       boardType: dbSchema.boardseshTicks.boardType,
       total: sql<number>`SUM(${dbSchema.boardseshTicks.attemptCount})::int`.as('total'),
     })
     .from(dbSchema.boardseshTicks)
+    .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
     .where(and(...conditions))
-    .groupBy(dbSchema.boardseshTicks.climbUuid, dbSchema.boardseshTicks.boardType)
+    .groupBy(canonicalTickClimbUuid, dbSchema.boardseshTicks.boardType)
     .having(sql`NOT bool_or(${dbSchema.boardseshTicks.status} IN ('flash', 'send'))`)
     .as('projects');
 }
@@ -215,18 +235,15 @@ async function selectSmartClimbRefs(
   if (type === 'FIVE_STARS') {
     const rows = await db
       .select({
-        climbUuid: dbSchema.boardseshTicks.climbUuid,
+        climbUuid: canonicalTickClimbUuid,
         boardType: dbSchema.boardseshTicks.boardType,
         latestClimbedAt: max(dbSchema.boardseshTicks.climbedAt),
       })
       .from(dbSchema.boardseshTicks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions, eq(dbSchema.boardseshTicks.quality, 5)))
-      .groupBy(dbSchema.boardseshTicks.climbUuid, dbSchema.boardseshTicks.boardType)
-      .orderBy(
-        desc(max(dbSchema.boardseshTicks.climbedAt)),
-        dbSchema.boardseshTicks.boardType,
-        dbSchema.boardseshTicks.climbUuid,
-      )
+      .groupBy(canonicalTickClimbUuid, dbSchema.boardseshTicks.boardType)
+      .orderBy(desc(max(dbSchema.boardseshTicks.climbedAt)), dbSchema.boardseshTicks.boardType, canonicalTickClimbUuid)
       .limit(pageSize)
       .offset(offset);
     return rows.map((row) => ({ climbUuid: row.climbUuid, boardType: row.boardType }));
@@ -235,18 +252,19 @@ async function selectSmartClimbRefs(
   if (type === 'MOST_REPEATED') {
     const rows = await db
       .select({
-        climbUuid: dbSchema.boardseshTicks.climbUuid,
+        climbUuid: canonicalTickClimbUuid,
         boardType: dbSchema.boardseshTicks.boardType,
         total: sql<number>`SUM(${dbSchema.boardseshTicks.attemptCount})::int`,
       })
       .from(dbSchema.boardseshTicks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions))
-      .groupBy(dbSchema.boardseshTicks.climbUuid, dbSchema.boardseshTicks.boardType)
+      .groupBy(canonicalTickClimbUuid, dbSchema.boardseshTicks.boardType)
       .having(sql`SUM(${dbSchema.boardseshTicks.attemptCount}) > 1`)
       .orderBy(
         desc(sql`SUM(${dbSchema.boardseshTicks.attemptCount})`),
         dbSchema.boardseshTicks.boardType,
-        dbSchema.boardseshTicks.climbUuid,
+        canonicalTickClimbUuid,
       )
       .limit(pageSize)
       .offset(offset);
@@ -299,9 +317,10 @@ async function countSmartClimbRefs(
   if (type === 'FIVE_STARS') {
     const [row] = await db
       .select({
-        count: sql<number>`COUNT(DISTINCT (${dbSchema.boardseshTicks.boardType}, ${dbSchema.boardseshTicks.climbUuid}))::int`,
+        count: sql<number>`COUNT(DISTINCT (${dbSchema.boardseshTicks.boardType}, ${canonicalTickClimbUuid}))::int`,
       })
       .from(dbSchema.boardseshTicks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions, eq(dbSchema.boardseshTicks.quality, 5)));
     return row?.count ?? 0;
   }
@@ -309,12 +328,13 @@ async function countSmartClimbRefs(
   if (type === 'MOST_REPEATED') {
     const subquery = db
       .select({
-        climbUuid: dbSchema.boardseshTicks.climbUuid,
+        climbUuid: sql<string>`${canonicalTickClimbUuid}`.as('climb_uuid'),
         boardType: dbSchema.boardseshTicks.boardType,
       })
       .from(dbSchema.boardseshTicks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions))
-      .groupBy(dbSchema.boardseshTicks.climbUuid, dbSchema.boardseshTicks.boardType)
+      .groupBy(canonicalTickClimbUuid, dbSchema.boardseshTicks.boardType)
       .having(sql`SUM(${dbSchema.boardseshTicks.attemptCount}) > 1`)
       .as('repeated');
     const [row] = await db.select({ count: sql<number>`COUNT(*)::int` }).from(subquery);
@@ -368,8 +388,9 @@ function naturalRankSql(order: SQL) {
 /**
  * A logbook type's rows as `(climb_uuid, board_type, natural_rank)`: the same
  * WHERE, GROUP BY and HAVING as `selectSmartClimbRefs`, unpaged, ranked by the
- * order that query pages in. The readable-climb rule `pagedSmartConditions`
- * adds there comes from the view's `board_climbs` join instead.
+ * order that query pages in. `climb_uuid` is the canonical climb, so the view's
+ * `board_climbs` join supplies the readable-climb rule `pagedSmartConditions`
+ * adds there.
  */
 function logbookRowsSql(
   type: LogbookPlaylistType,
@@ -379,7 +400,8 @@ function logbookRowsSql(
 ): SQL {
   const queryBuilder = new QueryBuilder();
   const ticks = dbSchema.boardseshTicks;
-  const tickKey = sql`${ticks.boardType}, ${ticks.climbUuid}`;
+  const tickKey = sql`${ticks.boardType}, ${canonicalTickClimbUuid}`;
+  const canonicalClimbUuidColumn = sql<string>`${canonicalTickClimbUuid}`.as('climb_uuid');
 
   if (type === 'LIKED_CLIMBS') {
     const favorites = dbSchema.userFavorites;
@@ -403,28 +425,30 @@ function logbookRowsSql(
   if (type === 'FIVE_STARS') {
     return queryBuilder
       .select({
-        climbUuid: ticks.climbUuid,
+        climbUuid: canonicalClimbUuidColumn,
         boardType: ticks.boardType,
         // Latest five-star climb first.
         naturalRank: naturalRankSql(sql`max(${ticks.climbedAt}) DESC, ${tickKey}`),
       })
       .from(ticks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions, eq(ticks.quality, 5)))
-      .groupBy(ticks.climbUuid, ticks.boardType)
+      .groupBy(canonicalTickClimbUuid, ticks.boardType)
       .getSQL();
   }
 
   if (type === 'MOST_REPEATED') {
     return queryBuilder
       .select({
-        climbUuid: ticks.climbUuid,
+        climbUuid: canonicalClimbUuidColumn,
         boardType: ticks.boardType,
         // Most attempts first.
         naturalRank: naturalRankSql(sql`SUM(${ticks.attemptCount}) DESC, ${tickKey}`),
       })
       .from(ticks)
+      .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
       .where(and(...conditions))
-      .groupBy(ticks.climbUuid, ticks.boardType)
+      .groupBy(canonicalTickClimbUuid, ticks.boardType)
       .having(sql`SUM(${ticks.attemptCount}) > 1`)
       .getSQL();
   }
@@ -691,6 +715,13 @@ export const smartPlaylist = async (
  * shared `base` and `sent` CTEs, then derives all three counts. Drizzle's
  * query builder can't express co-defined CTEs reused across siblings, hence
  * `db.execute(sql\`...\`)` (the sanctioned escape hatch in CLAUDE.md).
+ *
+ * The card must show the number the list's header shows (#6808), so `base` and
+ * `liked_climbs` read the same membership as `countSmartClimbRefs` with the
+ * owner as the viewer: `pagedSmartConditions` / `favoriteConditions` on every
+ * board, and `base` keyed on the canonical climb. A tick on a deleted climb, an
+ * alias tick counted apart from its climb, or a climb on a deleted spray wall
+ * no longer inflates the card.
  */
 export const mySmartPlaylistCounts = async (
   _: unknown,
@@ -705,13 +736,24 @@ export const mySmartPlaylistCounts = async (
   // with per-gather parallelism off, instead of up to nine concurrent parallel
   // hash joins that exhaust Postgres's dynamic shared memory (#4235, Sentry
   // BOARDSESH-AK).
+  const ticks = dbSchema.boardseshTicks;
+  const baseTicksSql = new QueryBuilder()
+    .select({
+      climbUuid: sql<string>`${canonicalTickClimbUuid}`.as('climb_uuid'),
+      boardType: ticks.boardType,
+      quality: ticks.quality,
+      attemptCount: ticks.attemptCount,
+      status: ticks.status,
+    })
+    .from(ticks)
+    .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
+    .where(and(...pagedSmartConditions(userId, undefined, userId)))
+    .getSQL();
+  const likedClimbsWhere = and(...favoriteConditions(userId, undefined, userId));
+
   return withSerialPlan(db, async (tx) => {
     const result = await tx.execute<{ type: SmartPlaylistType; count: number }>(sql`
-      WITH base AS (
-        SELECT climb_uuid, board_type, quality, attempt_count, status
-        FROM ${dbSchema.boardseshTicks}
-        WHERE user_id = ${userId}
-      ),
+      WITH base AS (${baseTicksSql}),
       sent AS (
         SELECT DISTINCT climb_uuid, board_type
         FROM base
@@ -746,7 +788,7 @@ export const mySmartPlaylistCounts = async (
       liked_climbs AS (
         SELECT COUNT(DISTINCT (board_name, climb_uuid))::int AS count
         FROM ${dbSchema.userFavorites}
-        WHERE user_id = ${userId}
+        WHERE ${likedClimbsWhere}
       )
       SELECT 'FIVE_STARS'::text AS type, count FROM five_stars
       UNION ALL
