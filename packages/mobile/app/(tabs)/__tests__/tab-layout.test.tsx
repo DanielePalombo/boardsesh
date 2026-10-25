@@ -369,11 +369,15 @@ describe('TabLayout', () => {
     },
   );
 
-  it('keeps Climbs in the native search role when it is the initial tab', () => {
+  it('keeps Climbs an ordinary labelled tab on the iOS 26 bar, like Apple Music', () => {
+    // No role="search": since SDK 58 that is a UISearchTab, which iOS 26 sets apart
+    // from the other tabs and which moves the search field into the bottom bar.
     const { container } = render(<TabLayout />);
+    const climbs = container.querySelector('[data-trigger="climbs"]');
 
-    expect(container.querySelector('[data-trigger="climbs"]')?.getAttribute('data-tab-role')).toBe('search');
-    expect(container.querySelectorAll('[data-tab-role="search"]')).toHaveLength(1);
+    expect(climbs?.hasAttribute('data-tab-role')).toBe(false);
+    expect(container.querySelector('[data-tab-role]')).toBeNull();
+    expect(climbs?.textContent).toContain('mobile.nav.climbs');
   });
 
   it('registers Home as the leftmost material tab', () => {
@@ -410,7 +414,7 @@ describe('TabLayout', () => {
 
   it('leaves the iOS 26-only extras off the iOS 18 native bar', () => {
     // No minimize behavior (react-native-screens warns below iOS 26), no search role
-    // (Climbs stays a labelled tab with its own search field), and no accessory even
+    // (Climbs is a labelled tab with its own search field), and no accessory even
     // with a climb current: the floating JS queue bar carries it instead.
     cfg.variant = 'liquidGlass';
     cfg.glassCapable = false;

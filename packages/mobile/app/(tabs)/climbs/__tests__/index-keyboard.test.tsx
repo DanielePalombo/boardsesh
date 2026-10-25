@@ -177,6 +177,8 @@ const mocks = vi.hoisted(() => ({
   setGrade: vi.fn(),
   // How many times the screen has come back into focus.
   refocusCount: 0,
+  // What the screen asks to run when its tab is tapped again while it is showing.
+  tabReselect: undefined as (() => void) | undefined,
   scrollToOffset: vi.fn(),
   stackOptions: [] as NativeStackNavigationOptions[],
   // The system text size, and whether the list is fetching another page: the
@@ -648,6 +650,11 @@ vi.mock('../../../../src/lib/grade-stops', async (importOriginal) => {
   };
 });
 vi.mock('../../../../src/hooks/use-refocus-count', () => ({ useRefocusCount: () => mocks.refocusCount }));
+vi.mock('../../../../src/hooks/use-tab-reselect', () => ({
+  useTabReselect: (onReselect: () => void) => {
+    mocks.tabReselect = onReselect;
+  },
+}));
 
 vi.mock('../../../../src/providers/drawer-host-provider', () => ({
   useDrawerHost: () => ({
@@ -984,11 +991,38 @@ beforeEach(() => {
   mocks.changeGrade = undefined;
   mocks.setGrade.mockClear();
   mocks.refocusCount = 0;
+  mocks.tabReselect = undefined;
   mocks.scrollToOffset.mockClear();
   mocks.stackOptions.length = 0;
   mocks.fontScale = 1;
   mocks.isFetchingNextPage = false;
   resetClimbRowDisplayForTests();
+});
+
+// Like Apple Music: a second tap on the Climbs tab, with the list open, focuses
+// the native search field.
+describe('ClimbList second tap on the Climbs tab', () => {
+  it('focuses the native search field', () => {
+    mocks.nativeSearch = true;
+    render(<ClimbList />);
+    const searchBar = { focus: vi.fn(), blur: vi.fn(), setText: vi.fn(), clearText: vi.fn(), cancelSearch: vi.fn() };
+    const searchOptions = mocks.stackOptions.find((options) => options.headerSearchBarOptions)?.headerSearchBarOptions;
+    expect(searchOptions?.ref).toBeDefined();
+    Object.assign(searchOptions!.ref!, { current: searchBar });
+
+    act(() => mocks.tabReselect?.());
+
+    expect(searchBar.focus).toHaveBeenCalledOnce();
+  });
+
+  it('does nothing on Android and iOS 18, which have no native search field', () => {
+    mocks.nativeSearch = false;
+    render(<ClimbList />);
+
+    expect(mocks.stackOptions.some((options) => options.headerSearchBarOptions)).toBe(false);
+    expect(mocks.tabReselect).toBeDefined();
+    expect(() => act(() => mocks.tabReselect?.())).not.toThrow();
+  });
 });
 
 describe('ClimbList native header ownership', () => {
@@ -1010,7 +1044,11 @@ describe('ClimbList native header ownership', () => {
         expect(typeof effectiveOptions.headerTitle).toBe('function');
       }
       if (nativeSearch) {
-        expect(screenOptions.headerSearchBarOptions).toMatchObject({ placeholder: 'search.placeholders.climbs' });
+        // Under the title, like Apple Music: `automatic` lets iOS 26 move it into the bottom bar.
+        expect(screenOptions.headerSearchBarOptions).toMatchObject({
+          placeholder: 'search.placeholders.climbs',
+          placement: 'stacked',
+        });
       } else {
         expect(screenOptions.headerSearchBarOptions).toBeUndefined();
       }

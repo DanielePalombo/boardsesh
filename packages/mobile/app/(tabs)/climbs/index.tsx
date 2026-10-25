@@ -4,6 +4,7 @@ import { useListTopOffset } from '../../../src/hooks/use-list-top-offset';
 import { useListChromeClearance } from '../../../src/hooks/use-list-chrome-clearance';
 import { ScrollEdgeListReset, useScrollEdgeBackdrop } from '../../../src/hooks/use-scroll-edge-backdrop';
 import { useRefocusCount } from '../../../src/hooks/use-refocus-count';
+import { useTabReselect } from '../../../src/hooks/use-tab-reselect';
 import { useLiveClimbFilters, type ClimbFilterSelection } from '../../../src/hooks/use-live-climb-filters';
 import type { WindowAnchorPoint } from '../../../src/components/navigation/AnchoredPopover.types';
 import { memo, useState, useCallback, useMemo, useRef, useEffect } from 'react';
@@ -375,9 +376,9 @@ function ClimbListInner() {
   const bottomChrome = useBottomChromeMetrics();
 
   // iOS 26 uses the native tab-bar bottom accessory for current climb + tick, and
-  // presents this screen's headerSearchBarOptions controller in the bottom tab
-  // bar's search role — there is no header search bar. Fallback devices keep the
-  // custom search field inside the top chrome.
+  // this screen's headerSearchBarOptions controller for search: a native field
+  // under the title, like Apple Music. Fallback devices keep the custom search
+  // field inside the top chrome.
   const useNativeSearch = useLiquidGlassTabBar();
 
   const listPaddingBottom = bottomChrome.scrollBottomPadding;
@@ -586,6 +587,11 @@ function ClimbListInner() {
   const handleSearchBlur = useCallback(() => {
     setIsSearchFocused(false);
   }, []);
+
+  // Like Apple Music: the tap that opens Climbs leaves the field alone, and a
+  // second tap on the tab, with the list already open, focuses it.
+  const focusNativeSearch = useCallback(() => nativeSearchRef.current?.focus(), []);
+  useTabReselect(focusNativeSearch);
 
   useEffect(() => {
     return () => {
@@ -2192,11 +2198,11 @@ function ClimbListInner() {
     () =>
       useNativeSearch
         ? {
-            // iOS 26 presents this screen's search controller in the bottom tab
-            // bar (the NativeTabs role="search" liquid-glass pattern) — there is
-            // no header search bar. NativeRootHeader owns the visible native
-            // title/pill; this screen only installs its search controller.
-            // Floating chrome still needs an invisible native search host.
+            // The native search field sits under the title (`stacked`), like
+            // Apple Music. `automatic` lets iOS 26 move it into the bottom bar.
+            // NativeRootHeader owns the visible native title/pill; this screen
+            // only installs its search controller. Floating chrome still needs
+            // an invisible native search host.
             ...(nativeRootHeader
               ? {}
               : {
@@ -2210,7 +2216,7 @@ function ClimbListInner() {
                 }),
             headerSearchBarOptions: {
               ref: nativeSearchRef,
-              placement: 'automatic' as const,
+              placement: 'stacked' as const,
               placeholder: t('search.placeholders.climbs'),
               autoCapitalize: 'none' as const,
               hideWhenScrolling: false,

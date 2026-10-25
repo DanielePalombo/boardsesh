@@ -33,7 +33,7 @@ import { SIDEBAR_WIDTH } from '../../src/theme/layout';
 import { getAppEntryTab } from '../../src/lib/app-entry-route';
 
 // Select the start-up tab (Climbs unless the climber chose Home) on ordinary
-// entry without moving its native search tab. Read once, at module load, so a
+// entry without reordering the native tabs. Read once, at module load, so a
 // change in Settings applies from the next start. Explicit routes keep their
 // destination; screenshot captures still start at Home.
 export const unstable_settings = { initialRouteName: getAppEntryTab() };
@@ -55,8 +55,8 @@ const materialTabIcon =
   );
 
 // HIG Tab bars: a selected tab shows the filled variant of its SF Symbol, an
-// unselected one the outline. Climbs keeps the plain magnifying glass: it is the
-// search-role tab and the symbol has no fill variant. The Android JS bar fills
+// unselected one the outline. Climbs keeps the plain magnifying glass, like
+// Apple Music's Search tab: the symbol has no fill variant. The Android JS bar fills
 // its Material icons on focus already (`materialTabIcon`).
 const TAB_SF_SYMBOLS = {
   home: { default: 'house', selected: 'house.fill' },
@@ -86,10 +86,10 @@ const ACCESSORY_HIDDEN_NATIVE_PROPS = { ios: { bottomAccessoryHidden: true } } a
  * bar (`expo-router/unstable-native-tabs`), iOS 18 included (HIG, Tab bars: use
  * the system bar so it carries the platform's own materials, Dynamic Type and
  * accessibility). iOS 26 adds the Liquid Glass extras on top: a native
- * `BottomAccessory` platter for the current climb + tick, the separated search
- * tab and minimize-on-scroll. On iOS 18 the bar has none of those, so Climbs is
- * an ordinary labelled tab and the current climb rides the floating JS
- * `PersistentQueueBar` just above the native bar. Material, Android and the
+ * `BottomAccessory` platter for the current climb + tick and minimize-on-scroll.
+ * On iOS 18 the bar has neither, so the current climb rides the floating JS
+ * `PersistentQueueBar` just above the native bar. Climbs is an ordinary labelled
+ * tab everywhere, like Apple Music's Search tab. Material, Android and the
  * tablet shell use a JS `Tabs` navigator with the Material 3 `MaterialTabBar`.
  * `useTabChrome()` is the one answer for all of it.
  */
@@ -126,8 +126,9 @@ export default function TabLayout() {
   // Route term on the same mount gate: the host stays mounted anywhere the tab bar is
   // on screen — every route inside the tabs group, pushed sub-routes included, plus the
   // transparent player. The accessory is a CHILD of the bar, so unmounting it on a push
-  // ran `setBottomAccessory:nil` with the bar still up and left the docked role="search"
-  // Climbs item on a stale frame, unhittable until a force-quit (#5055). It unmounts only
+  // ran `setBottomAccessory:nil` with the bar still up and left the then docked
+  // role="search" Climbs item on a stale frame, unhittable until a force-quit (#5055;
+  // Climbs is an ordinary tab since #6827, the rule stands). It unmounts only
   // on a root push/modal, where the whole tab VC leaves and the accessory co-detaches
   // with the bar — the case that releases the backing view, so UIKit still never stacks a
   // stale glass platter under the fresh one on return (doubled, offset text). See
@@ -348,7 +349,7 @@ export default function TabLayout() {
   return (
     // `minimizeBehavior="onScrollDown"` relies on UIKit finding the climbs
     // FlashList's nested scroll view, which it can't by default — that fallback
-    // lives in patches/react-native-screens@4.26.2.patch, alongside the
+    // lives in patches/react-native-screens@4.30.0.patch, alongside the
     // bottom-accessory relayout fix. `vp run check:mobile-patches` (CI) fails the
     // build if either hunk ever stops applying after a dep bump. Minimizing is an
     // iOS 26 UIKit feature (react-native-screens logs a warning for any other
@@ -396,8 +397,12 @@ export default function TabLayout() {
         <NativeTabs.Trigger.Label>{t('mobile.nav.home')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      {/* Only the iOS 26 bar has a separated search slot. */}
-      <NativeTabs.Trigger name="climbs" role={liquidGlassTabBar ? 'search' : undefined}>
+      {/* An ordinary labelled tab in the bar, like Apple Music's Search tab: no
+          `role="search"`. Since SDK 58 that role makes a UISearchTab, which iOS 26
+          sets apart from the other tabs and which moves the search field into the
+          bottom bar. The field sits under the title instead (climbs/index.tsx), and
+          a second tap on the tab focuses it (`useTabReselect`). */}
+      <NativeTabs.Trigger name="climbs">
         <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.climbs} md="search" />
         <NativeTabs.Trigger.Label>{t('mobile.nav.climbs')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
