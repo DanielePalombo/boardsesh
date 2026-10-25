@@ -87,7 +87,9 @@ async function seedMinimalCatalog(): Promise<void> {
 }
 
 // One climber's spray wall, the way createSprayWall writes it: the wall's name
-// on its layout and size, and one marked hold.
+// on its layout and size, and one marked hold. Plus one hold role and one grade,
+// standing in for migration 0227's shared spray rows that resetCatalogTables
+// deletes, so those two tables have a spray row to keep out of the artifact too.
 const SPRAY_WALL_ID = 7;
 const SPRAY_HOLD_ID = 42;
 const SPRAY_WALL_NAME = 'Private garage wall';
@@ -97,6 +99,14 @@ async function seedSprayWall(): Promise<void> {
     sql`INSERT INTO board_products (board_type, id, name, is_listed) VALUES ('spray', 1, 'Spray wall', false)`,
   );
   await db.execute(sql`INSERT INTO board_sets (board_type, id, name) VALUES ('spray', 1, 'Holds')`);
+  await db.execute(sql`
+    INSERT INTO board_placement_roles (board_type, id, product_id, position, name, full_name, led_color, screen_color)
+    VALUES ('spray', 1, 1, 1, 'start', 'Starting Hold', '00FF00', '00DD00')
+  `);
+  await db.execute(sql`
+    INSERT INTO board_difficulty_grades (board_type, difficulty, boulder_name, route_name, is_listed)
+    VALUES ('spray', 10, '4a/V0', '5b/5.9', true)
+  `);
   await db.execute(sql`
     INSERT INTO board_layouts (board_type, id, product_id, name, is_mirrored, is_listed)
     VALUES ('spray', ${SPRAY_WALL_ID}, 1, ${SPRAY_WALL_NAME}, false, false)
