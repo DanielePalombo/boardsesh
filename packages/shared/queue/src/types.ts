@@ -116,6 +116,30 @@ export type PlaylistSuggestionSource = {
    * `nextPage` is the page to ask it for. Absent means `climbs` is the whole track.
    */
   continuation?: PlaylistTrackContinuation;
+  /**
+   * Set while the player plays Up next in the middle of this list (issue
+   * #6777): Next walks the queue before the list continues, and this is the
+   * list climb it left from, so the list picks up after it once Up next is
+   * played. Absent while the player is on the list itself. Client-only, like
+   * the rest of the track.
+   */
+  resume?: PlaylistTrackResume;
+};
+
+/**
+ * The list climb a walk left for Up next. See {@link PlaylistSuggestionSource.resume}.
+ *
+ * Both halves matter: `climbUuid` is where the list picks up again, and
+ * `queueItemUuid` is the queue entry the walk left from, so stepping back onto
+ * it (Previous from the first queued climb) is back on the list, while a queued
+ * repeat of the same climb is still Up next. That entry is usually the
+ * climb's own. After Previous retraced Up next from a list climb whose older
+ * list-walk entry sits before the detour, it is that older entry instead (see
+ * selectPreviousQueueItemWithSuggestions in `@boardsesh/play-view`).
+ */
+export type PlaylistTrackResume = {
+  climbUuid: string;
+  queueItemUuid: string;
 };
 
 /** Where a track's next page comes from. See {@link PlaylistSuggestionSource}. */
@@ -163,6 +187,15 @@ export type SetCurrentClimbOptions = {
    * Left out, the context is untouched, the same as passing no options.
    */
   playlistSuggestionSource?: PlaylistSuggestionSource | null;
+  /**
+   * A queued climb a look reached went up on the wall (issue #6777): a preview
+   * that walked the queue from the current climb, then Put on the wall. Where
+   * the climb is Up next on the held track, the track keeps steering and
+   * learns where the list picks up, as Next stepping into Up next does;
+   * otherwise it is cleared, like `playlistSuggestionSource: null`. Passed
+   * instead of `playlistSuggestionSource`.
+   */
+  keepTrackIfUpNext?: boolean;
   trigger?: SetCurrentClimbTrigger;
 };
 
