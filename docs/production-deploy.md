@@ -772,25 +772,50 @@ required-reviewer rule had been removed mid-run, and removing it does not
 release a deployment already pending against it. Main went two days without a
 production deploy and no alert fired.
 
+The OTA lane wedged the same way on 2026-10-24. `mobile-ota-production.yml` run
+40105607795, a `release/next` push, finished `publish` and then parked its
+`notify-train-deployment` job (a Discord post) at the Production gate for 27
+hours. The environment had no reviewers and every earlier run had passed it,
+so the cause is unknown. The lane is `queue: max`, so 40 later runs queued
+behind it, and the daily stable OTA `tick` and production-deploy's
+`promote-mobile-ota` job, which take the same `mobile-ota-production` group,
+waited too. Nothing alerted; it was cancelled by hand.
+
 ## The watchdog
 
-`production-deploy-watchdog.yml` runs every 15 minutes and cancels a run that
+`production-deploy-watchdog.yml` runs every 15 minutes, one matrix job per lane:
+`production-deploy` (this workflow, on main) and `mobile-ota-production` (see
+[The OTA lane](#the-ota-lane) below). On production-deploy it cancels a run that
 holds the group with at least one parked job, no job `in_progress`, and no job
 progress for 45 minutes. Progress means actual job start/completion timestamps;
 queued-job timestamps and run `updated_at` changes caused by cancellation do not
 reset the timer. Incomplete job lists cannot authorize an idle cancellation.
 
-The watchdog also cancels any run holding the group for six hours, including
-runs with executing jobs or migrations. This absolute limit uses the run start
-time, falling back to creation time, and applies even if job lists are unavailable.
+The hold starts when the run's first job is created, not at `run_started_at`.
+For a run that queued behind the group, `run_started_at` is the trigger time:
+production-deploy run 40208169199 was created at 15:41 and created its first
+job at 15:54 on 2026-10-25, and an OTA dispatch created at 05:25 that day only
+started at 18:31. GitHub creates a run's jobs once it leaves the queue, so the
+earliest job's `created_at` is the real start, and a cancellation can only add
+later jobs, never an earlier one. Only the current attempt's jobs count: a
+partial re-run lists the jobs it carried over from attempt 1 with their old
+`created_at`. The hold start is never earlier than `run_started_at`, so this
+can only delay a cancel. Without a readable job list the watchdog falls back to
+`run_started_at`, then the creation time.
+
+The watchdog also cancels any production-deploy run holding the group for six
+hours, including runs with executing jobs or migrations. This absolute limit is
+measured from the same hold start and applies even if job lists are unavailable.
 Pending runs queued behind the holder are never cancellation targets.
 
 Ordinary cancellation gets five minutes to finish. If the run still qualifies,
 the watchdog uses GitHub's force-cancel endpoint, which bypasses `always()` job
 conditions, then allows one minute to verify completion. Resumed execution stops
-an idle intervention; the six-hour ceiling still applies. A cancellation request
-being accepted is not reported as recovery: the run must actually reach
-`completed`. Cancellation stages share an eight-minute budget and all API calls
+an idle intervention; the six-hour ceiling still applies. One exception: if,
+after the ordinary cancel, every job has finished but the run still has not
+reached `completed`, the watchdog force-cancels it, since nothing is left to
+stop. A cancellation request being accepted is not reported as recovery: the run
+must actually reach `completed`. Cancellation stages share an eight-minute budget and all API calls
 have bounded timeouts within the watchdog's ten-minute job timeout.
 
 Once completion is confirmed, the queued run can redeploy from the last
@@ -827,6 +852,46 @@ running under the gate it exists to break would park it too. That also means it
 only reads repository-level secrets; if `DISCORD_DEPLOY_WEBHOOK` is scoped to
 the Production environment, the notify step no-ops and the job summary carries
 the report.
+
+### The OTA lane
+
+The `mobile-ota-production` matrix job watches `mobile-ota-production.yml` runs
+on every branch: `release/next` pushes and dispatches on main or `release/next`
+all take that group. It shares the cancel machinery above (verified completion,
+the five-minute grace before force-cancel, the eight-minute budget, bounded API
+calls, dry run) and differs in three rules:
+
+- **Only a job waiting at the environment gate counts as parked.** A run is
+  cancelled when at least one listed job is `waiting`, none is `in_progress`,
+  and no job has started or completed for 45 minutes, timed from the hold start
+  described above. A job `queued` for a runner is left alone: that clears by
+  itself, and cancelling it throws away that run's publish. Unlike
+  production-deploy, a `waiting` run with no job listed is not a target either:
+  a run fresh out of a long queue can look like that, and with no jobs its hold
+  start falls back to the trigger time, hours earlier.
+- **No six-hour ceiling and no running alert.** Killing an executing publish
+  part-way can leave iOS published and Android not, or the production canary
+  already unlocked for a publish that never lands. GitHub's own
+  `timeout-minutes` (240 on `publish`) already bounds every executing job in
+  that workflow; what it cannot bound is a parked job, whose clock never starts.
+  The re-check before each cancel stage uses the lane's own rules, so a
+  publish that starts while the watchdog is cancelling is never force-cancelled.
+- **No redispatch.** The lane is `queue: max`, so every pending run keeps its
+  place and starts once the group frees. The stopped run's own unfinished jobs
+  are not retried, so the Discord report says for each stopped run whether
+  `publish` had already succeeded (the October case: only the Discord post was
+  lost) or not. If not, dispatch the workflow again for that branch unless a
+  later run there publishes the same platforms. It cannot read this off the
+  parked-job list: a job is created only once its `needs` finish, so a run
+  parked at `live-store-runtimes / resolve` lists no `publish` job at all. The
+  report also names the run's branch and title, which tells a train push from a
+  "Republish … after native build" dispatch.
+
+Not covered: the other workflows that take the `mobile-ota-production` group
+(`mobile-ota-backport.yml`, `mobile-ota-promote-staged.yml`,
+`r2-frozen-reader-publication.yml`, the stable OTA `tick` job, and
+production-deploy's `promote-mobile-ota` job). A run of those parked at a gate
+still holds the lane unseen.
 
 Decision rules and their tests: `scripts/production-deploy-watchdog.mjs`,
 `scripts/production-deploy-watchdog.test.mjs`.

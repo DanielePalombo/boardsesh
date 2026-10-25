@@ -3,11 +3,15 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { parse as parseYaml } from 'yaml';
 import {
   CANCEL_GRACE_MS,
   DEFAULT_MAX_RUN_MINUTES,
   DEFAULT_STALL_MINUTES,
   FORCE_CONFIRM_MS,
+  LANES,
+  MOBILE_OTA_LANE,
+  PRODUCTION_DEPLOY_LANE,
   cancelAndConfirm,
   createCliGitHub,
   DISCORD_CONTENT_LIMIT,
@@ -16,6 +20,8 @@ import {
   formatDuration,
   formatSummary,
   isParked,
+  laneRules,
+  parseCliArguments,
   planWatchdogActions,
   runCli,
 } from './production-deploy-watchdog.mjs';
@@ -1315,4 +1321,568 @@ void test('six-hour cancellation still escalates when job history is unreadable'
   assert.equal(await cancelAndConfirm(scenario.options), 'stopped');
   assert.deepEqual(scenario.calls, ['cancel', 'force']);
   assert.equal(scenario.clock.now() - NOW, CANCEL_GRACE_MS);
+});
+
+// ─── mobile-ota-production lane ──────────────────────────────────────────────
+
+const OTA_RULES = laneRules(MOBILE_OTA_LANE);
+const PRODUCTION_RULES = laneRules(PRODUCTION_DEPLOY_LANE);
+
+function otaRun(overrides = {}) {
+  return run({
+    id: 40105607795,
+    run_number: 1101,
+    status: 'waiting',
+    event: 'push',
+    head_branch: 'release/next',
+    display_title: 'Production OTA',
+    ...overrides,
+  });
+}
+
+// Run 40105607795's job list as GitHub reported it, shifted so the parked job
+// has waited `parkedMinutes`: publish succeeded, then notify-train-deployment
+// sat at the Production gate.
+function octoberWedgeJobs(parkedMinutes) {
+  const publishDone = parkedMinutes;
+  return [
+    {
+      name: 'live-store-runtimes / resolve',
+      status: 'completed',
+      conclusion: 'success',
+      created_at: minutesAgo(publishDone + 11),
+      started_at: minutesAgo(publishDone + 10.9),
+      completed_at: minutesAgo(publishDone + 10.4),
+    },
+    {
+      name: 'resolve-staging-runtimes',
+      status: 'completed',
+      conclusion: 'skipped',
+      created_at: minutesAgo(publishDone + 11),
+      started_at: minutesAgo(publishDone + 11),
+      completed_at: minutesAgo(publishDone + 11),
+    },
+    {
+      name: 'publish',
+      status: 'completed',
+      conclusion: 'success',
+      created_at: minutesAgo(publishDone + 10.4),
+      started_at: minutesAgo(publishDone + 10.3),
+      completed_at: minutesAgo(publishDone),
+    },
+    {
+      name: 'notify-train-deployment',
+      status: 'waiting',
+      conclusion: null,
+      created_at: minutesAgo(publishDone),
+      started_at: minutesAgo(publishDone),
+      completed_at: null,
+    },
+  ];
+}
+
+void test('OTA lane: the October 2026 wedge — notify parked 27 h after publish — is cancelled', () => {
+  const verdict = classifyRun({
+    run: otaRun({ run_started_at: minutesAgo(27 * 60 + 11), created_at: minutesAgo(27 * 60 + 11) }),
+    jobs: octoberWedgeJobs(27 * 60),
+    nowMs: NOW,
+    ...OTA_RULES,
+  });
+
+  assert.equal(verdict.action, 'cancel');
+  assert.match(verdict.reason, /parked for 1d 3h with no job executing/);
+  assert.match(verdict.reason, /parked: notify-train-deployment \(waiting\)/);
+});
+
+void test('OTA lane: a waiting job is left alone until 45 minutes without job progress', () => {
+  for (const [parked, expected] of [
+    [DEFAULT_STALL_MINUTES - 0.001, 'none'],
+    [DEFAULT_STALL_MINUTES, 'cancel'],
+  ]) {
+    const verdict = classifyRun({ run: otaRun(), jobs: octoberWedgeJobs(parked), nowMs: NOW, ...OTA_RULES });
+    assert.equal(verdict.action, expected, `parked=${parked}`);
+  }
+});
+
+void test('OTA lane: an executing publish is never cancelled or alerted on, however old the run', () => {
+  // No created_at on the jobs, so the run's own start is the only age signal —
+  // a day old. production-deploy's ceiling would cancel this; the OTA lane has
+  // none, because killing a publish part-way can leave one platform published.
+  const oldRun = otaRun({
+    status: 'in_progress',
+    run_started_at: minutesAgo(24 * 60),
+    created_at: minutesAgo(24 * 60),
+  });
+  const jobs = [
+    {
+      name: 'live-store-runtimes / resolve',
+      status: 'completed',
+      conclusion: 'success',
+      completed_at: minutesAgo(301),
+    },
+    { name: 'publish', status: 'in_progress', started_at: minutesAgo(300) },
+    { name: 'notify-train-deployment', status: 'waiting' },
+  ];
+
+  assert.equal(classifyRun({ run: oldRun, jobs, nowMs: NOW, ...OTA_RULES }).action, 'none');
+  assert.equal(classifyRun({ run: oldRun, jobs, nowMs: NOW, ...PRODUCTION_RULES }).action, 'cancel');
+});
+
+void test('OTA lane: a job queued for a runner is not parked', () => {
+  // Only the environment gate counts. A runner queue clears on its own, and
+  // cancelling it would throw away a republish nothing re-sends.
+  const jobs = [
+    {
+      name: 'live-store-runtimes / resolve',
+      status: 'completed',
+      conclusion: 'success',
+      completed_at: minutesAgo(120),
+    },
+    { name: 'publish', status: 'queued', created_at: minutesAgo(120) },
+  ];
+
+  assert.equal(isParked(otaRun({ status: 'queued' }), jobs, MOBILE_OTA_LANE.parkedJobStatuses), false);
+  assert.equal(classifyRun({ run: otaRun({ status: 'queued' }), jobs, nowMs: NOW, ...OTA_RULES }).action, 'none');
+  assert.equal(
+    classifyRun({ run: otaRun({ status: 'queued' }), jobs, nowMs: NOW, ...PRODUCTION_RULES }).action,
+    'cancel',
+  );
+});
+
+void test('a run released from the queue is timed from its first job, not its trigger time', () => {
+  // The 2026-10-25 dispatch: created 05:25, released 18:31, run_started_at
+  // still 05:25. A minute after release its publish reaches the gate.
+  const released = otaRun({
+    id: 40165505768,
+    event: 'workflow_dispatch',
+    created_at: minutesAgo(13 * 60 + 6),
+    run_started_at: minutesAgo(13 * 60 + 6),
+  });
+  const justReachedGate = [
+    { name: 'resolve-staging-runtimes', status: 'completed', conclusion: 'skipped', created_at: minutesAgo(1) },
+    { name: 'publish', status: 'waiting', created_at: minutesAgo(0.5), started_at: minutesAgo(0.5) },
+  ];
+  for (const rules of [OTA_RULES, PRODUCTION_RULES]) {
+    assert.equal(classifyRun({ run: released, jobs: justReachedGate, nowMs: NOW, ...rules }).action, 'none');
+  }
+
+  // Same for production-deploy's six-hour ceiling: a deploy queued 7 h ago that
+  // started migrating an hour ago has held the group for one hour, not seven.
+  const queuedDeploy = run({
+    status: 'in_progress',
+    created_at: minutesAgo(7 * 60),
+    run_started_at: minutesAgo(7 * 60),
+  });
+  const migrating = [
+    {
+      name: 'detect-changes',
+      status: 'completed',
+      conclusion: 'success',
+      created_at: minutesAgo(60),
+      completed_at: minutesAgo(58),
+    },
+    { name: 'migrate', status: 'in_progress', created_at: minutesAgo(58), started_at: minutesAgo(57) },
+  ];
+  assert.equal(classifyRun({ run: queuedDeploy, jobs: migrating, nowMs: NOW, ...PRODUCTION_RULES }).action, 'none');
+});
+
+void test('jobs created by a cancellation do not move the hold start forward', () => {
+  // Cancelling can materialise downstream jobs with a fresh created_at. The
+  // earliest job still dates the hold, so the idle timer is not reset.
+  const jobs = [
+    ...octoberWedgeJobs(90),
+    {
+      name: 'later-job',
+      status: 'completed',
+      conclusion: 'cancelled',
+      created_at: minutesAgo(0),
+      completed_at: minutesAgo(0),
+    },
+  ];
+  assert.equal(classifyRun({ run: otaRun(), jobs, nowMs: NOW, ...OTA_RULES }).action, 'cancel');
+});
+
+void test('OTA lane: only the holder is a target, and nothing is dispatched', () => {
+  const holder = otaRun();
+  const pendingRuns = [
+    otaRun({ id: 40105700000, run_number: 1102, status: 'pending' }),
+    otaRun({ id: 40105800000, run_number: 1103, status: 'pending', event: 'workflow_dispatch' }),
+  ];
+  const plan = planWatchdogActions({
+    runs: [...pendingRuns, holder],
+    jobsByRunId: { [holder.id]: octoberWedgeJobs(27 * 60) },
+    headSha: HEAD_SHA,
+    nowMs: NOW,
+    lane: MOBILE_OTA_LANE,
+  });
+
+  assert.deepEqual(
+    plan.cancel.map((entry) => entry.run.id),
+    [holder.id],
+  );
+  assert.equal(plan.redispatch, false);
+  assert.equal(plan.followUp, 'queue-resumes');
+
+  // production-deploy's deferred recovery reads "latest run cancelled" as a
+  // reason to dispatch. The OTA lane has no such recovery.
+  const afterManualCancel = planWatchdogActions({
+    runs: [otaRun({ id: 2, status: 'completed', conclusion: 'cancelled', head_sha: HEAD_SHA })],
+    headSha: HEAD_SHA,
+    nowMs: NOW,
+    lane: MOBILE_OTA_LANE,
+  });
+  assert.equal(afterManualCancel.recoveringCancelledRun, false);
+  assert.equal(afterManualCancel.redispatch, false);
+  assert.equal(formatDiscordContent(afterManualCancel, { lane: MOBILE_OTA_LANE }), '');
+  assert.equal(formatSummary(afterManualCancel, { lane: MOBILE_OTA_LANE }), 'no stalled mobile OTA run found');
+});
+
+void test('OTA lane: the CLI cancels the holder, never dispatches, and reports the lane', async () => {
+  const cancelled = [];
+  let historyReads = 0;
+  const holder = otaRun();
+  const pending = otaRun({ id: 40106937794, run_number: 1102, status: 'pending' });
+  const workDirectory = mkdtempSync(join(tmpdir(), 'boardsesh-watchdog-'));
+  const discordFilePath = join(workDirectory, 'discord.txt');
+  const outputPath = join(workDirectory, 'github-output.txt');
+
+  const result = await runCli({
+    github: {
+      listRuns: () => {
+        historyReads += 1;
+        return { runs: [pending, holder], recentPageOk: true };
+      },
+      listJobs: () => octoberWedgeJobs(27 * 60),
+      getRun: (runId) =>
+        cancelled.includes(runId) ? { ...holder, status: 'completed', conclusion: 'cancelled' } : holder,
+      cancelRun: (runId) => cancelled.push(runId),
+      forceCancelRun: () => assert.fail('ordinary cancellation completed'),
+      getHeadSha: () => assert.fail('the OTA lane has no head to redeploy'),
+      dispatchRun: () => assert.fail('the OTA lane never dispatches'),
+    },
+    lane: MOBILE_OTA_LANE,
+    headSha: HEAD_SHA,
+    now: () => NOW,
+    runUrlBase: 'https://example.test/actions/runs',
+    discordFilePath,
+    outputPath,
+    dryRun: false,
+  });
+
+  assert.deepEqual(cancelled, [holder.id]);
+  // No post-cancel history refresh: nothing the OTA lane decides depends on it.
+  assert.equal(historyReads, 1);
+  assert.equal(result.failed, false);
+  assert.equal(result.followUp, 'queue-resumes');
+  const report = readFileSync(discordFilePath, 'utf8');
+  assert.match(report, /Mobile OTA lane unwedged/);
+  assert.match(report, /Stopped run #1101 \(`1111111` on release\/next, "Production OTA"\)/);
+  assert.match(report, /parked: notify-train-deployment \(waiting\)/);
+  assert.match(report, /queue: max/);
+  assert.match(report, /<https:\/\/example\.test\/actions\/runs\/40105607795>/);
+  assert.doesNotMatch(report, /Production deploy|Dispatched a fresh deploy/);
+  assert.equal(readFileSync(outputPath, 'utf8'), 'notify=true\n');
+});
+
+void test('OTA lane: a cancel that does not land reports the lane still wedged and fails', async () => {
+  const discordFilePath = join(mkdtempSync(join(tmpdir(), 'boardsesh-watchdog-')), 'discord.txt');
+  const result = await runCli({
+    github: {
+      listRuns: () => ({ runs: [otaRun()], recentPageOk: true }),
+      listJobs: () => octoberWedgeJobs(27 * 60),
+      getRun: () => otaRun(),
+      cancelRun: () => {
+        throw new Error('HTTP 403: cancellation denied');
+      },
+      dispatchRun: () => assert.fail('the OTA lane never dispatches'),
+    },
+    lane: MOBILE_OTA_LANE,
+    headSha: HEAD_SHA,
+    now: () => NOW,
+    runUrlBase: '',
+    discordFilePath,
+    outputPath: '',
+    dryRun: false,
+  });
+
+  assert.equal(result.failed, true);
+  assert.equal(result.followUp, 'cancel-failed');
+  const report = readFileSync(discordFilePath, 'utf8');
+  assert.match(report, /Mobile OTA lane still wedged/);
+  assert.match(report, /Could NOT cancel run #1101/);
+  assert.match(report, /lane may still be held/);
+  assert.doesNotMatch(report, /unwedged/);
+});
+
+void test('OTA lane: a dry run names the run and branch without touching anything', async () => {
+  const workDirectory = mkdtempSync(join(tmpdir(), 'boardsesh-watchdog-'));
+  const discordFilePath = join(workDirectory, 'discord.txt');
+  const outputPath = join(workDirectory, 'github-output.txt');
+  const plan = await runCli({
+    github: {
+      listRuns: () => ({ runs: [otaRun()], recentPageOk: true }),
+      listJobs: () => octoberWedgeJobs(27 * 60),
+      getRun: () => assert.fail('dry run must not initiate cancellation confirmation'),
+      cancelRun: () => assert.fail('dry run must not cancel'),
+      dispatchRun: () => assert.fail('dry run must not dispatch'),
+    },
+    lane: MOBILE_OTA_LANE,
+    headSha: HEAD_SHA,
+    now: () => NOW,
+    runUrlBase: '',
+    discordFilePath,
+    outputPath,
+    dryRun: true,
+  });
+
+  assert.equal(plan.cancel.length, 1);
+  assert.match(
+    formatSummary(plan, { dryRun: true, lane: MOBILE_OTA_LANE }),
+    /^would cancel run #1101 \(1111111 on release\/next, "Production OTA", status=waiting\)/,
+  );
+  assert.equal(existsSync(discordFilePath), false);
+  assert.equal(readFileSync(outputPath, 'utf8'), 'notify=false\n');
+});
+
+void test('OTA lane: a publish that resumes during cancellation is never force-cancelled, however old', async () => {
+  // The re-check before force-cancel must use the OTA lane's rules. Under
+  // production-deploy's six-hour ceiling this same run is force-cancelled
+  // mid-publish — the second half shows the difference is the rules passed in.
+  const scenarioFor = (rules) => {
+    const scenario = cancellationScenario({
+      currentRun: otaRun({ run_started_at: minutesAgo(DEFAULT_MAX_RUN_MINUTES + 60) }),
+      currentJobs: [{ name: 'publish', status: 'waiting' }],
+    });
+    scenario.github.cancelRun = () => {
+      scenario.calls.push('cancel');
+      scenario.setRun(otaRun({ status: 'in_progress', run_started_at: minutesAgo(DEFAULT_MAX_RUN_MINUTES + 60) }));
+      scenario.setJobs([{ name: 'publish', status: 'in_progress', started_at: new Date(NOW).toISOString() }]);
+    };
+    return { scenario, options: { ...scenario.options, rules } };
+  };
+
+  const ota = scenarioFor(OTA_RULES);
+  assert.equal(await cancelAndConfirm(ota.options), 'resumed');
+  assert.deepEqual(ota.scenario.calls, ['cancel']);
+
+  const production = scenarioFor(PRODUCTION_RULES);
+  assert.equal(await cancelAndConfirm(production.options), 'stopped');
+  assert.deepEqual(production.scenario.calls, ['cancel', 'force']);
+});
+
+void test('OTA lane: a publish that starts before the cancel request is not cancelled at all', async () => {
+  const oldStart = minutesAgo(DEFAULT_MAX_RUN_MINUTES + 60);
+  const scenario = cancellationScenario({
+    currentRun: otaRun({ status: 'in_progress', run_started_at: oldStart }),
+    currentJobs: [{ name: 'publish', status: 'in_progress', started_at: minutesAgo(1) }],
+  });
+  assert.equal(await cancelAndConfirm({ ...scenario.options, rules: OTA_RULES }), 'resumed');
+  assert.deepEqual(scenario.calls, []);
+});
+
+void test('OTA lane: run listings span every branch; production-deploy stays on main', () => {
+  const endpointsFor = (branchOptions) => {
+    const endpoints = [];
+    const github = createCliGitHub({
+      repository: 'example/repository',
+      ...branchOptions,
+      api: (argumentsList) => {
+        endpoints.push(argumentsList.find((argument) => argument.startsWith('repos/')));
+        return JSON.stringify({ workflow_runs: [] });
+      },
+    });
+    github.listRuns();
+    return endpoints;
+  };
+
+  const otaEndpoints = endpointsFor({ workflowFile: MOBILE_OTA_LANE.workflowFile, branch: MOBILE_OTA_LANE.branch });
+  assert.equal(otaEndpoints.length, 6);
+  for (const endpoint of otaEndpoints) {
+    assert.match(endpoint, /^repos\/example\/repository\/actions\/workflows\/mobile-ota-production\.yml\/runs\?/);
+    assert.doesNotMatch(endpoint, /branch=/);
+  }
+  assert.ok(otaEndpoints.some((endpoint) => endpoint.includes('status=waiting')));
+
+  for (const endpoint of endpointsFor({ workflowFile: 'production-deploy.yml' })) {
+    assert.match(endpoint, /\/runs\?branch=main&/);
+  }
+});
+
+void test('the CLI picks a lane by name and refuses an unknown one', () => {
+  assert.equal(parseCliArguments([]).lane, PRODUCTION_DEPLOY_LANE);
+  const ota = parseCliArguments(['--lane', 'mobile-ota-production', '--dry-run']);
+  assert.equal(ota.lane, MOBILE_OTA_LANE);
+  assert.equal(ota.lane.workflowFile, 'mobile-ota-production.yml');
+  assert.equal(ota.dryRun, true);
+  assert.throws(() => parseCliArguments(['--lane', 'mobile-ota-staging']), /unknown --lane "mobile-ota-staging"/);
+  assert.throws(() => parseCliArguments(['--lane']), /unknown --lane/);
+  assert.throws(() => parseCliArguments(['--lane', 'toString']), /unknown --lane/);
+});
+
+void test('the lanes differ only where the docs say they do', () => {
+  assert.equal(PRODUCTION_DEPLOY_LANE.branch, 'main');
+  assert.equal(PRODUCTION_DEPLOY_LANE.maxRunMinutes, DEFAULT_MAX_RUN_MINUTES);
+  assert.equal(PRODUCTION_DEPLOY_LANE.redispatch, true);
+  assert.equal(MOBILE_OTA_LANE.branch, null);
+  assert.equal(MOBILE_OTA_LANE.stallMinutes, DEFAULT_STALL_MINUTES);
+  assert.equal(MOBILE_OTA_LANE.maxRunMinutes, null);
+  assert.equal(MOBILE_OTA_LANE.runningAlertMinutes, null);
+  assert.equal(MOBILE_OTA_LANE.redispatch, false);
+  assert.deepEqual([...MOBILE_OTA_LANE.parkedJobStatuses], ['waiting']);
+});
+
+void test('the workflow runs one job per lane and never under an environment', () => {
+  const source = readFileSync(new URL('../.github/workflows/production-deploy-watchdog.yml', import.meta.url), 'utf8');
+  const workflow = parseYaml(source);
+  const watchdogJob = workflow.jobs.watchdog;
+
+  assert.deepEqual(watchdogJob.strategy.matrix.lane, Object.keys(LANES));
+  assert.equal(watchdogJob.strategy['fail-fast'], false);
+  // A watchdog under `environment: Production` would park at the very gate it
+  // exists to break.
+  for (const job of Object.values(workflow.jobs)) assert.equal(job.environment, undefined);
+  assert.doesNotMatch(source, /^\s*environment:/m);
+  assert.match(source, /--lane "\$LANE"/);
+});
+
+void test('OTA lane: a waiting run with no job listed is never cancelled on run status alone', () => {
+  // A run that just left a long `queue: max` wait can read `waiting` before
+  // its jobs are listed, and with no jobs the hold start falls back to the
+  // trigger time. production-deploy accepts that signal (its ceiling backs it
+  // up); the OTA lane needs a job it can see.
+  const justReleased = otaRun({ created_at: minutesAgo(10 * 60), run_started_at: minutesAgo(10 * 60) });
+
+  assert.equal(isParked(justReleased, [], MOBILE_OTA_LANE.parkedJobStatuses, false), false);
+  assert.equal(classifyRun({ run: justReleased, jobs: [], nowMs: NOW, ...OTA_RULES }).action, 'none');
+  assert.equal(classifyRun({ run: justReleased, jobs: undefined, nowMs: NOW, ...OTA_RULES }).action, 'none');
+  assert.equal(classifyRun({ run: justReleased, jobs: [], nowMs: NOW, ...PRODUCTION_RULES }).action, 'cancel');
+});
+
+void test('OTA lane: the CLI leaves a jobless waiting run alone', async () => {
+  const plan = await runCli({
+    github: {
+      listRuns: () => ({
+        runs: [otaRun({ created_at: minutesAgo(10 * 60), run_started_at: minutesAgo(10 * 60) })],
+        recentPageOk: true,
+      }),
+      listJobs: () => [],
+      getRun: () => assert.fail('no target, so no confirmation'),
+      cancelRun: () => assert.fail('a jobless waiting run is not a target on the OTA lane'),
+      dispatchRun: () => assert.fail('the OTA lane never dispatches'),
+    },
+    lane: MOBILE_OTA_LANE,
+    headSha: HEAD_SHA,
+    now: () => NOW,
+    runUrlBase: '',
+    discordFilePath: '',
+    outputPath: '',
+    dryRun: false,
+  });
+  assert.equal(plan.cancel.length, 0);
+  assert.equal(plan.failed, false);
+});
+
+void test('a run stuck after our cancel, with every job finished, is force-cancelled', async () => {
+  // The parked job went to cancelled but the run never reached `completed`.
+  // classifyRun reads "not parked", and on the OTA lane no ceiling would ever
+  // end it. Nothing is executing, so force-cancel is safe.
+  for (const rules of [OTA_RULES, PRODUCTION_RULES]) {
+    const scenario = cancellationScenario({ currentRun: otaRun(), currentJobs: octoberWedgeJobs(27 * 60) });
+    scenario.github.cancelRun = () => {
+      scenario.calls.push('cancel');
+      scenario.setRun(otaRun({ status: 'in_progress' }));
+      scenario.setJobs(
+        octoberWedgeJobs(27 * 60).map((job) =>
+          job.status === 'waiting'
+            ? { ...job, status: 'completed', conclusion: 'cancelled', completed_at: new Date(NOW).toISOString() }
+            : job,
+        ),
+      );
+    };
+    assert.equal(await cancelAndConfirm({ ...scenario.options, rules }), 'stopped');
+    assert.deepEqual(scenario.calls, ['cancel', 'force']);
+    assert.equal(scenario.clock.now() - NOW, CANCEL_GRACE_MS);
+  }
+});
+
+void test('a run finishing on its own before the cancel request is not cancelled', async () => {
+  // Every job completed, run not yet `completed`: that is a normal finish, and
+  // the force path only applies after the watchdog has sent its own cancel.
+  const scenario = cancellationScenario({
+    currentRun: otaRun({ status: 'in_progress' }),
+    currentJobs: octoberWedgeJobs(27 * 60).map((job) =>
+      job.status === 'waiting'
+        ? { ...job, status: 'completed', conclusion: 'success', completed_at: minutesAgo(0) }
+        : job,
+    ),
+  });
+  assert.equal(await cancelAndConfirm({ ...scenario.options, rules: OTA_RULES }), 'resumed');
+  assert.deepEqual(scenario.calls, []);
+});
+
+void test('OTA lane: the report says whether publish succeeded in each stopped run', () => {
+  // Jobs are created only once their needs finish, so a run parked at
+  // live-store-runtimes has no publish job listed at all.
+  const pastPublish = otaRun({ id: 1, run_number: 1101 });
+  const beforePublish = otaRun({
+    id: 2,
+    run_number: 1102,
+    event: 'workflow_dispatch',
+    display_title: 'Republish android after native build (abc)',
+  });
+  const plan = planWatchdogActions({
+    runs: [pastPublish, beforePublish],
+    jobsByRunId: {
+      1: octoberWedgeJobs(27 * 60),
+      2: [{ name: 'live-store-runtimes / resolve', status: 'waiting', created_at: minutesAgo(120) }],
+    },
+    nowMs: NOW,
+    lane: MOBILE_OTA_LANE,
+  });
+
+  assert.deepEqual(
+    plan.cancel.map((entry) => entry.deliverySucceeded),
+    [true, false],
+  );
+  const report = formatDiscordContent(plan, { lane: MOBILE_OTA_LANE });
+  assert.match(report, /#1101[^\n]*\n {2}`publish` had already succeeded; only the jobs after it were lost\./);
+  assert.match(
+    report,
+    /#1102[^\n]*\n {2}`publish` did not succeed and is not retried: dispatch mobile-ota-production\.yml again for this branch/,
+  );
+  const summary = formatSummary(plan, { lane: MOBILE_OTA_LANE });
+  assert.match(summary, /#1101 .*; publish succeeded$/m);
+  assert.match(summary, /#1102 .*; publish did not succeed$/m);
+
+  // production-deploy has no delivery job, so its entries and copy are unchanged.
+  const productionPlan = planWatchdogActions({
+    runs: [run({ id: 7, status: 'waiting', head_sha: HEAD_SHA })],
+    jobsByRunId: { 7: [{ name: 'check-rollback', status: 'waiting' }] },
+    headSha: HEAD_SHA,
+    nowMs: NOW,
+  });
+  assert.equal('deliverySucceeded' in productionPlan.cancel[0], false);
+  assert.doesNotMatch(formatDiscordContent(productionPlan), /publish/);
+});
+
+void test("a partial re-run is timed from its own attempt's jobs, not the carried-over ones", () => {
+  // Re-running failed jobs lists attempt 1's successful jobs with their old
+  // created_at. Only the current attempt's jobs date the hold.
+  const rerun = otaRun({ run_attempt: 2, run_started_at: minutesAgo(180), created_at: minutesAgo(20 * 60) });
+  const jobs = [
+    {
+      name: 'live-store-runtimes / resolve',
+      run_attempt: 1,
+      status: 'completed',
+      conclusion: 'success',
+      created_at: minutesAgo(20 * 60),
+      started_at: minutesAgo(20 * 60),
+      completed_at: minutesAgo(19 * 60),
+    },
+    { name: 'publish', run_attempt: 2, status: 'waiting', created_at: minutesAgo(1), started_at: minutesAgo(1) },
+  ];
+  assert.equal(classifyRun({ run: rerun, jobs, nowMs: NOW, ...OTA_RULES }).action, 'none');
+  // Once the attempt-2 gate has been stuck 45 minutes, it is a target again.
+  const stuckJobs = jobs.map((job) => (job.run_attempt === 2 ? { ...job, created_at: minutesAgo(50) } : job));
+  assert.equal(classifyRun({ run: rerun, jobs: stuckJobs, nowMs: NOW, ...OTA_RULES }).action, 'cancel');
 });
