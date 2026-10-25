@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Platform } from 'react-native';
 import { MoreForm } from '../../MoreForm';
+import { MoreFormRN } from '../../MoreForm.rn';
 import { CustomLookPreview, CUSTOM_LOOK_PREVIEW_HEIGHT } from '../../board-look/CustomLookPreview';
 import { useBoardPreviewClimb } from '../../../hooks/use-board-preview-climb';
 import { useDraftNumber } from '../../../hooks/use-committed-slider-value';
@@ -86,5 +88,5 @@ export function CustomLookScreen() {
     ],
   );
 
-  return <MoreForm model={model} />;
+  return Platform.OS === 'android' ? <MoreFormRN model={model} /> : <MoreForm model={model} />;
 }
