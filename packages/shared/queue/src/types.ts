@@ -12,6 +12,8 @@
  * QueueActionsType stay in the web app.
  */
 
+import type { CurrentClimbPlacement } from './now-slot';
+
 export type QueueItemUser = {
   id: string;
   username: string;
@@ -206,6 +208,13 @@ export type SetCurrentClimbOptions = {
    */
   keepTrackIfUpNext?: boolean;
   trigger?: SetCurrentClimbTrigger;
+  /**
+   * F3 now-slot mode: how the climb goes on the wall. Absent is `NOW`, the
+   * plain open (a History row tap moves that one climb into Now). `STEP` is
+   * Replay from here on a History row: the line moves back to that climb and
+   * the climbs after it are Up next again, in order. Ignored in legacy mode.
+   */
+  placement?: CurrentClimbPlacement;
 };
 
 /**
@@ -286,6 +295,12 @@ export type UnconfirmedQueueMove = {
   shouldAddToQueue: boolean;
   insertAfterCurrent: boolean;
   /**
+   * Now-slot mode only: the placement the move was sent with. A snapshot that
+   * predates the move replays it with `placeOnWall` and this placement, the
+   * same rule the server runs when the move lands. Absent in legacy mode.
+   */
+  placement?: CurrentClimbPlacement;
+  /**
    * Uuids of the current climbs this client moved the wall off since the
    * session last confirmed one of its moves, oldest first.
    *
@@ -314,6 +329,16 @@ export type UnconfirmedQueueMove = {
   resend: 'none' | 'awaiting-snapshot' | 'ready' | 'resent';
 };
 
+/**
+ * A History line that arrived before now-slot mode was known (F3, #6666): the
+ * line and the queue it describes, so it is applied only to that same queue.
+ */
+export type HeldHistoryLine = {
+  historyCount: number;
+  queueUuids: readonly string[];
+  currentUuid: string | null;
+};
+
 export type QueueState<TSearchParams extends QueueSearchParams = QueueSearchParams> = {
   /** Server sequence committed with this queue snapshot. */
   serverSequence?: number;
@@ -333,6 +358,30 @@ export type QueueState<TSearchParams extends QueueSearchParams = QueueSearchPara
    * room's number until the new room's first snapshot.
    */
   serverSequenceSessionId?: string | null;
+  /**
+   * The History / Up next line while nothing is current (F3, #6666;
+   * `docs/current-climb-outside-queue.md`, section 1). Only kept in now-slot
+   * mode, where it is always resolved: the current climb's index when one is
+   * current, else the line. `null` or absent (legacy mode) means "derive it
+   * from the current climb", which `upNextStart` reads as today's
+   * `findIndex + 1`, or 0 with nothing current.
+   */
+  historyCount?: number | null;
+  /**
+   * Now-slot mode: the `queue-now-slot` flag is on and, in a session, the
+   * connected backend serves the F3 fields. Opens go through `placeOnWall`
+   * (no copies), and every delta moves `historyCount` with `lineAfterDelta`.
+   * Off (absent) is today's reducer, unchanged.
+   */
+  nowSlotMode?: boolean;
+  /**
+   * The line a restore brought while the mode was still legacy, typically a
+   * cold start that ran before the `queue-now-slot` flag resolved. Legacy mode
+   * never reads it. Turning the mode on applies it, but only while the queue
+   * still holds the same entries in the same order around the same current
+   * climb; a climber who changed the queue in between gets the derived line.
+   */
+  heldHistoryLine?: HeldHistoryLine | null;
 };
 
 export type QueueAction<TSearchParams extends QueueSearchParams = QueueSearchParams> =
@@ -348,13 +397,14 @@ type QueueActionPayload<TSearchParams extends QueueSearchParams> =
   | { type: 'SET_CLIMB_SEARCH_PARAMS'; payload: TSearchParams }
   | {
       type: 'UPDATE_QUEUE';
-      payload: { queue: ClimbQueue; currentClimbQueueItem?: ClimbQueueItem | null };
+      payload: { queue: ClimbQueue; currentClimbQueueItem?: ClimbQueueItem | null; historyCount?: number | null };
     }
   | {
       type: 'INITIAL_QUEUE_DATA';
       payload: {
         queue: ClimbQueue;
         currentClimbQueueItem?: ClimbQueueItem | null;
+        historyCount?: number | null;
         /**
          * The party session this snapshot was read from. Set it only on a real
          * server snapshot: only then is it compared with the unconfirmed move
@@ -369,8 +419,16 @@ type QueueActionPayload<TSearchParams extends QueueSearchParams> =
          * HTTP resync is a point read and leaves it unset.
          */
         live?: boolean;
+        /**
+         * When the room's current climb last changed (ISO 8601), from a `_NOW_SLOT`
+         * FullSync or snapshot. The reducer ignores it; the mobile provider seeds
+         * the #4979 hold's clock from it (docs/current-climb-outside-queue.md, section 6).
+         */
+        currentChangedAt?: string | null;
       };
     }
+  /** Turn now-slot mode on or off (section 7). Legacy mode stores `historyCount: null`. */
+  | { type: 'SET_NOW_SLOT_MODE'; payload: boolean }
   | { type: 'SET_FIRST_FETCH'; payload: boolean }
   | { type: 'MIRROR_CLIMB' }
   | { type: 'DELTA_ADD_QUEUE_ITEM'; payload: { item: ClimbQueueItem; position?: number } }
@@ -406,6 +464,18 @@ type QueueActionPayload<TSearchParams extends QueueSearchParams> =
          * `UnconfirmedQueueMove`). Needs `correlationId`.
          */
         sessionId?: string;
+        /**
+         * Now-slot mode, local only: how the climb goes on the wall
+         * (`placeOnWall`). Absent reads as `NOW`. Ignored in legacy mode and for
+         * server events, which never re-run placement.
+         */
+        placement?: CurrentClimbPlacement;
+        /**
+         * Now-slot mode, local only: trim History with `capHistory` after placing.
+         * True solo only. In a session the server's trim is the only one, so a
+         * new phone never trims there on its own (section 5).
+         */
+        capHistory?: boolean;
       };
     }
   | { type: 'DELTA_MIRROR_CURRENT_CLIMB'; payload: { mirrored: boolean; mirroredUuid: string | null } }

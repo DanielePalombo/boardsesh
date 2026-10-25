@@ -11,6 +11,11 @@ import { getStoredSessionId, clearStoredSessionId } from '../../lib/session-stor
 import { getHttpClient } from '../../lib/graphql/client';
 import { SESSION_STATUS, type SessionStatusQueryResponse } from '../../lib/graphql/operations';
 import { reportError } from '../../lib/error-reporting';
+import { track } from '../../lib/analytics';
+import { nowMs } from '../../lib/clock';
+import { holdAgeHours, parseClockInstant, type CurrentChangeClock } from '../../lib/ble/stale-current-hold';
+import { SHARED_EVENTS } from '@boardsesh/analytics';
+import { isSameWallClimb, upNextOf, upNextStart } from '@boardsesh/queue';
 
 /**
  * How long the solo snapshot save waits before writing, coalescing mutation
@@ -35,6 +40,16 @@ type UseQueuePersistenceParams = {
   /** Reactive queue/current climb — the solo persist effect's dependency array. */
   queue: ClimbQueueItem[];
   currentClimbQueueItem: ClimbQueueItem | null;
+  /** F3 now-slot mode: the History / Up next line, saved with the snapshot. */
+  historyCount?: number | null;
+  /**
+   * The #4979 hold's clock (`useCurrentChangeClock`). Saved with the snapshot as
+   * `lastCurrentChangeAt`; the cold-start restore seeds it back through
+   * `seedCurrentChange`. Both optional so a caller without the hold (tests,
+   * an older harness) saves today's snapshot shape.
+   */
+  lastCurrentChange?: CurrentChangeClock;
+  seedCurrentChange?: (queueItemUuid: string | null, changedAt: number) => void;
   /**
    * The board-masked source (see QueueProvider): a source stamped with another
    * board reads as null here, so the next debounced save drops it from the
@@ -69,6 +84,9 @@ export function useQueuePersistence({
   sessionId,
   queue,
   currentClimbQueueItem,
+  historyCount = null,
+  lastCurrentChange,
+  seedCurrentChange,
   playlistSuggestionSource,
   setPlaylistSuggestionSourceState,
   activeBoardSettled,
@@ -123,15 +141,35 @@ export function useQueuePersistence({
       queue: ClimbQueueItem[];
       currentClimbQueueItem: ClimbQueueItem | null;
       playlistSuggestionSource: PlaylistSuggestionSource | null;
+      historyCount?: number | null;
+      lastCurrentChangeAt?: string | null;
+      savedAt?: string;
     }) => {
+      // #4979: the hold's clock comes back from the snapshot, never from "now",
+      // or every cold start would read as a fresh pick and light a climb left
+      // on the wall days ago. An older snapshot without the field seeds from
+      // `savedAt` once, which errs towards lighting; the next save writes the
+      // field, so it is never read from `savedAt` again. Seeded in the same tick
+      // as the dispatch below, so the render that restores the climb carries it.
+      const storedChangeAt = parseClockInstant(snapshot.lastCurrentChangeAt);
+      const changedAt = storedChangeAt ?? parseClockInstant(snapshot.savedAt);
+      if (changedAt !== null) {
+        seedCurrentChange?.(snapshot.currentClimbQueueItem?.uuid ?? null, changedAt);
+      }
+      reportQueueSnapshotRestored(snapshot, changedAt, storedChangeAt !== null ? 'snapshot' : 'savedAt');
+      // An older (or legacy-mode) snapshot has no line; the reducer derives it.
       dispatch({
         type: 'UPDATE_QUEUE',
-        payload: { queue: snapshot.queue, currentClimbQueueItem: snapshot.currentClimbQueueItem },
+        payload: {
+          queue: snapshot.queue,
+          currentClimbQueueItem: snapshot.currentClimbQueueItem,
+          ...(snapshot.historyCount == null ? {} : { historyCount: snapshot.historyCount }),
+        },
       });
       dispatch({ type: 'SET_PLAYLIST_SUGGESTION_SOURCE', payload: snapshot.playlistSuggestionSource });
       setPlaylistSuggestionSourceState(snapshot.playlistSuggestionSource);
     },
-    [],
+    [seedCurrentChange],
   );
 
   // Cold-start restore, explicit-session first: a stored session id (persisted
@@ -229,6 +267,11 @@ export function useQueuePersistence({
     };
   }, [restoreQueueSnapshot, ownerUserId, ownerReady, hydrationScope]);
 
+  // Only the clock's time is saved; it is always stamped for the current climb,
+  // so its uuid needs no column of its own. A string, so the save effect's deps
+  // compare by value.
+  const lastCurrentChangeAt = lastCurrentChange ? new Date(lastCurrentChange.changedAt).toISOString() : null;
+
   // Persist the SOLO queue across launches. Only while no session is active —
   // a session's queue is server-owned (the rejoin FullSync restores it) — and
   // only after the cold-start hydrate settles. Writing the empty state doubles
@@ -246,6 +289,12 @@ export function useQueuePersistence({
         {
           queue,
           currentClimbQueueItem,
+          // Legacy mode keeps no line, and its snapshot keeps today's shape.
+          ...(historyCount == null ? {} : { historyCount }),
+          // Written as the provider holds it, never restamped here: the save
+          // runs after every restore, hydrate and regrade, so a value derived
+          // from the write time would release the hold on the next launch.
+          ...(lastCurrentChangeAt == null ? {} : { lastCurrentChangeAt }),
           playlistSuggestionSource,
         },
         owner,
@@ -256,6 +305,8 @@ export function useQueuePersistence({
   }, [
     queue,
     currentClimbQueueItem,
+    historyCount,
+    lastCurrentChangeAt,
     playlistSuggestionSource,
     sessionId,
     activeBoardSettled,
@@ -264,4 +315,60 @@ export function useQueuePersistence({
     hydrationScope,
     hydratedScope,
   ]);
+}
+
+let queueSnapshotRestoreReported = false;
+
+/**
+ * `Queue Snapshot Restored` (docs/current-climb-outside-queue.md, section 8):
+ * once per launch, what the cold start brought back. `upNextDuplicates` counts
+ * climbs that appear more than once in Up next (the copies F3 stops making), so
+ * it should fall as old solo snapshots age out.
+ */
+function reportQueueSnapshotRestored(
+  snapshot: { queue: ClimbQueueItem[]; currentClimbQueueItem: ClimbQueueItem | null; historyCount?: number | null },
+  lastCurrentChangeAt: number | null,
+  lastCurrentChangeSource: 'snapshot' | 'savedAt',
+): void {
+  if (queueSnapshotRestoreReported) return;
+  queueSnapshotRestoreReported = true;
+  const lineState = {
+    queue: snapshot.queue,
+    currentClimbQueueItem: snapshot.currentClimbQueueItem,
+    historyCount: snapshot.historyCount ?? null,
+  };
+  const currentInQueue =
+    snapshot.currentClimbQueueItem != null &&
+    snapshot.queue.some((item) => item.uuid === snapshot.currentClimbQueueItem?.uuid);
+  const historyCount = Math.max(
+    0,
+    upNextStart(snapshot.queue, snapshot.currentClimbQueueItem, snapshot.historyCount ?? null) -
+      (currentInQueue ? 1 : 0),
+  );
+  const upNext = upNextOf(lineState);
+  track(SHARED_EVENTS.QueueSnapshotRestored, {
+    historyCount,
+    upNextCount: upNext.length,
+    upNextDuplicates: countRepeatedClimbs(upNext),
+    hasCurrent: snapshot.currentClimbQueueItem != null,
+    lastCurrentChangeAgeHours: lastCurrentChangeAt === null ? null : holdAgeHours(lastCurrentChangeAt, nowMs()),
+    lastCurrentChangeSource,
+  });
+}
+
+/** Distinct climbs (by the Now slot's match key) that appear more than once. */
+function countRepeatedClimbs(items: readonly ClimbQueueItem[]): number {
+  const firstCopies: ClimbQueueItem[] = [];
+  const repeated = new Set<ClimbQueueItem>();
+  for (const item of items) {
+    const first = firstCopies.find((candidate) => isSameWallClimb(candidate.climb, item.climb));
+    if (first) repeated.add(first);
+    else firstCopies.push(item);
+  }
+  return repeated.size;
+}
+
+/** Test seam: the once-per-launch guard is module state. */
+export function resetQueueSnapshotRestoredReportForTests(): void {
+  queueSnapshotRestoreReported = false;
 }
