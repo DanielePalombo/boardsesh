@@ -7,10 +7,15 @@
  * asks for a sign-in that comes back to the same URL.
  *
  * The token is a capability, so it is kept out of everything that outlives
- * the request: shared caches (middleware, the TTL helpers and the Cloudflare
- * rule all bypass it), analytics (`getPosthog` stays off on such a URL) and
- * error reports (`redactBoardInviteTokens`). Pure and dependency-free so the
- * middleware, the client analytics and the server page all share one reading.
+ * the request:
+ * - shared caches: middleware, the TTL helpers and the Cloudflare rule all bypass it;
+ * - analytics: `getPosthog` stays off on such a URL, and every event is scrubbed too;
+ * - error reports.
+ * The scrubbing for analytics and error reports lives in `share-capability.ts`,
+ * which also covers a wall's `?wall=`.
+ *
+ * This module is pure and dependency-free, so the middleware, the client
+ * analytics and the server page all read the token the same way.
  */
 
 export const BOARD_INVITE_PARAM = 'invite';
@@ -51,9 +56,4 @@ const INVITE_PAIR = /(invite(?:=|%(?:25)*3D))[^&#\s"']*/gi;
 export function searchCarriesBoardInvite(search: string): boolean {
   INVITE_PAIR.lastIndex = 0;
   return INVITE_PAIR.test(search);
-}
-
-/** The same string with every token value replaced, for anything that leaves the browser. */
-export function redactBoardInviteTokens(text: string): string {
-  return text.replace(INVITE_PAIR, '$1[redacted]');
 }

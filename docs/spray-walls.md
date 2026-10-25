@@ -4599,6 +4599,22 @@ unlisted wall is read at carries a capability, so there is no clean twin to poin
 a canonical at, and a canonical naming the bare path would invite a crawler to a
 URL that answers 404.
 
+The uuid stays out of analytics and error reports. posthog-js-lite copies
+`location.href` and `document.referrer` onto every web event, so www's PostHog
+client runs a `before_send` hook that removes `wall=` (and a home board's
+`invite=`) from every URL in the event and redacts either one nested in another
+param, such as a sign-in page's `callbackUrl`. `/b/garage/40/list?wall=<uuid>&src=qr`
+reaches PostHog as `/b/garage/40/list?src=qr`. Sentry events and span URLs have
+it redacted the same way, and so does the uuid in the photo route's path
+(`/api/v1/spray-walls/<uuid>/photo`), which a sampled page load records as an
+image span next to the slug. The `/flags` request skips `before_send`, so the
+transport runs the same rule over its body (it carries every person property).
+Errors thrown by the wall reads name the operation, never the uuid. The rule is
+`packages/web/app/lib/share-capability.ts`.
+
+Unlike the invite token, a `?wall=` page keeps analytics: the scrub covers every
+capture path, and www has no session replay to leak the URL some other way.
+
 ### Which photograph the page shows
 
 A PUBLIC wall shows `SprayWall.publicPhotoUrl` — the copy SW-14 makes in the
