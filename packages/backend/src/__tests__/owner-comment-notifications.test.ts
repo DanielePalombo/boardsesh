@@ -743,7 +743,7 @@ describe('local-only mode names an actor only to who may see them (#6558)', () =
       expect(inlineRows).toEqual([
         { recipientId: STRANGER, actorId: PUBLIC_COMMENTER, type: notificationType, commentId: null },
       ]);
-      expect(pushed).toEqual([
+      const namedPush = [
         {
           recipientId: STRANGER,
           notification: expect.objectContaining({
@@ -752,10 +752,14 @@ describe('local-only mode names an actor only to who may see them (#6558)', () =
             actorDisplayName: PUBLIC_COMMENTER,
           }),
         },
-      ]);
+      ];
+      expect(pushed).toEqual(namedPush);
 
+      // The worker writes the same row and pushes the same actor.
+      pushed.length = 0;
       const workerRows = await rowsWrittenBy(() => captureWorkerHandler()(event), proposalUuid);
       expect(workerRows).toEqual(inlineRows);
+      expect(pushed).toEqual(namedPush);
     },
   );
 
