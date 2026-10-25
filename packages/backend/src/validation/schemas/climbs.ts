@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { CONFIDENCE, MAX_SEARCH_PAGE } from '@boardsesh/db/queries/constants';
+
 import { CLIMB_CHARACTERISTICS, TOGGLEABLE_CLIMB_CHARACTERISTICS } from '@boardsesh/shared-schema';
 import { ClimbUuidSchema, ExternalUUIDSchema, BoardNameSchema, UUIDSchema } from './primitives';
 import { BOARD_ANGLE_VALIDATION_MESSAGE, isBoardAngleSupported } from './board-angles';
+
+type ConfidenceTier = (typeof CONFIDENCE)[keyof typeof CONFIDENCE];
 
 // Cap holdsFilter entries: each ANY entry becomes a LIKE scan over board_climbs.frames
 // (no trigram index there), so an unbounded record is a cheap amplification vector on
@@ -83,8 +86,9 @@ export const ClimbInputSchema = z.object({
     .transform((v) => v ?? ''),
   mirrored: z.boolean().nullish(),
   benchmark_difficulty: z.string().max(50).nullish(),
-  // `is_no_match` / `characteristics` must be declared here even though nothing
-  // server-side reads them: `z.object()` STRIPS undeclared keys, and `setQueue`
+  // `is_no_match` / `characteristics` must be declared here (`Climb.is_no_match`
+  // reads `is_no_match` back when a queued stub has neither characteristics nor
+  // description, #6681): `z.object()` STRIPS undeclared keys, and `setQueue`
   // / `joinSession` persist the PARSED item (unlike the single-item mutations,
   // which discard the parse result and store the GraphQL-coerced input). Both
   // fields ride every client's selection set already, so omitting them here made
@@ -115,15 +119,7 @@ export const ClimbInputSchema = z.object({
   boardseshDifficulty: z.number().nullish(),
   // Source of truth for the tier set: CONFIDENCE / ConfidenceTier in
   // packages/db/src/queries/grade-model/constants.ts.
-  boardseshConfidence: z
-    .enum([
-      CONFIDENCE.confirmed,
-      CONFIDENCE.provisional,
-      CONFIDENCE.setterOnly,
-      CONFIDENCE.crossAngleEstimate,
-      CONFIDENCE.moonboardAngleEstimate,
-    ])
-    .nullish(),
+  boardseshConfidence: z.enum(Object.values(CONFIDENCE) as [ConfidenceTier, ...ConfidenceTier[]]).nullish(),
   // The sizes the climb fits on, round-tripped through the queue so a peer on a
   // different-sized wall keeps the one signal that separates Woods' two boards
   // (their hold ids overlap as different holds). Bounded: a board type has a
