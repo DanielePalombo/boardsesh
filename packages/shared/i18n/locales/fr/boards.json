@@ -179,7 +179,7 @@
       "limitReached": "Tu as atteint le nombre maximum de boards pour un compte. Supprime une board que tu n'utilises plus pour en ajouter une autre.",
       "timer": "Minuteur d'entraînement",
       "timerNone": "Aucun minuteur associé",
-      "timerHint": "Associe un minuteur Rogue à cette board. Quand tu pilotes le mur, chaque croix démarre son chronomètre.",
+      "timerHint": "Associe un minuteur Rogue à cette board. Quand tu pilotes le mur, son chrono repart à chaque repos, ou à chaque bloc enregistré si le minuteur de repos est désactivé.",
       "timerPairCta": "Associer un minuteur",
       "timerChangeCta": "Changer de minuteur",
       "timerRemoveCta": "Retirer",
@@ -310,7 +310,8 @@
       "title": "Associer un minuteur",
       "subtitle": "Choisis le minuteur Rogue ou Echo situé à côté de cette board.",
       "scanning": "Recherche de minuteurs à proximité…",
-      "empty": "Aucun minuteur trouvé. Vérifie qu'il est allumé et à portée."
+      "empty": "Aucun minuteur trouvé. Vérifie qu'il est allumé et à portée.",
+      "permissionDenied": "Autorise le Bluetooth pour rechercher des minuteurs."
     },
     "gymGrant": {
       "sectionTitle": "Accès en écriture",
