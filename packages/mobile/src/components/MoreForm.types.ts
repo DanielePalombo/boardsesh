@@ -107,7 +107,8 @@ export type MoreToggleRow = {
    * Icon buttons before the label. **Android only**: the Compose form draws no
    * hosted React Native row (QA on a Pixel 8 Pro, #6546), so Settings › Home's
    * move arrows are native buttons there. iOS and the browser draw no actions;
-   * Settings › Home hosts its own arrow rows on those.
+   * Settings › Home hosts its own arrow rows on those. A screen with a `custom`
+   * row renders MoreFormRN on Android, which draws no actions.
    */
   actions?: readonly MoreRowAction[];
 };

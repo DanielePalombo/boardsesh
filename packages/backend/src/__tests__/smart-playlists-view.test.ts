@@ -28,6 +28,9 @@ const PRIVATE_OWNER = 'smart-view-private';
 const GUARDED_OWNER = 'smart-view-guarded';
 // A logbook whose attempt totals tie, for the tie-break.
 const TIE_OWNER = 'smart-view-ties';
+// Attempt totals tied across two board types, where the climb uuid order
+// (what GROUP BY hands the sort) is not the (board_type, climb_uuid) order.
+const BOARD_TIE_OWNER = 'smart-view-board-ties';
 // A logbook holding a climb whose most-ascended angle is a tie, for the display angle.
 const ANGLE_OWNER = 'smart-view-angles';
 
@@ -144,14 +147,14 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
     await db
       .insert(users)
       .values(
-        [OWNER, STRANGER, PRIVATE_OWNER, GUARDED_OWNER, TIE_OWNER, ANGLE_OWNER].map((id) => ({
+        [OWNER, STRANGER, PRIVATE_OWNER, GUARDED_OWNER, TIE_OWNER, BOARD_TIE_OWNER, ANGLE_OWNER].map((id) => ({
           id,
           email: `${id}@test.invalid`,
         })),
       )
       .onConflictDoNothing();
     await db.execute(sql`INSERT INTO user_profiles (user_id, is_private) VALUES (${PRIVATE_OWNER}, true)`);
-    await db.execute(sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER})`);
+    await db.execute(sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER})`);
 
     // Kilter layout 1 (size 10, set 1) and one Tension climb. The grade each
     // logbook row shows is its most-ascended angle's: k-4 shows 20 (at 50°).
@@ -228,7 +231,9 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
     });
 
     // GUARDED_OWNER: a five-star send of k-1 anyone may read, a five-star tick on
-    // k-3 kept to themselves, and one on their own draft climb.
+    // k-3 kept to themselves, one on their own draft climb, one on k-ghost, a
+    // climb with no board_climbs row, and one on k-merged, a catalog-dedup alias
+    // of k-1 (an alias has no board_climbs row of its own).
     await db.execute(sql`
       INSERT INTO board_climbs (uuid, board_type, layout_id, setter_username, name, description, frames, is_listed, is_draft, user_id, frames_count, compatible_size_ids)
       VALUES ('k-draft', 'kilter', 1, 'setter', 'Hotel', '', 'p1r12', true, true, ${GUARDED_OWNER}, 1, '{10}'::int[])
@@ -260,6 +265,28 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
       quality: 5,
       climbedAt: '2026-06-07 10:00',
     });
+    await seedTick({
+      uuid: 'sv-g4',
+      userId: GUARDED_OWNER,
+      climbUuid: 'k-ghost',
+      status: 'attempt',
+      attempts: 2,
+      quality: 5,
+      climbedAt: '2026-06-08 10:00',
+    });
+    await db.execute(sql`
+      INSERT INTO board_climb_aliases (board_type, alias_uuid, canonical_uuid, source)
+      VALUES ('kilter', 'k-merged', 'k-1', 'test')
+    `);
+    await seedTick({
+      uuid: 'sv-g5',
+      userId: GUARDED_OWNER,
+      climbUuid: 'k-merged',
+      status: 'attempt',
+      attempts: 2,
+      quality: 5,
+      climbedAt: '2026-06-09 10:00',
+    });
     await db.execute(sql`
       INSERT INTO content_privacy (entity_type, entity_id, owner_id, audience)
       VALUES ('tick', 'sv-g2', ${GUARDED_OWNER}, 'only_me')
@@ -283,6 +310,35 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
         climbedAt: `2026-06-0${index + 1} 10:00`,
       });
     }
+
+    // BOARD_TIE_OWNER: three attempts each on Kilter k-2 and z-tie and Tension t-1,
+    // all five-star and climbed at the same moment, and all three liked at once.
+    await seedClimb('z-tie', 'kilter', 1, 'Juliet');
+    for (const [index, [climbUuid, boardType]] of (
+      [
+        ['k-2', 'kilter'],
+        ['t-1', 'tension'],
+        ['z-tie', 'kilter'],
+      ] as const
+    ).entries()) {
+      await seedTick({
+        uuid: `sv-b${index}`,
+        userId: BOARD_TIE_OWNER,
+        climbUuid,
+        boardType,
+        angle: boardType === 'tension' ? 30 : 40,
+        status: 'attempt',
+        attempts: 3,
+        quality: 5,
+        climbedAt: '2026-06-01 10:00',
+      });
+    }
+    await db.execute(sql`
+      INSERT INTO user_favorites (user_id, board_name, climb_uuid, angle, created_at) VALUES
+        (${BOARD_TIE_OWNER}, 'kilter', 'k-2', 40, '2026-06-01 10:00'),
+        (${BOARD_TIE_OWNER}, 'tension', 't-1', 30, '2026-06-01 10:00'),
+        (${BOARD_TIE_OWNER}, 'kilter', 'z-tie', 40, '2026-06-01 10:00')
+    `);
 
     // ANGLE_OWNER: k-tie has 8 ascents at both 15° (a 10) and 30° (a 16), and is
     // a 20 at 40°; beside it k-1 (12 at 40°) and k-2 (18 at 40°).
@@ -320,10 +376,11 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
 
   afterAll(async () => {
     // Neither table is in setup.ts's per-file reset list.
-    await db.execute(sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER})`);
+    await db.execute(sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER})`);
     await db.execute(sql`DELETE FROM user_boards WHERE uuid = 'smart-view-board'`);
     await db.execute(sql`DELETE FROM user_profiles WHERE user_id = ${PRIVATE_OWNER}`);
     await db.execute(sql`DELETE FROM content_privacy WHERE entity_id = 'sv-g2'`);
+    await db.execute(sql`DELETE FROM board_climb_aliases WHERE alias_uuid = 'k-merged'`);
   });
 
   describe('no view', () => {
@@ -377,6 +434,24 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
           1,
         );
         expect(descending.collected, type).toEqual(['k-6', 'k-5', 'k-2', 'k-4']);
+      }
+    });
+
+    it('breaks ties on the board type then the climb without a view too, so paging repeats and skips nothing (#6659)', async () => {
+      for (const type of ['MOST_REPEATED', 'PROJECTS'] as const) {
+        const paged = await pageThrough({ type, userId: TIE_OWNER }, 1);
+        // The same order as the position view above.
+        expect(paged.collected, type).toEqual(['k-4', 'k-2', 'k-5', 'k-6']);
+        expect(paged.totalCount).toBe(4);
+      }
+      // Tied attempt totals, five-star dates and like dates: Kilter before
+      // Tension, then the climb, so z-tie comes before t-1.
+      for (const type of SMART_TYPES) {
+        const acrossBoards = await pageThrough({ type, userId: BOARD_TIE_OWNER }, 1);
+        expect(acrossBoards.collected, type).toEqual(['k-2', 'z-tie', 't-1']);
+        expect(acrossBoards.totalCount, type).toBe(3);
+        const viewed = await pageThrough({ type, userId: BOARD_TIE_OWNER, view: { sortBy: 'position' } }, 1);
+        expect(viewed.collected, type).toEqual(acrossBoards.collected);
       }
     });
 
@@ -559,7 +634,7 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
     it('a tick on the owner’s draft climb is missing for a stranger, and the count is what paging reaches', async () => {
       const ownersOwn = makeCtx({ isAuthenticated: true, userId: GUARDED_OWNER });
       expect(await uuids({ type: 'MOST_REPEATED', userId: GUARDED_OWNER }, ownersOwn)).toContain('k-draft');
-      for (const view of [{ sortBy: 'position' as const }, { minGrade: 1, maxGrade: 40 }]) {
+      for (const view of [undefined, { sortBy: 'position' as const }, { minGrade: 1, maxGrade: 40 }]) {
         const paged = await pageThrough({ type: 'MOST_REPEATED', userId: GUARDED_OWNER, view }, 1, stranger);
         // k-3's tick is hidden from STRANGER too; only the k-1 send is left.
         expect(paged.collected, JSON.stringify(view)).toEqual(['k-1']);
@@ -570,6 +645,21 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
         stranger,
       );
       expect(filtered.unfilteredCount).toBe(1);
+    });
+
+    it('a tick on a uuid with no board_climbs row takes no page slot and no count, even for the owner (#6661)', async () => {
+      const ownersOwn = makeCtx({ isAuthenticated: true, userId: GUARDED_OWNER });
+      for (const type of ['FIVE_STARS', 'MOST_REPEATED', 'PROJECTS'] as const) {
+        const paged = await pageThrough({ type, userId: GUARDED_OWNER }, 1, ownersOwn);
+        // Neither a deleted climb nor an alias of a published one: the hydrator
+        // reads the tick's own uuid and finds no row for either.
+        expect(paged.collected, type).not.toContain('k-ghost');
+        expect(paged.collected, type).not.toContain('k-merged');
+        expect(paged.collected, type).toContain('k-draft');
+        expect(paged.totalCount, type).toBe(paged.collected.length);
+        const firstPage = await fetchSmart({ type, userId: GUARDED_OWNER, pageSize: 1 }, ownersOwn);
+        expect(firstPage.meta.climbCount, type).toBe(paged.collected.length);
+      }
     });
 
     it('a private logbook stays hidden under a view', async () => {

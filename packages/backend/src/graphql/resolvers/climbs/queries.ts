@@ -35,6 +35,7 @@ import { findMoonBoardDuplicateMatches } from './moonboard-duplicates';
 import { parseFramesToHoldEntries, type NormalizedHold } from './climb-similarity';
 import { findSimilarClimbsCached } from './similar-climbs-cache';
 import { gateCrossAngleStats } from './cross-angle-gate';
+import { canonicalClimbUuidSql } from '../shared/sql-expressions';
 import { hasCatalogQueryAccess, requireCatalogQueryAccess } from '../social/roles';
 import {
   BoardNameSchema,
@@ -661,7 +662,7 @@ export const climbQueries = {
       .where(
         and(
           eq(dbSchema.boardClimbStats.boardType, boardName),
-          eq(dbSchema.boardClimbStats.climbUuid, climbUuid),
+          eq(dbSchema.boardClimbStats.climbUuid, canonicalClimbUuidSql(boardName, climbUuid)),
           gt(dbSchema.boardClimbStats.ascensionistCount, 0),
           // The same rule `climbStatsForAngles` carries: a retained uuid must not
           // keep buying the ascent, quality and grade numbers of a climb on a
@@ -747,7 +748,7 @@ export const climbQueries = {
       .where(
         and(
           eq(dbSchema.boardClimbStats.boardType, boardName),
-          eq(dbSchema.boardClimbStats.climbUuid, climbUuid),
+          eq(dbSchema.boardClimbStats.climbUuid, canonicalClimbUuidSql(boardName, climbUuid)),
           // Numbers, but not ONLY numbers: a spray climb's stats row carries the
           // setter's grade and `fa_username`, and it is seeded at creation — so
           // anyone who kept a uuid could keep reading them after the wall went
@@ -794,9 +795,35 @@ export const climbQueries = {
     }
 
     const uniqueClimbUuids = [...new Set(validatedClimbUuids)];
-    // This is one physical primary query for the whole batch. Empty climbs are
-    // represented by the absence of rows; the client records cooldowns from
-    // the requested UUID list rather than inferring them from this response.
+    // Queue snapshots keep merged-away uuids, but stats rows exist only under the
+    // canonical uuid. Look up each requested uuid's canonical, read those rows,
+    // then hand them back under the uuid the client asked for so its grouping by
+    // `climbUuid` still matches.
+    const aliasRows = await db
+      .select({
+        aliasUuid: dbSchema.boardClimbAliases.aliasUuid,
+        canonicalUuid: dbSchema.boardClimbAliases.canonicalUuid,
+      })
+      .from(dbSchema.boardClimbAliases)
+      .where(
+        and(
+          eq(dbSchema.boardClimbAliases.boardType, boardName),
+          inArray(dbSchema.boardClimbAliases.aliasUuid, uniqueClimbUuids),
+        ),
+      );
+    const canonicalByAlias = new Map(aliasRows.map((row) => [row.aliasUuid, row.canonicalUuid]));
+    const requestedUuidsByCanonical = new Map<string, string[]>();
+    for (const requestedUuid of uniqueClimbUuids) {
+      const canonicalUuid = canonicalByAlias.get(requestedUuid) ?? requestedUuid;
+      const requestedForCanonical = requestedUuidsByCanonical.get(canonicalUuid);
+      if (requestedForCanonical) requestedForCanonical.push(requestedUuid);
+      else requestedUuidsByCanonical.set(canonicalUuid, [requestedUuid]);
+    }
+    const canonicalClimbUuids = [...requestedUuidsByCanonical.keys()];
+    // One alias lookup plus this one stats query for the whole batch, whatever
+    // its size: never a query per uuid. Empty climbs are represented by the
+    // absence of rows; the client records cooldowns from the requested UUID
+    // list rather than inferring them from this response.
     const rows = await db
       .select({
         climbUuid: dbSchema.boardClimbStats.climbUuid,
@@ -830,7 +857,7 @@ export const climbQueries = {
       .where(
         and(
           eq(dbSchema.boardClimbStats.boardType, boardName),
-          inArray(dbSchema.boardClimbStats.climbUuid, uniqueClimbUuids),
+          inArray(dbSchema.boardClimbStats.climbUuid, canonicalClimbUuids),
           // Same rule as `climbStatsForAngles`: the row carries the setter grade
           // and `fa_username`, so a retained uuid must not outlive the wall's
           // visibility.
@@ -846,11 +873,14 @@ export const climbQueries = {
       )
       .orderBy(asc(dbSchema.boardClimbStats.climbUuid), asc(dbSchema.boardClimbStats.angle));
 
-    return rows.map((row) => ({
-      ...row,
-      difficulty: row.displayDifficulty == null ? null : getGradeLabel(Math.round(row.displayDifficulty), boardName),
-      syncSeq: row.syncSeq,
-    }));
+    return rows.flatMap((row) =>
+      (requestedUuidsByCanonical.get(row.climbUuid) ?? [row.climbUuid]).map((requestedUuid) => ({
+        ...row,
+        climbUuid: requestedUuid,
+        difficulty: row.displayDifficulty == null ? null : getGradeLabel(Math.round(row.displayDifficulty), boardName),
+        syncSeq: row.syncSeq,
+      })),
+    );
   },
 
   /**
@@ -897,7 +927,7 @@ export const climbQueries = {
       .where(
         and(
           eq(dbSchema.boardClimbGrades.boardType, boardName),
-          eq(dbSchema.boardClimbGrades.climbUuid, climbUuid),
+          eq(dbSchema.boardClimbGrades.climbUuid, canonicalClimbUuidSql(boardName, climbUuid)),
           eq(dbSchema.boardClimbGrades.angle, angle),
           // `board_climb_grades` carries no spray rows today — the nightly model
           // runs over CROWD_MEAN_BOARDS only — so this predicate is closing the
@@ -962,7 +992,7 @@ export const climbQueries = {
       .where(
         and(
           eq(dbSchema.boardClimbGrades.boardType, boardName),
-          eq(dbSchema.boardClimbGrades.climbUuid, climbUuid),
+          eq(dbSchema.boardClimbGrades.climbUuid, canonicalClimbUuidSql(boardName, climbUuid)),
           // `board_climb_grades` carries no spray rows today — the nightly model
           // runs over CROWD_MEAN_BOARDS only — so this predicate is closing the
           // gap ahead of the day spray joins that list, not a live leak. Both

@@ -29,19 +29,22 @@ vi.mock('react-i18next', () => ({
 vi.mock('graphql-request', () => ({
   gql: (strings: TemplateStringsArray, ...values: unknown[]) =>
     strings.reduce((result, chunk, index) => result + chunk + (values[index] ?? ''), ''),
-  GraphQLClient: vi.fn(() => ({
-    request: vi.fn(),
-  })),
+  GraphQLClient: vi.fn(function () {
+    return { request: vi.fn() };
+  }),
 }));
 
 vi.mock('@/app/lib/graphql/client', () => ({
   getGraphQLHttpUrl: vi.fn(() => 'http://localhost:4000/graphql'),
 }));
 
+vi.mock('../session-detail-content', () => ({ default: () => null }));
+
 vi.mock('@/app/lib/seo/dynamic-og-data', () => ({
   getSessionOgSummary: vi.fn(),
 }));
 
+const { GraphQLClient } = await import('graphql-request');
 const pageModule = await import('../page');
 const { getSessionOgSummary } = await import('@/app/lib/seo/dynamic-og-data');
 const getSessionOgSummaryMock = vi.mocked(getSessionOgSummary);
@@ -144,5 +147,33 @@ describe('session page metadata', () => {
     expect((metadata.title as { absolute: string }).absolute).not.toContain(secretRecap);
     expect(metadata.description).not.toContain(secretRecap);
     expect(getOpenGraphImageUrl(image) ?? '').not.toContain(secretRecap);
+  });
+
+  it('bounds the session detail fetch with a deadline', async () => {
+    await pageModule.default({ params: Promise.resolve({ sessionId: 'session-deadline' }) });
+
+    expect(vi.mocked(GraphQLClient)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('rethrows a deadline on the detail fetch instead of rendering not-found', async () => {
+    vi.mocked(GraphQLClient).mockImplementationOnce(function () {
+      return { request: vi.fn().mockRejectedValue(new DOMException('timed out', 'TimeoutError')) };
+    } as never);
+
+    await expect(pageModule.default({ params: Promise.resolve({ sessionId: 'session-slow' }) })).rejects.toMatchObject({
+      name: 'TimeoutError',
+    });
+  });
+
+  it('falls back to not-found metadata when the summary read fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    getSessionOgSummaryMock.mockRejectedValue(new DOMException('timed out', 'TimeoutError'));
+
+    const metadata = await pageModule.generateMetadata({ params: Promise.resolve({ sessionId: 'session-meta-slow' }) });
+
+    expect(metadata.robots).toMatchObject({ index: false });
   });
 });

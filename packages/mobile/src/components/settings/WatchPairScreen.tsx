@@ -4,6 +4,7 @@ import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Text } from '../Text';
 import { MoreForm } from '../MoreForm';
+import { MoreFormRN } from '../MoreForm.rn';
 import { useTheme } from '../../providers/theme-provider';
 import { useToast } from '../../providers/toast-provider';
 import { withSettingTracking } from '../../lib/settings-analytics';
@@ -103,7 +104,7 @@ export function WatchPairScreen() {
     [t, isLoading, code, secondsLeft, codeView, codeHeight, generate],
   );
 
-  return <MoreForm model={model} />;
+  return Platform.OS === 'android' ? <MoreFormRN model={model} /> : <MoreForm model={model} />;
 }
 
 const createStyles = (textStyles: TypographyScale) =>
