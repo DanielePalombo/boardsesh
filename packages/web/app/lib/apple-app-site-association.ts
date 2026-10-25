@@ -27,8 +27,13 @@ export const APPLE_APP_ID = '9L3HKPZBH3.com.boardsesh.app';
  *
  * `/gym` here does NOT cover `/gyms`: the pattern is `/gym/*`, and the slash is
  * literal. The gym directory keeps opening in the app, which has that screen.
+ *
+ * `/poster` is the printable board QR page (`/poster/b/{slug}`). The code it
+ * prints points at `/b/{slug}`, which still opens the app; the print page
+ * itself must load in the browser, including when a phone opens it from the
+ * app's in-app browser or from a shared link.
  */
-export const WEB_ONLY_PATH_PREFIXES = ['/gym'] as const;
+export const WEB_ONLY_PATH_PREFIXES = ['/gym', '/poster'] as const;
 
 /** Non-page paths the OS or a build tool fetches. Never locale-prefixed. */
 const INFRASTRUCTURE_EXCLUSIONS = ['NOT /api/*', 'NOT /_next/*', 'NOT /monitoring', 'NOT /.well-known/*'] as const;
