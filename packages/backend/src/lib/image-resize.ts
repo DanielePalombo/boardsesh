@@ -59,6 +59,67 @@ export async function streamToBuffer(stream: Readable): Promise<Buffer> {
 }
 
 /**
+ * Thrown by writeImageVariants in `rejectUndecodable` mode when sharp cannot
+ * decode the source. Nothing has been written when it is thrown: every resize
+ * runs before the first write.
+ */
+export class UndecodableImageError extends Error {
+  constructor(cause: unknown) {
+    super('Image could not be decoded', { cause });
+    this.name = 'UndecodableImageError';
+  }
+}
+
+const STORED_FORMAT_BY_MIME_TYPE: Record<string, 'jpeg' | 'png' | 'webp' | 'gif'> = {
+  'image/jpeg': 'jpeg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+
+/**
+ * Re-encode an uploaded image in its own format, so the stored object holds
+ * only the pixels sharp decoded.
+ *
+ * Magic bytes and a successful decode are not enough on their own: libjpeg
+ * stops at the end-of-image marker, so a real JPEG with any payload appended
+ * after it passes both checks, and storing the raw upload would host that
+ * payload on our origin. Re-encoding drops it, and drops EXIF (GPS included)
+ * too, so the EXIF orientation is baked into still images first. sharp can
+ * only turn a multi-page image by 180 degrees, so animated GIF/WebP frames
+ * keep their stored orientation.
+ *
+ * Throws UndecodableImageError for a type it does not store or bytes sharp
+ * cannot decode.
+ */
+export async function reencodeUploadedImage(input: Buffer, mimeType: string): Promise<Buffer> {
+  const format = STORED_FORMAT_BY_MIME_TYPE[mimeType];
+  if (!format) throw new UndecodableImageError(new Error(`Unsupported image type ${mimeType}`));
+  try {
+    const { pages = 1 } = await sharp(input).metadata();
+    const animated = pages > 1;
+    let pipeline = sharp(input, { animated });
+    if (!animated) pipeline = pipeline.autoOrient();
+    if (format === 'jpeg') pipeline = pipeline.jpeg({ quality: 90 });
+    else if (format === 'webp') pipeline = pipeline.webp({ quality: 90 });
+    else if (format === 'png') pipeline = pipeline.png();
+    else pipeline = pipeline.gif();
+    return await pipeline.toBuffer();
+  } catch (decodeError) {
+    throw new UndecodableImageError(decodeError);
+  }
+}
+
+export interface WriteImageVariantsOptions {
+  /**
+   * Throw UndecodableImageError instead of storing the original bytes at every
+   * variant key when sharp cannot decode the source. For user uploads, where a
+   * file sharp cannot read is not an image we should be hosting at all.
+   */
+  rejectUndecodable?: boolean;
+}
+
+/**
  * Write every allowed resize variant of a freshly uploaded image.
  *
  * Called for the MUTABLE media keys (avatars, gym logos, gym photos), which the
@@ -78,6 +139,7 @@ export async function writeImageVariants(
   writeObject: (key: string, body: Buffer, contentType: string) => Promise<unknown>,
   sizes: readonly AllowedImageSize[] = ALLOWED_IMAGE_SIZES,
   originalContentType = 'image/jpeg',
+  { rejectUndecodable = false }: WriteImageVariantsOptions = {},
 ): Promise<void> {
   const resized = await Promise.all(
     sizes.map(async (size) => {
@@ -87,7 +149,8 @@ export async function writeImageVariants(
           body: await resizeImageBuffer(original, size),
           contentType: 'image/jpeg',
         };
-      } catch {
+      } catch (decodeError) {
+        if (rejectUndecodable) throw new UndecodableImageError(decodeError);
         // A source sharp cannot decode still has to produce an OBJECT at every
         // variant key, because direct-from-bucket serving has no fallback: a
         // missing key is a 404, not a slightly-too-large image. Storing the
