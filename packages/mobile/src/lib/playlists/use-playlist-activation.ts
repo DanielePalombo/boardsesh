@@ -11,11 +11,15 @@
 // the play drawer walks the whole playlist. Wrong-board playlists use a
 // view-only drawer path so they can be inspected without mutating the queue.
 //
-// Playlist-detail screens additionally opt into `replaceQueueOnActivate`: a tap
-// replaces the whole queue with the playlist order (tapped climb active) so
-// previous/next walk the circuit. Because that clears any future queue items, a
-// three-way prompt warns first whenever the queue has items after the current:
-// start the playlist (destructive), add it behind what's queued, or back out.
+// Playlists, For You lists and setter pages pass `honorPlaylistLoadSetting`. A tap
+// on them plays from the list like any other list tap, unless the climber turned
+// on "Tapping a playlist loads it into my queue" (F4, #6667). Then the tap (or
+// the Play button) replaces the whole queue with the list (tapped climb active)
+// so previous/next walk the circuit; with Light the board when I tap a climb
+// off, a row tap is still a preview. Because a replace clears any future queue
+// items, a three-way prompt warns first whenever the queue has items after the
+// current: start the playlist (destructive), add it behind what's queued and
+// play from it, or back out to a preview of the tapped climb.
 //
 // The same additive landing is available on its own, without a row tap, through
 // `addToQueue.append` — the playlist-detail "Add to queue" row.
@@ -257,8 +261,15 @@ export type UsePlaylistActivationOptions = {
   loadedRowsArePages?: boolean;
   /** Logged when the async suggestion refresh fails (non-abort). */
   refreshErrorMessage: string;
-  /** Replace the user's queue with the playlist order instead of suggestion-fallback navigation. */
-  replaceQueueOnActivate?: boolean;
+  /**
+   * A playlist-kind list (a playlist, For You, a setter's page): with the
+   * climber's "Tapping a playlist loads it into my queue" setting on, a tap
+   * replaces the queue with the list instead of playing from it. The setting is
+   * read at the tap. Off (the default), the tap plays from the list. Either way
+   * "Light the board when I tap a climb" off makes a row tap a preview; the
+   * Play button (`deliberate`) still plays or loads the list.
+   */
+  honorPlaylistLoadSetting?: boolean;
 };
 
 export type PlaylistAddToQueueState = {
@@ -274,9 +285,18 @@ export type PlaylistAddToQueueState = {
   isAppending: boolean;
 };
 
+export type PlaylistActivationOptions = {
+  /**
+   * A deliberate play, not a row tap: the list header's Play button. "Light the board
+   * when I tap a climb" is about row taps, so it does not turn this
+   * into a preview. The crew rule still does.
+   */
+  deliberate?: boolean;
+};
+
 export type PlaylistActivationResult = {
-  /** Callback to wire onto a climb row tap. */
-  activate: (climb: Climb, readyBoardArt?: ReadyBoardArtSnapshot) => Promise<void>;
+  /** Callback to wire onto a climb row tap, or with `deliberate` the Play button. */
+  activate: (climb: Climb, readyBoardArt?: ReadyBoardArtSnapshot, options?: PlaylistActivationOptions) => Promise<void>;
   /** Bulk additive queueing for the detail screen's "Add to queue" row. */
   addToQueue: PlaylistAddToQueueState;
 };
@@ -343,7 +363,7 @@ export function usePlaylistActivation({
   snapshotListLoader,
   loadedRowsArePages = false,
   refreshErrorMessage,
-  replaceQueueOnActivate = false,
+  honorPlaylistLoadSetting = false,
 }: UsePlaylistActivationOptions): PlaylistActivationResult {
   const {
     setCurrentClimb,
@@ -797,10 +817,17 @@ export function usePlaylistActivation({
       loadedClimbs,
       drainStopReason: loadedDrainStopReason,
       entryPoint,
+      excludeClimbUuid,
     }: {
       loadedClimbs?: Climb[];
       drainStopReason?: PlaylistDrainStopReason;
       entryPoint: 'listHeader' | 'replacePrompt';
+      /**
+       * A climb of this list that is going into the queue by another way (the
+       * prompt plays the tapped climb after the current one). It is left out of
+       * the batch so it is queued once, and counted as landed.
+       */
+      excludeClimbUuid?: string;
     }) => {
       if (!activeBoard || privacyGeneration !== getPrivacyRevocationGeneration()) return;
       if (isAppendingRef.current) {
@@ -864,10 +891,12 @@ export function usePlaylistActivation({
         }
         if (abortController.signal.aborted || privacyGeneration !== getPrivacyRevocationGeneration()) return;
 
-        if (fetchedClimbs.length === 0) {
-          if (drainStopReason === null || drainStopReason === 'complete') {
-            reportEmptyBoardFetchOnce('append-queue-empty');
-          }
+        if (fetchedClimbs.length === 0 && (drainStopReason === null || drainStopReason === 'complete')) {
+          reportEmptyBoardFetchOnce('append-queue-empty');
+        }
+        // An excluded climb was queued before the append, so an empty list still
+        // has something to confirm.
+        if (fetchedClimbs.length === 0 && !excludeClimbUuid) {
           trackQueued('nothingToAdd', 0, 0);
           showToast(t('detail.addToQueue.nothingToAdd'), 'info');
           return;
@@ -881,13 +910,20 @@ export function usePlaylistActivation({
         for (const climb of fetchedClimbs) {
           if (seenClimbUuids.has(climb.uuid)) continue;
           seenClimbUuids.add(climb.uuid);
+          if (climb.uuid === excludeClimbUuid) continue;
           queueItems.push(climbToQueueItem(toSchemaClimb(climb)));
         }
 
-        const appendedCount = appendQueueItems(queueItems);
+        // The excluded climb is in the queue already, so it counts as landed,
+        // even when the list no longer holds it (it was removed between the tap
+        // and the fetch). Otherwise a full batch would read as `queueFull`.
+        const excludedCount = excludeClimbUuid ? 1 : 0;
+        const batchAppendedCount = queueItems.length > 0 ? appendQueueItems(queueItems) : 0;
+        const listCount = queueItems.length + excludedCount;
+        const appendedCount = batchAppendedCount + excludedCount;
         trackQueued(
-          appendedCount === 0 ? 'queueFull' : appendedCount < queueItems.length ? 'addedPartial' : 'added',
-          queueItems.length,
+          appendedCount === 0 ? 'queueFull' : appendedCount < listCount ? 'addedPartial' : 'added',
+          listCount,
           appendedCount,
         );
 
@@ -1017,10 +1053,24 @@ export function usePlaylistActivation({
           if (decision === 'cancel') return;
           if (decision === 'append') {
             // The board-scoped list is already in hand — no second round trip.
+            // A seeded tap already put the tapped climb in the queue, so while
+            // that item is still there the batch leaves the climb out and
+            // counts it as landed, the same as the first prompt's Add to queue.
+            const seedItemUuid = options.previewQueueItem?.uuid;
+            const { queue: queueAtAnswer, playlistSuggestionSource: trackAtAnswer } = getQueueSnapshot();
+            const seedStillQueued =
+              seedItemUuid !== undefined && queueAtAnswer.some(({ uuid }) => uuid === seedItemUuid);
+            // The seed's track walks the list, and the list now sits behind the
+            // climbs that landed during the load, not beside the seed. Swipes
+            // would queue a second copy of each list climb, so they walk the
+            // queue instead, as after the first prompt's Add to queue. Only this
+            // list's track: a climber who moved to another list keeps theirs.
+            if (trackAtAnswer?.playlistUuid === sourceId) setPlaylistSuggestionSource(null);
             await appendClimbsToQueue({
               loadedClimbs: climbs,
               drainStopReason,
               entryPoint: 'replacePrompt',
+              excludeClimbUuid: seedStillQueued ? climb.uuid : undefined,
             });
             return;
           }
@@ -1184,7 +1234,7 @@ export function usePlaylistActivation({
   // the caller already dispatched, so it doesn't re-commit or treat this as a
   // preview.
   const activatePlaylistClimb = useCallback(
-    (requestedClimb: Climb, tappedBoardArt?: ReadyBoardArtSnapshot) => {
+    (requestedClimb: Climb, tappedBoardArt?: ReadyBoardArtSnapshot, activationOptions?: PlaylistActivationOptions) => {
       if (privacyGeneration !== getPrivacyRevocationGeneration()) return Promise.resolve();
       // Row adapters may clone a climb. Prefer the loaded projection over
       // details retained by a menu or native gesture callback. Not when it is
@@ -1250,30 +1300,15 @@ export function usePlaylistActivation({
       // two differences: no board override (this climb is on the board the
       // climber is standing at), and the suggestion source is keyed to the
       // ACTIVE board so the drawer's swipes walk this list instead of the queue.
-      //
-      // Two reasons, either one enough: there are other climbers in the session
-      // (`previewOnly`), so a tap must not take their wall; or the climber
-      // turned off "Light problems when tapping the list" (issue #6665: every
-      // list reads it, not only search). The setting is read here, at the tap,
-      // so the callback does not change identity when it flips.
-      //
-      // The setting leaves `replaceQueueOnActivate` lists (playlists, For You,
-      // setter pages) alone until F4 (#6667) moves them onto play-from-the-list:
-      // on Liquid Glass a row tap is the only way to start one (its header has
-      // no Play button yet), and a preview's commit puts up one climb, not the
-      // list.
-      //
-      // Ordered ahead of `replaceQueueOnActivate` deliberately: replacing a
-      // crew's whole queue is the loudest write in the app, and a row tap must
-      // never be it.
-      if (previewOnlyRef.current || (!replaceQueueOnActivate && !getSetting('lightOnClimbTap'))) {
+      const openListPreview = () => {
         const target = resolveTarget(climb);
         openPlayDrawer(schemaClimb, {
           ...openingArtOptions,
           previewQueueItem: climbToQueueItem(schemaClimb),
           // A null target or no active board degrades to a trackless preview:
-          // the tapped climb still shows, swipes just walk the queue instead of
-          // this list, the same fallback the wrong-board branch above has. A
+          // the tapped climb still shows, and swipes have nothing to walk (its
+          // queue item is fresh, so it is not in the queue), the same fallback
+          // the wrong-board branch above has. A
           // climber with the setting off and no board picked can land here:
           // with no wall to light, a preview is all a tap can be.
           playlistSuggestionSource:
@@ -1295,15 +1330,109 @@ export function usePlaylistActivation({
                 })
               : null,
         });
+      };
+
+      // The prompt's Add to queue: the list goes in behind what is queued, and
+      // the tapped climb plays after the current climb, as a queued climb (not
+      // flagged `suggested`). It plays from the queue, with no track: the queue
+      // is now [current, tapped, what was queued, the rest of the list], and a
+      // track of the list would walk from the tapped climb straight to the next
+      // list climb, which is not beside it in the queue. Each swipe then queued
+      // a copy of a climb the batch already holds. A commit without a track
+      // also prunes nothing, so what the climber chose to keep stays queued.
+      // Done here, not through `activate`, which commits with a track and loads
+      // a fuller one the player would never use.
+      const playFromQueue = (): Promise<void> => {
+        if (getQueueSnapshot().currentClimbQueueItem?.climb.uuid !== climb.uuid) {
+          pendingQueueItemRef.current = climbToQueueItem(schemaClimb);
+        }
+        openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
+        return queueApi
+          .setCurrentClimb(climb, { playlistSuggestionSource: null })
+          .then(() => undefined)
+          .catch((error: unknown) => {
+            console.error('Playlist climb activation failed:', error);
+            reportHandledError(error, { tags: { source: 'playlist', op: 'activate-climb' } });
+          });
+      };
+
+      // Play from the list: the tapped climb becomes current with this list as
+      // the player's track, inserted after the current climb. The queue's other
+      // entries, History included, stay where they are.
+      const playFromList = (): Promise<void> => {
+        // The list does not subscribe to current-climb or source changes. Read
+        // both live at the tap; the commit adapter reads again before dispatch.
+        const { currentClimbQueueItem, playlistSuggestionSource: source } = getQueueSnapshot();
+        const isAlreadyActive = currentClimbQueueItem?.climb.uuid === climb.uuid;
+        const suggestionsAlreadyFollowThisList =
+          source?.playlistUuid === sourceId && source?.activatedClimbUuid === climb.uuid;
+
+        // Pure reopen: the tapped climb is already active AND the drawer's
+        // next/previous already follow THIS list anchored on it. Re-activating
+        // would duplicate it in the queue and pointlessly rebuild the same source,
+        // so just reopen — the drawer renders from currentClimbQueueItem
+        // (committedExternally), which already points at this climb.
+        if (isAlreadyActive && suggestionsAlreadyFollowThisList) {
+          openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
+          return Promise.resolve();
+        }
+
+        // Otherwise activate. Pin a fresh queue item only for a genuinely new
+        // activation, so the drawer's nav anchor and the appended queue entry share
+        // one uuid. When the climb is already active (tapped from a different list),
+        // queueApi refreshes the suggestion source in place instead of appending, so
+        // there's nothing to pin — and pinning a stale item could be reused on the
+        // next tap. The drawer opens first (same frame as the tap), then the shared
+        // activation builds the suggestion source.
+        //
+        // Flagged `suggested: true`: a climb opened by tapping a list row is
+        // browse-origin, so the reducer's suggested-after-current prune (see
+        // packages/shared/queue/src/playlist-suggestions.ts) drops it once the
+        // climber opens a climb from a different list — leftovers from an earlier
+        // list/board never survive into a new one. Deliberate adds via
+        // `addToQueue` stay unflagged and survive. `suggested` round-trips over
+        // the wire (packages/shared/queue-react/src/queue-item-input.ts) but the
+        // prune itself never reaches the server, so the queue provider runs it
+        // solo-only (`pruneSuggestedAfterCurrent`); in a party session the crew's
+        // queue stays as the room holds it and list-first swipes do the work.
+        if (!isAlreadyActive) {
+          pendingQueueItemRef.current = climbToQueueItem(schemaClimb, { suggested: true });
+        }
+        openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
+        return activate(climb).catch((error: unknown) => {
+          console.error('Playlist climb activation failed:', error);
+          reportHandledError(error, { tags: { source: 'playlist', op: 'activate-climb' } });
+        });
+      };
+
+      // Read at the tap, so the callback does not change identity when the
+      // climber flips it. Only lists that opted in can load into the queue.
+      const tapLoadsQueue = honorPlaylistLoadSetting && getSetting('playlistTapLoadsQueue');
+
+      // Two reasons to preview, either one enough: there are other climbers in
+      // the session (`previewOnly`), so a tap must not take their wall; or the
+      // climber turned off "Light the board when I tap a climb" (issue #6665:
+      // every list reads it, not only search). The setting is read here, at the
+      // tap, so the callback does not change identity when it flips.
+      //
+      // Light on tap is about row taps: the Play button (`deliberate`) skips it.
+      // It wins over "Tapping a playlist loads it into my queue" for a row tap,
+      // since a replace lights the wall too; with both on, the Play button is
+      // how a climber loads the list without lighting from a tap.
+      //
+      // Ordered ahead of the replace deliberately: replacing a crew's whole
+      // queue is the loudest write in the app, and a row tap must never be it.
+      if (previewOnlyRef.current || (!activationOptions?.deliberate && !getSetting('lightOnClimbTap'))) {
+        openListPreview();
         return Promise.resolve();
       }
 
-      // Replace-on-activate (playlist/circuit detail): swap the whole queue for the
-      // playlist order so previous/next walk the circuit. Replacement clears future
-      // queue items, so warn first when any exist; otherwise seed the queue with the
-      // tapped climb (committed, so the drawer renders it immediately) and expand to
-      // the full ordered list once it loads.
-      if (replaceQueueOnActivate) {
+      // "Tapping a playlist loads it into my queue" (F4, #6667): swap the whole
+      // queue for the list order so previous/next walk the circuit. Replacement
+      // clears future queue items, so warn first when any exist; otherwise seed
+      // the queue with the tapped climb (committed, so the drawer renders it
+      // immediately) and expand to the full ordered list once it loads.
+      if (tapLoadsQueue) {
         const target = resolveTarget(climb);
         if (target) {
           const { queue, currentClimbQueueItem } = getQueueSnapshot();
@@ -1313,8 +1442,25 @@ export function usePlaylistActivation({
             // Ask before the fetch so the climber isn't waiting on a network
             // round trip to be told what we're about to destroy.
             return promptQueueFork(futureQueueCount).then((decision) => {
-              if (decision === 'cancel') return;
-              if (decision === 'append') return appendClimbsToQueue({ entryPoint: 'replacePrompt' });
+              // The prompt answers `cancel` for an account change too: nothing
+              // opens for an account that has gone.
+              if (privacyGeneration !== getPrivacyRevocationGeneration()) return;
+              // Backing out still shows the climb they tapped, as a preview that
+              // walks the list. The queue stays as it was.
+              if (decision === 'cancel') {
+                openListPreview();
+                return;
+              }
+              // The list goes in behind what is queued (#4731), and the tapped
+              // climb plays next, from the queue. It goes in once, after the
+              // current climb, so the batch leaves it out, and nothing already
+              // queued is pruned.
+              if (decision === 'append') {
+                return Promise.all([
+                  playFromQueue(),
+                  appendClimbsToQueue({ entryPoint: 'replacePrompt', excludeClimbUuid: climb.uuid }),
+                ]).then(() => undefined);
+              }
               return replaceQueueWithPlaylist(climb, { allowClearingManualFuture: true });
             });
           }
@@ -1354,49 +1500,7 @@ export function usePlaylistActivation({
         }
       }
 
-      // The list does not subscribe to current-climb or source changes. Read
-      // both live at the tap; the commit adapter reads again before dispatch.
-      const { currentClimbQueueItem, playlistSuggestionSource: source } = getQueueSnapshot();
-      const isAlreadyActive = currentClimbQueueItem?.climb.uuid === climb.uuid;
-      const suggestionsAlreadyFollowThisList =
-        source?.playlistUuid === sourceId && source?.activatedClimbUuid === climb.uuid;
-
-      // Pure reopen: the tapped climb is already active AND the drawer's
-      // next/previous already follow THIS list anchored on it. Re-activating
-      // would duplicate it in the queue and pointlessly rebuild the same source,
-      // so just reopen — the drawer renders from currentClimbQueueItem
-      // (committedExternally), which already points at this climb.
-      if (isAlreadyActive && suggestionsAlreadyFollowThisList) {
-        openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
-        return Promise.resolve();
-      }
-
-      // Otherwise activate. Pin a fresh queue item only for a genuinely new
-      // activation, so the drawer's nav anchor and the appended queue entry share
-      // one uuid. When the climb is already active (tapped from a different list),
-      // queueApi refreshes the suggestion source in place instead of appending, so
-      // there's nothing to pin — and pinning a stale item could be reused on the
-      // next tap. The drawer opens first (same frame as the tap), then the shared
-      // activation builds the suggestion source.
-      //
-      // Flagged `suggested: true`: a climb opened by tapping a list row is
-      // browse-origin, so the reducer's suggested-after-current prune (see
-      // packages/shared/queue/src/playlist-suggestions.ts) drops it once the
-      // climber opens a climb from a different list — leftovers from an earlier
-      // list/board never survive into a new one. Deliberate adds via
-      // `addToQueue` stay unflagged and survive. `suggested` round-trips over
-      // the wire (packages/shared/queue-react/src/queue-item-input.ts) but the
-      // prune itself never reaches the server, so the queue provider runs it
-      // solo-only (`pruneSuggestedAfterCurrent`); in a party session the crew's
-      // queue stays as the room holds it and list-first swipes do the work.
-      if (!isAlreadyActive) {
-        pendingQueueItemRef.current = climbToQueueItem(schemaClimb, { suggested: true });
-      }
-      openPlayDrawer(schemaClimb, { ...openingArtOptions, committedExternally: true });
-      return activate(climb).catch((error: unknown) => {
-        console.error('Playlist climb activation failed:', error);
-        reportHandledError(error, { tags: { source: 'playlist', op: 'activate-climb' } });
-      });
+      return playFromList();
     },
     [
       activate,
@@ -1412,7 +1516,8 @@ export function usePlaylistActivation({
       getQueueSnapshot,
       openPlayDrawer,
       promptQueueFork,
-      replaceQueueOnActivate,
+      queueApi,
+      honorPlaylistLoadSetting,
       replaceQueueWithPlaylist,
       resolveTarget,
       setQueue,
