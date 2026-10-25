@@ -2,10 +2,10 @@
 // apart from the injected `appendQueueItems`, so the sheet stays thin and the
 // rules are tested without React.
 //
-// The block's climbs go to the END of the queue, the way the playlist "Add to
-// queue" row adds them: the append passes no `activateFirstWhenIdle`, so it does
+// The block's climbs go to the END of the queue, the way the playlist "Play
+// last" row adds them: the append passes no `activateFirstWhenIdle`, so it does
 // not move the wall on this phone (and with nothing current, nothing becomes
-// current). Known limit, shared with Add to queue: in a crew session with a climb
+// current). Known limit, shared with Play last: in a crew session with a climb
 // on the wall the append writes the whole queue with this phone's current climb,
 // so a crew member's wall change that has not reached this phone yet can be
 // reverted. Only the climbs that fit under the queue's size cap get a stage; a

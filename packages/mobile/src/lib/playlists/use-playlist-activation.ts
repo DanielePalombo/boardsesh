@@ -22,7 +22,8 @@
 // play from it, or back out to a preview of the tapped climb.
 //
 // The same additive landing is available on its own, without a row tap, through
-// `addToQueue.append` — the playlist-detail "Add to queue" row.
+// `addToQueue.queue` — the playlist-detail Play next / Play last rows, which put
+// the whole list at the top or the bottom of Up next (#6772).
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -48,6 +49,7 @@ import {
   clampQueueWindow,
   type Climb,
   type ClimbQueueItem,
+  type QueueAddPlacement,
 } from '@boardsesh/queue';
 import { SHARED_EVENTS } from '@boardsesh/analytics';
 import { canAddClimbToBoard } from '@boardsesh/board-config';
@@ -274,15 +276,17 @@ export type UsePlaylistActivationOptions = {
 
 export type PlaylistAddToQueueState = {
   /**
-   * Append every board-scoped climb in this playlist behind the live queue.
+   * Put every board-scoped climb in this playlist into Up next, in list order:
+   * at the top for `'next'` (Play next), at the bottom for `'end'` (Play last).
    *
    * **Undefined when there is no active board.** The board-scoped fetch is built
    * from the active board, so with none it returns an empty list and the climber
    * would be told "nothing here for your board yet" when the truth is "you
-   * haven't picked a board". Absent instead, so the row simply isn't rendered.
+   * haven't picked a board". Absent instead, so the rows simply aren't rendered.
    */
-  append?: () => void;
-  isAppending: boolean;
+  queue?: (placement: QueueAddPlacement) => void;
+  /** Which placement is in flight, or null. One list lands at a time. */
+  pendingPlacement: QueueAddPlacement | null;
 };
 
 export type PlaylistActivationOptions = {
@@ -297,7 +301,7 @@ export type PlaylistActivationOptions = {
 export type PlaylistActivationResult = {
   /** Callback to wire onto a climb row tap, or with `deliberate` the Play button. */
   activate: (climb: Climb, readyBoardArt?: ReadyBoardArtSnapshot, options?: PlaylistActivationOptions) => Promise<void>;
-  /** Bulk additive queueing for the detail screen's "Add to queue" row. */
+  /** Bulk additive queueing for the detail screen's Play next / Play last rows. */
   addToQueue: PlaylistAddToQueueState;
 };
 
@@ -401,10 +405,10 @@ export function usePlaylistActivation({
 
   const replacementAbortRef = useRef<AbortController | null>(null);
   const appendAbortRef = useRef<AbortController | null>(null);
-  const [isAppending, setIsAppending] = useState(false);
-  // Re-entrancy guard read synchronously: `isAppending` only lands after a
+  const [pendingPlacement, setPendingPlacement] = useState<QueueAddPlacement | null>(null);
+  // Re-entrancy guard read synchronously: `pendingPlacement` only lands after a
   // render, so two taps inside one frame would both pass a state check and fire
-  // two fetches (and two appends).
+  // two fetches (and two adds).
   const isAppendingRef = useRef(false);
 
   // Mirrored, not a dependency: `previewOnly` tracks whether anyone else is in
@@ -805,23 +809,29 @@ export function usePlaylistActivation({
   );
 
   /**
-   * Append every board-scoped climb in this playlist behind the live queue.
-   * Nothing is cleared and the current climb never moves, so there is no
-   * confirmation on the way in — only a count on the way out.
+   * Put every board-scoped climb in this playlist into Up next, in list order:
+   * at the bottom (`placement: 'end'`, Play last) or at the top, right behind
+   * the climb on the wall (`'next'`, Play next). Nothing is cleared and the
+   * current climb never moves, so there is no confirmation on the way in, only
+   * a count and the placement on the way out. Both placements share the cap
+   * and every outcome toast: what differs is where the batch lands.
    *
-   * `loadedClimbs` short-circuits the fetch for the replace prompt's "add
-   * instead" branch, which already has the board-scoped list in hand.
+   * `loadedClimbs` short-circuits the fetch for the replace prompt's Play last
+   * branch, which already has the board-scoped list in hand.
    */
-  const appendClimbsToQueue = useCallback(
+  const queuePlaylistClimbs = useCallback(
     async ({
       loadedClimbs,
       drainStopReason: loadedDrainStopReason,
       entryPoint,
+      placement = 'end',
       excludeClimbUuid,
     }: {
       loadedClimbs?: Climb[];
       drainStopReason?: PlaylistDrainStopReason;
       entryPoint: 'listHeader' | 'replacePrompt';
+      /** Where the list lands in Up next. The replace prompt only offers `'end'`. */
+      placement?: QueueAddPlacement;
       /**
        * A climb of this list that is going into the queue by another way (the
        * prompt plays the tapped climb after the current one). It is left out of
@@ -842,7 +852,7 @@ export function usePlaylistActivation({
       isAppendingRef.current = true;
       const abortController = new AbortController();
       appendAbortRef.current = abortController;
-      setIsAppending(true);
+      setPendingPlacement(placement);
       // Every outcome is instrumented, including the two that return before an
       // append is even attempted — otherwise `queueFull` (the branch that
       // actually fires when the queue is at the cap) and `nothingToAdd` would be
@@ -855,6 +865,7 @@ export function usePlaylistActivation({
           // instead of whatever a future id format happens to start with.
           sourceKind: sourceId.startsWith('smart:') ? 'smart' : 'playlist',
           entryPoint,
+          placement,
           outcome,
           fetchedCount,
           appendedCount,
@@ -902,6 +913,16 @@ export function usePlaylistActivation({
           return;
         }
 
+        // A whole-list Play next from the header puts the list right behind the
+        // climb on the wall. When that climb is on the list, a second copy of it
+        // would be the first thing up next, so it stays out and counts as
+        // landed, the same as the prompt's excluded climb.
+        const isHeaderPlayNext = entryPoint === 'listHeader' && placement === 'next';
+        const wallClimbUuid = isHeaderPlayNext ? getQueueSnapshot().currentClimbQueueItem?.climb?.uuid : undefined;
+        const skippedClimbUuid =
+          excludeClimbUuid ??
+          (wallClimbUuid && fetchedClimbs.some((climb) => climb.uuid === wallClimbUuid) ? wallClimbUuid : undefined);
+
         // Dedupe by uuid before building queue items: paging an ordered list that
         // is being edited underneath can hand the same climb back on two pages.
         // Same rule `buildPlaylistQueue` applies to the replace path.
@@ -910,15 +931,33 @@ export function usePlaylistActivation({
         for (const climb of fetchedClimbs) {
           if (seenClimbUuids.has(climb.uuid)) continue;
           seenClimbUuids.add(climb.uuid);
-          if (climb.uuid === excludeClimbUuid) continue;
+          if (climb.uuid === skippedClimbUuid) continue;
           queueItems.push(climbToQueueItem(toSchemaClimb(climb)));
         }
 
-        // The excluded climb is in the queue already, so it counts as landed,
+        // The skipped climb is in the queue already, so it counts as landed,
         // even when the list no longer holds it (it was removed between the tap
         // and the fetch). Otherwise a full batch would read as `queueFull`.
-        const excludedCount = excludeClimbUuid ? 1 : 0;
-        const batchAppendedCount = queueItems.length > 0 ? appendQueueItems(queueItems) : 0;
+        const excludedCount = skippedClimbUuid ? 1 : 0;
+        // The append keeps the bare call: `'end'` is the provider's default.
+        const batchAppendedCount =
+          queueItems.length === 0
+            ? 0
+            : placement === 'next'
+              ? appendQueueItems(queueItems, { placement: 'next' })
+              : appendQueueItems(queueItems);
+        // Walking this list's track, swipes would keep peeking the list from the
+        // wall climb on, and the copies just placed at the head of Up next would
+        // only play after the end card. Drop the track so swipes walk the queue,
+        // which now holds the list in order. The prompt's Play last does the
+        // same. Only this list's track: a climber on another list keeps theirs.
+        if (
+          isHeaderPlayNext &&
+          batchAppendedCount > 0 &&
+          getQueueSnapshot().playlistSuggestionSource?.playlistUuid === sourceId
+        ) {
+          setPlaylistSuggestionSource(null);
+        }
         const listCount = queueItems.length + excludedCount;
         const appendedCount = batchAppendedCount + excludedCount;
         trackQueued(
@@ -940,8 +979,9 @@ export function usePlaylistActivation({
         // `commitQueueAdd`, which is what fires it for a single add).
         //
         // The count is what actually landed, not what was fetched, so a batch
-        // clamped at the wire cap confirms the honest number.
-        showQueueAddedSnackbar({ kind: 'added', count: appendedCount });
+        // clamped at the wire cap confirms the honest number. The kind names
+        // where it landed: "Playing next" or "Playing last".
+        showQueueAddedSnackbar({ kind: placement === 'next' ? 'playNext' : 'added', count: appendedCount });
       } catch (error) {
         if (
           abortController.signal.aborted ||
@@ -958,7 +998,7 @@ export function usePlaylistActivation({
           appendAbortRef.current = null;
         }
         isAppendingRef.current = false;
-        setIsAppending(false);
+        setPendingPlacement(null);
       }
     },
     [
@@ -967,6 +1007,7 @@ export function usePlaylistActivation({
       fetchAllClimbsForBoard,
       getQueueSnapshot,
       reportEmptyBoardFetchOnce,
+      setPlaylistSuggestionSource,
       showQueueAddedSnackbar,
       showToast,
       sourceId,
@@ -1055,7 +1096,7 @@ export function usePlaylistActivation({
             // The board-scoped list is already in hand — no second round trip.
             // A seeded tap already put the tapped climb in the queue, so while
             // that item is still there the batch leaves the climb out and
-            // counts it as landed, the same as the first prompt's Add to queue.
+            // counts it as landed, the same as the first prompt's Play last.
             const seedItemUuid = options.previewQueueItem?.uuid;
             const { queue: queueAtAnswer, playlistSuggestionSource: trackAtAnswer } = getQueueSnapshot();
             const seedStillQueued =
@@ -1063,10 +1104,10 @@ export function usePlaylistActivation({
             // The seed's track walks the list, and the list now sits behind the
             // climbs that landed during the load, not beside the seed. Swipes
             // would queue a second copy of each list climb, so they walk the
-            // queue instead, as after the first prompt's Add to queue. Only this
+            // queue instead, as after the first prompt's Play last. Only this
             // list's track: a climber who moved to another list keeps theirs.
             if (trackAtAnswer?.playlistUuid === sourceId) setPlaylistSuggestionSource(null);
-            await appendClimbsToQueue({
+            await queuePlaylistClimbs({
               loadedClimbs: climbs,
               drainStopReason,
               entryPoint: 'replacePrompt',
@@ -1187,7 +1228,7 @@ export function usePlaylistActivation({
     [
       activeBoard,
       activationTarget,
-      appendClimbsToQueue,
+      queuePlaylistClimbs,
       fetchAllClimbsForBoard,
       fetchTotalSafely,
       getQueueSnapshot,
@@ -1332,7 +1373,7 @@ export function usePlaylistActivation({
         });
       };
 
-      // The prompt's Add to queue: the list goes in behind what is queued, and
+      // The prompt's Play last: the list goes in behind what is queued, and
       // the tapped climb plays after the current climb, as a queued climb (not
       // flagged `suggested`). It plays from the queue, with no track: the queue
       // is now [current, tapped, what was queued, the rest of the list], and a
@@ -1458,7 +1499,7 @@ export function usePlaylistActivation({
               if (decision === 'append') {
                 return Promise.all([
                   playFromQueue(),
-                  appendClimbsToQueue({ entryPoint: 'replacePrompt', excludeClimbUuid: climb.uuid }),
+                  queuePlaylistClimbs({ entryPoint: 'replacePrompt', excludeClimbUuid: climb.uuid }),
                 ]).then(() => undefined);
               }
               return replaceQueueWithPlaylist(climb, { allowClearingManualFuture: true });
@@ -1512,7 +1553,7 @@ export function usePlaylistActivation({
       previewContinuation,
       preparedPreviewClimbs,
       preparedCompatibleClimbs,
-      appendClimbsToQueue,
+      queuePlaylistClimbs,
       getQueueSnapshot,
       openPlayDrawer,
       promptQueueFork,
@@ -1528,18 +1569,21 @@ export function usePlaylistActivation({
     ],
   );
 
-  // `append` is withheld (undefined) without an active board so the detail view's
-  // render gate collapses "no board picked" into "no row" instead of shipping a
-  // control that can only ever answer "nothing here for your board yet".
-  const append = useCallback(() => {
-    void appendClimbsToQueue({ entryPoint: 'listHeader' });
-  }, [appendClimbsToQueue]);
+  // `queue` is withheld (undefined) without an active board so the detail view's
+  // render gate collapses "no board picked" into "no rows" instead of shipping
+  // controls that can only ever answer "nothing here for your board yet".
+  const queueFromListHeader = useCallback(
+    (placement: QueueAddPlacement) => {
+      void queuePlaylistClimbs({ entryPoint: 'listHeader', placement });
+    },
+    [queuePlaylistClimbs],
+  );
 
   return useMemo(
     () => ({
       activate: activatePlaylistClimb,
-      addToQueue: { append: activeBoard ? append : undefined, isAppending },
+      addToQueue: { queue: activeBoard ? queueFromListHeader : undefined, pendingPlacement },
     }),
-    [activatePlaylistClimb, activeBoard, append, isAppending],
+    [activatePlaylistClimb, activeBoard, queueFromListHeader, pendingPlacement],
   );
 }

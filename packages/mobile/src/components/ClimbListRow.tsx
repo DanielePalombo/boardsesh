@@ -79,12 +79,13 @@ const MORE_ACTIONS_ACTION_NAME = 'moreActions';
 // which already looks identical to the inner at translation≈0.
 
 /**
- * Drag-driven inner of the "Queue" action. The queue icon flips to a "✓" once
- * you cross the commit threshold (with a haptic detent), so you feel and see
- * that releasing will queue the climb. Only mounted while the row is being
- * dragged; the add itself still fires from the row's onSwipeableWillOpen.
+ * Drag-driven inner of the "Play next" action. The Play next icon flips to a
+ * "✓" once you cross the commit threshold (with a haptic detent), so you feel
+ * and see that releasing will put the climb at the top of Up next. Only
+ * mounted while the row is being dragged; the action itself still fires from
+ * the row's onSwipeableWillOpen.
  */
-function QueueSwipeActionInner({ translation }: { translation: SharedValue<number> }) {
+function PlayNextSwipeActionInner({ translation }: { translation: SharedValue<number> }) {
   // Haptic detent the instant the drag crosses the commit threshold.
   useAnimatedReaction(
     () => Math.abs(translation.value) >= COMMIT_THRESHOLD,
@@ -112,7 +113,7 @@ function QueueSwipeActionInner({ translation }: { translation: SharedValue<numbe
   return (
     <View style={styles.swipeIcon}>
       <Animated.View style={[styles.swipeIconLayer, plusStyle]}>
-        <Icon name="queue" size={26} color={iosSystemColors.white} />
+        <Icon name="queue.next" size={26} color={iosSystemColors.white} />
       </Animated.View>
       <Animated.View style={[styles.swipeIconLayer, checkStyle]}>
         <Icon name="tick.fill" size={26} color={iosSystemColors.white} />
@@ -122,13 +123,15 @@ function QueueSwipeActionInner({ translation }: { translation: SharedValue<numbe
 }
 
 /**
- * Leading "Queue" swipe action — Spotify-style commit-on-release (left-to-right
- * swipe). Cheap shell while resting; mounts the animated inner once a drag
- * starts (`active`). The resting shell shows the queue icon at full opacity (the
- * translation=0 state, where the "✓" is fully transparent), so the panel looks
- * right from the first frame of a drag.
+ * Leading "Play next" swipe action — Spotify-style commit-on-release
+ * (left-to-right swipe). It puts the climb at the top of Up next, not the
+ * bottom: a climber with a long queue would never reach a climb swiped onto the
+ * end of it (#6772). Cheap shell while resting; mounts the animated inner once
+ * a drag starts (`active`). The resting shell shows the icon at full opacity
+ * (the translation=0 state, where the "✓" is fully transparent), so the panel
+ * looks right from the first frame of a drag.
  */
-function QueueSwipeAction({
+function PlayNextSwipeAction({
   translation,
   active,
   onPress,
@@ -145,14 +148,14 @@ function QueueSwipeAction({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={[styles.swipeAction, styles.queueAction]}
+      style={[styles.swipeAction, styles.playNextAction]}
     >
       {active ? (
-        <QueueSwipeActionInner translation={translation} />
+        <PlayNextSwipeActionInner translation={translation} />
       ) : (
         <View style={styles.swipeIcon}>
           <View style={styles.swipeIconLayer}>
-            <Icon name="queue" size={26} color={iosSystemColors.white} />
+            <Icon name="queue.next" size={26} color={iosSystemColors.white} />
           </View>
         </View>
       )}
@@ -243,7 +246,8 @@ type ClimbListRowProps = {
   setIds: string;
   angle: number;
   onPress?: (climb: Climb, readyBoardArt?: ReadyBoardArtSnapshot) => void;
-  onAddToQueue?: (climb: Climb) => void;
+  /** Right swipe: put the climb at the top of Up next (the menu's Play next). */
+  onPlayNext?: (climb: Climb) => void;
   onOpenPlaylist?: (climb: Climb, anchor?: WindowAnchorPoint) => void;
   onOpenActions?: (climb: Climb) => void;
   selected?: boolean;
@@ -294,7 +298,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
   setIds,
   angle,
   onPress,
-  onAddToQueue,
+  onPlayNext,
   onOpenPlaylist,
   onOpenActions,
   selected,
@@ -346,8 +350,8 @@ const ClimbListRow = React.memo(function ClimbListRow({
   // Stable refs so gesture/worklet callbacks never close over stale props.
   const onPressRef = useRef(onPress);
   onPressRef.current = onPress;
-  const onAddToQueueRef = useRef(onAddToQueue);
-  onAddToQueueRef.current = onAddToQueue;
+  const onPlayNextRef = useRef(onPlayNext);
+  onPlayNextRef.current = onPlayNext;
   const onOpenPlaylistRef = useRef(onOpenPlaylist);
   onOpenPlaylistRef.current = onOpenPlaylist;
   const onOpenActionsRef = useRef(onOpenActions);
@@ -422,7 +426,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
   // `t` identity on plenty of renders, which would rebuild this array every time
   // and churn the row element's props.
   const moreActionsLabel = t('mobile.climbRow.moreActions');
-  const queueActionLabel = t('mobile.climbRow.addToQueue');
+  const playNextActionLabel = t('mobile.climbActions.playNext');
   const playlistActionLabel = t('actions.playlist.popover.title');
   const rowAccessibilityActions = useMemo(
     () =>
@@ -439,11 +443,11 @@ const ClimbListRow = React.memo(function ClimbListRow({
   // swipe fired willOpen. The row finishes opening and is snapped shut from
   // onSwipeableOpen (handleSwipeableOpened) instead — a clean closed→open→
   // closed cycle that fires on every swipe.
-  const handleAddToQueue = useCallback(() => {
-    const addToQueue = onAddToQueueRef.current;
-    if (!addToQueue) return;
+  const handlePlayNext = useCallback(() => {
+    const playNext = onPlayNextRef.current;
+    if (!playNext) return;
     hapticSuccess();
-    addToQueue(climbRef.current);
+    playNext(climbRef.current);
   }, []);
 
   const handleOpenPlaylist = useCallback(() => {
@@ -468,14 +472,14 @@ const ClimbListRow = React.memo(function ClimbListRow({
   const closeSwipe = useCallback(() => swipeableRef.current?.close(), []);
   const commitSwipe = useCallback(
     (direction: 'left' | 'right') => {
-      if (direction === 'right') handleAddToQueue();
+      if (direction === 'right') handlePlayNext();
       else handleOpenPlaylist();
     },
-    [handleAddToQueue, handleOpenPlaylist],
+    [handlePlayNext, handleOpenPlaylist],
   );
   const fullSwipe = useFullSwipe({
     scope: climb.uuid,
-    enabled: !!onAddToQueue || !!onOpenPlaylist,
+    enabled: !!onPlayNext || !!onOpenPlaylist,
     onCommit: commitSwipe,
     close: closeSwipe,
   });
@@ -487,9 +491,9 @@ const ClimbListRow = React.memo(function ClimbListRow({
     arm();
   }, [arm]);
   const pressLeadingAction = useCallback(() => {
-    handleAddToQueue();
+    handlePlayNext();
     closeSwipe();
-  }, [handleAddToQueue, closeSwipe]);
+  }, [handlePlayNext, closeSwipe]);
   const pressTrailingAction = useCallback(() => {
     handleOpenPlaylist();
     closeSwipe();
@@ -524,7 +528,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
     },
   });
 
-  // Left actions (revealed by a left-to-right swipe) = Queue; right actions
+  // Left actions (revealed by a left-to-right swipe) = Play next; right actions
   // (right-to-left swipe) = Playlist. These read dragArmedRef.current rather
   // than the armed state directly so they stay dep-free: a changed render-
   // callback reference makes ReanimatedSwipeable re-create the action-panel
@@ -533,14 +537,14 @@ const ClimbListRow = React.memo(function ClimbListRow({
   // while the stable identity keeps the shell→inner swap in place.
   const renderLeftActions = useCallback(
     (_progress: SharedValue<number>, translation: SharedValue<number>) => (
-      <QueueSwipeAction
+      <PlayNextSwipeAction
         translation={translation}
         active={dragArmedRef.current}
         onPress={pressLeadingAction}
-        label={queueActionLabel}
+        label={playNextActionLabel}
       />
     ),
-    [dragArmedRef, pressLeadingAction, queueActionLabel],
+    [dragArmedRef, pressLeadingAction, playNextActionLabel],
   );
   const renderRightActions = useCallback(
     (_progress: SharedValue<number>, translation: SharedValue<number>) => (
@@ -581,7 +585,7 @@ const ClimbListRow = React.memo(function ClimbListRow({
         rightThreshold={SWIPE_REVEAL_THRESHOLD}
         overshootLeft
         overshootRight
-        renderLeftActions={onAddToQueue ? renderLeftActions : undefined}
+        renderLeftActions={onPlayNext ? renderLeftActions : undefined}
         renderRightActions={onOpenPlaylist ? renderRightActions : undefined}
         onSwipeableOpenStartDrag={handleSwipeStartDrag}
         onSwipeableOpen={fullSwipe.onOpened}
@@ -696,13 +700,13 @@ const styles = StyleSheet.create({
     width: ACTION_REVEAL,
     justifyContent: 'center',
   },
-  // Pin each icon to the OUTER edge of its panel (queue = right/screen edge,
+  // Pin each icon to the OUTER edge of its panel (Play next = right/screen edge,
   // playlist = left/screen edge) so it appears as soon as the panel starts
   // revealing, instead of needing half the panel out to see a centred icon.
   // These are full-bleed panels with WHITE icons, so they use the static brand
   // FILL (white-legible in both schemes); the lifted dark-mode tints would fail
   // white-on-fill contrast, so they intentionally don't vary by colour scheme.
-  queueAction: {
+  playNextAction: {
     backgroundColor: brandColors.success,
     alignItems: 'center',
     paddingHorizontal: 4,

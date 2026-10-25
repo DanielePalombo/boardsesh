@@ -70,9 +70,11 @@ type QueueContextValue = {
    * `queueItemUuid` when the action came from a queue row — it names the exact
    * slot, which matters when the same climb is queued twice.
    *
-   * - `'added'` — it wasn't queued, so it was inserted
+   * - `'added'` — it wasn't queued, so it was inserted; a climb on the wall
+   *   named without its `queueItemUuid` gets a repeat copy right behind it
    * - `'moved'` — it was queued elsewhere and jumped the line
-   * - `'unchanged'` — it was already up next (or is the climb on the wall)
+   * - `'unchanged'` — it was already up next, or `queueItemUuid` named the slot
+   *   on the wall
    * - `'cancelled'` — the climber backed out of the cross-board prompt
    */
   playNext: (target: {
@@ -106,18 +108,26 @@ type QueueContextValue = {
     playlistSuggestionSource: PlaylistSuggestionSource | null;
   };
   /**
-   * Append a batch behind the live queue, leaving the current climb where it is.
+   * Add a batch to Up next, in batch order, leaving the current climb where it is.
+   *
+   * `placement` (default `'end'`) is where the batch lands: `'end'` at the bottom
+   * of Up next (a list's Play last), `'next'` at the top of it, right behind the
+   * climb on the wall (a list's Play next). Climbs already queued are not moved:
+   * the batch goes in as new queue items either way.
    *
    * Returns how many items actually landed: the batch is clamped to
    * `MAX_SYNCED_QUEUE_ITEMS` so a bulk add can't grow the queue past the size the
    * party backend's `setQueue` accepts (it throws rather than truncating).
    *
    * `activateFirstWhenIdle` (default **false**) lets the caller open on the first
-   * appended climb when nothing is current — the workout generator's contract.
-   * The playlist "Add to queue" row leaves it off: an add must never take the
-   * crew's wall. It can only fill an empty pointer, never move one that is set.
+   * added climb when nothing is current — the workout generator's contract.
+   * The playlist Play next / Play last rows leave it off: an add must never take
+   * the crew's wall. It can only fill an empty pointer, never move one that is set.
    */
-  appendQueueItems: (items: ClimbQueueItem[], options?: { activateFirstWhenIdle?: boolean }) => number;
+  appendQueueItems: (
+    items: ClimbQueueItem[],
+    options?: { activateFirstWhenIdle?: boolean; placement?: QueueAddPlacement },
+  ) => number;
   setCurrentClimb: (item: ClimbQueueItem, options?: SetCurrentClimbOptions) => void;
   /**
    * Correct every queued copy of a climb its setter just saved again (name,
