@@ -4,7 +4,207 @@ User-facing changes to Boardsesh, newest first. Auto-generated from the "Release
 Notes" section of merged pull requests — do not edit by hand (a CI check rejects
 manual changes). See docs/mobile-ota-updates.md.
 
+## 2026-10-25
+
+### App update
+
+A new version shipped to the App Store and Play Store.
+
+### New
+
+- Your queue plays first. Add a climb to Up next and it comes before the list picks back up. ([#6798](https://github.com/boardsesh/boardsesh/pull/6798))
+  After your queued climbs, the list continues from where you left it.
+- Print a poster for your Spraywall or board from Share link. Climbers scan it and land straight on your wall. ([#6805](https://github.com/boardsesh/boardsesh/pull/6805))
+- Share Boardsesh with your crew: About now has a QR code they can scan to grab the app ([#6823](https://github.com/boardsesh/boardsesh/pull/6823))
+- 4x4 workouts now stay on one climb for every rep in a set, then rest, then move on. Set the reps, sets and both rests when you build it. ([#6783](https://github.com/boardsesh/boardsesh/pull/6783))
+- Scanned a Spraywall's code without the app? You now get a straight link to the App Store or Google Play, and an Open button if you have it. ([#6784](https://github.com/boardsesh/boardsesh/pull/6784))
+- Swipe a climb in any list to play it next. ([#6776](https://github.com/boardsesh/boardsesh/pull/6776))
+  Queue menus now say Play next and Play last, so you know where a climb lands.
+- Print a poster for your Spraywall: a QR code climbers scan to open the wall in Boardsesh. Pick a photo poster, a plain one, or a sheet of four cards. ([#6795](https://github.com/boardsesh/boardsesh/pull/6795))
+- Tapping a climb in a playlist now plays from that playlist and keeps your queue as it is. ([#6702](https://github.com/boardsesh/boardsesh/pull/6702))
+  A Play button on the playlist header starts the whole list.
+  New setting to load a tapped playlist into your queue instead.
+  The lighting switches now say what they do: light on tap, light on swipe.
+  A preview says "Preview, not lit" so you know it isn't on the wall, and in a crew, "Only you see this".
+- See what's Up next without leaving the list you're walking. ([#6716](https://github.com/boardsesh/boardsesh/pull/6716))
+  The queue button shows how many climbs are lined up.
+- Workouts fill a short grade from the nearest grade, and say which rows came from a nearby grade. ([#6759](https://github.com/boardsesh/boardsesh/pull/6759))
+- The rest timer follows whoever holds the board in a crew, so everyone sees the same clock and the wall moves once per beat. ([#6757](https://github.com/boardsesh/boardsesh/pull/6757))
+  A line under the timer says who is pacing the wall.
+  Change the rest length or cadence from any phone in the crew, and everyone's timer follows.
+- Your paired Rogue gym timer now restarts when the queue moves you on, and on every beat of a fixed window. ([#6761](https://github.com/boardsesh/boardsesh/pull/6761))
+  In a fixed window, logging a climb leaves the gym timer running, so the window holds.
+  A climb restarts it only when you just logged it on this phone. One dated more than a minute back, or picked back up from your session when you reopen the app or switch the rest timer on, leaves it running.
+  Pair a gym timer to any of your boards from Settings › Timers.
+- Tap a climb in your logbook, sessions, profile, similar climbs or board history, and swipes stay on that list. ([#6700](https://github.com/boardsesh/boardsesh/pull/6700))
+  Light problems when tapping the list now applies to every list.
+- Log a fall or a send in one tap during limit, 4x4 and on-the-minute workout blocks. Fell and Sent sit where the small buttons were and start your rest straight away. ([#6758](https://github.com/boardsesh/boardsesh/pull/6758))
+- Your workout now shows which round you're in, how long your rest has left and what's up next. Finish a workout and see how many you sent, tried and skipped. ([#6756](https://github.com/boardsesh/boardsesh/pull/6756))
+- Add a warm-up after your last block and it eases you off, stepping down from where the block ended. ([#6750](https://github.com/boardsesh/boardsesh/pull/6750))
+- Your rest timer now follows the workout you're running. 4x4 rests 0:10 between climbs and 0:30 between rounds, Limit Bouldering rests 3:00 after each send, and On the Minute starts a new climb every beat. ([#6729](https://github.com/boardsesh/boardsesh/pull/6729))
+- Fill a workout block from climbs you've sent or liked. Pick Sent or Liked under Climb bias and the block draws only from your own logbook and hearts, whatever their ascents or rating. ([#6755](https://github.com/boardsesh/boardsesh/pull/6755))
+  Attempted works as before and keeps your Min ascents and Min rating.
+- Workouts now pick climbs you haven't sent first, and only fall back to ones you have when a grade runs short, marked as sent. New "Skip what I've sent", "Skip what I've tried" and "Benchmarks only" switches in a block's Climb filters, and Benchmarks only now finds the real benchmarks on Kilter. ([#6749](https://github.com/boardsesh/boardsesh/pull/6749))
+
+### Fixed
+
+- Previous goes back to the queued climb you just played, even after you swiped up and down the list. ([#6834](https://github.com/boardsesh/boardsesh/pull/6834))
+- A send you logged offline can no longer end up on someone else's account when they sign in on your phone. ([#6825](https://github.com/boardsesh/boardsesh/pull/6825))
+  Climbs from setters you follow show under Following right after you sign in, no restart needed.
+- Production runs the notification worker, which already makes this check; only a backend started without Redis took the inline path, so climbers see no change. ([#6819](https://github.com/boardsesh/boardsesh/pull/6819))
+- Signing in on a shared phone no longer shows the last climber's offline boards. ([#6821](https://github.com/boardsesh/boardsesh/pull/6821))
+- Joining a gym's always-on session no longer says everyone there sees your name and sends ([#6822](https://github.com/boardsesh/boardsesh/pull/6822))
+- The wall no longer jumps back to the last climb when the app reconnects mid-session. ([#6814](https://github.com/boardsesh/boardsesh/pull/6814))
+- Opening a day's group of sends no longer shows an edit pencil or like and comment buttons that fail. Like and comment from the feed card instead. ([#6782](https://github.com/boardsesh/boardsesh/pull/6782))
+- Opening a Woods climb link with the wrong board size now takes you to the size the climb fits, and a broken board link shows a not-found page instead of an error. ([#6789](https://github.com/boardsesh/boardsesh/pull/6789))
+- On Android, the Custom look preview, Climb list preview and presets, and Garmin pairing code now show up. ([#6781](https://github.com/boardsesh/boardsesh/pull/6781))
+- Woods climbs in your session feed now show the holds for the board size they were set on. ([#6785](https://github.com/boardsesh/boardsesh/pull/6785))
+- Woods climb lists on boardsesh.com pick up new grades and new climbs faster. ([#6786](https://github.com/boardsesh/boardsesh/pull/6786))
+- Smart list counts match the climbs you can scroll to, and long lists no longer repeat or skip a climb. ([#6787](https://github.com/boardsesh/boardsesh/pull/6787))
+- Climbs in an older saved queue now show their Boardsesh grade and crowd stats in the player, including the header numbers. ([#6796](https://github.com/boardsesh/boardsesh/pull/6796))
+- Climbs you queue from your logbook or a session now keep their no-match symbol on your crew's phones. ([#6802](https://github.com/boardsesh/boardsesh/pull/6802))
+- Friends who open your unlisted Spraywall's link in a browser now see the wall photo. ([#6804](https://github.com/boardsesh/boardsesh/pull/6804))
+  A wall's flattened or hold-only look now shows on its web pages too.
+- Undo and "Light this" put a climb back on the wall the way it was lit, mirrored or not ([#6810](https://github.com/boardsesh/boardsesh/pull/6810))
+  Flipping a lit climb now shows up in the board's history
+- Spray wall photo alerts and live send counts come back after you turn Offline mode off. ([#6788](https://github.com/boardsesh/boardsesh/pull/6788))
+- Every board a gym lists now shows when you open that gym in Find a gym, even boards without their own map pin. ([#6791](https://github.com/boardsesh/boardsesh/pull/6791))
+- Attempt and Flash now match in height when you log a tick. ([#6793](https://github.com/boardsesh/boardsesh/pull/6793))
+- Get out of an empty climb search by removing one filter while keeping your board and angle. ([#6743](https://github.com/boardsesh/boardsesh/pull/6743))
+- On Android with the largest text size, the list name and "Preview, not lit" at the top of the player no longer run into the drag handle ([#6775](https://github.com/boardsesh/boardsesh/pull/6775))
+- Swiping through a long logbook stays quick, and a mirrored send opens mirrored ([#6768](https://github.com/boardsesh/boardsesh/pull/6768))
+- Workouts keep the sends and stars under the climb name; your stage and round sit at the top of the player ([#6763](https://github.com/boardsesh/boardsesh/pull/6763))
+- After turning Offline mode off, your crew session reconnects properly, so confirming a climb on the wall works again. ([#6765](https://github.com/boardsesh/boardsesh/pull/6765))
+- The rest timer sheet names your cool-down correctly. ([#6762](https://github.com/boardsesh/boardsesh/pull/6762))
+- Pausing an "Every N" rest timer shows the time left in the current window instead of a negative number. ([#6760](https://github.com/boardsesh/boardsesh/pull/6760))
+
+## 2026-10-24
+
+### New
+
+- Set your rest length, rest cadence and auto-advance in Settings › Timers, without opening a session first. ([#6733](https://github.com/boardsesh/boardsesh/pull/6733))
+  Choose whether the last seconds of a rest count down.
+- Ladders can start at your top grade and step down. ([#6744](https://github.com/boardsesh/boardsesh/pull/6744))
+- The rest timer turns violet for the last three seconds, so you can see the rest ending from across the room ([#6730](https://github.com/boardsesh/boardsesh/pull/6730))
+- The player now shows which list you're climbing from, and swipes stay on that list. ([#6671](https://github.com/boardsesh/boardsesh/pull/6671))
+  At the end of a list, you choose: stop there or keep going with your queue.
+  Long playlists and searches keep going past 250 climbs.
+  Closing a climb takes you back to the list you came from.
+  The queue sheet now labels History, Up next and Suggestions.
+  Playlists highlight the climb you're on, like search results do.
+
+### Improved
+
+- In a crew, only the climber connected to the wall can switch on "Move to the next climb" in the rest timer. Everyone else sees why it's off. ([#6723](https://github.com/boardsesh/boardsesh/pull/6723))
+
+### Fixed
+
+- Sends and stars are back under the climb name in the player ([#6746](https://github.com/boardsesh/boardsesh/pull/6746))
+  The list you're playing from now sits at the top of the player, and long list names no longer hide your place in it
+- Climbs without a real benchmark grade no longer show the benchmark mark in your logbook, and the Benchmarks filter skips them. ([#6751](https://github.com/boardsesh/boardsesh/pull/6751))
+- Logging a send and offline sync keep working on Android right after the app installs an update. ([#6710](https://github.com/boardsesh/boardsesh/pull/6710))
+- Workout previews now pick climbs by the grade you see. With Boardsesh grades on, a V5 block shows V5 climbs, not a mix of V4+ and V5. ([#6720](https://github.com/boardsesh/boardsesh/pull/6720))
+- Flick quickly between climbs in either direction while keeping the holds visible. ([#6526](https://github.com/boardsesh/boardsesh/pull/6526))
+- Start playlist on a very long playlist now starts cleanly from the climb you tapped, with a note when the queue is trimmed to 500. ([#6695](https://github.com/boardsesh/boardsesh/pull/6695))
+- Keep your chosen profile photo ready to retry when an upload fails. ([#6714](https://github.com/boardsesh/boardsesh/pull/6714))
+- See your sends and flashes in playlists before opening each climb. ([#6715](https://github.com/boardsesh/boardsesh/pull/6715))
+- Keep tick notes and action buttons above the iOS keyboard, including on iPad. ([#6696](https://github.com/boardsesh/boardsesh/pull/6696))
+- Disabled buttons now look disabled in iOS View options. ([#6712](https://github.com/boardsesh/boardsesh/pull/6712))
+- Reach every climb-view section switch when using larger text. ([#6713](https://github.com/boardsesh/boardsesh/pull/6713))
+- Downloaded boards and your logbook keep syncing while you scroll climbs, instead of stalling until the next try. ([#6698](https://github.com/boardsesh/boardsesh/pull/6698))
+- A failed Bluetooth connection no longer leaves your board hidden from scans. ([#6608](https://github.com/boardsesh/boardsesh/pull/6608))
+- Your saved sends, hearts and owned playlists stay with you offline. Keep browsing downloaded playlist climbs, then reconnect to refresh your history and counts. ([#6682](https://github.com/boardsesh/boardsesh/pull/6682))
+- Your imported sends show up on the You page as soon as a board's first sync finishes. ([#6688](https://github.com/boardsesh/boardsesh/pull/6688))
+- On Android, pick your Kilter or Tension JSON export straight from Google Drive ([#6685](https://github.com/boardsesh/boardsesh/pull/6685))
+  Pick the wrong file for an import and the app tells you which file it needs
+- Reporting a climb as junk now says it is a vote to hide it, and that it disappears for everyone once enough climbers agree. ([#6678](https://github.com/boardsesh/boardsesh/pull/6678))
+
+## 2026-10-23
+
+### New
+
+- Sort and filter your Liked Climbs, Five Stars and Projects lists ([#6662](https://github.com/boardsesh/boardsesh/pull/6662))
+  Sort a setter's climbs by difficulty, rating or shuffle them
+  Filter a playlist by setter, hold type or board region
+- Give each block its own climb filters: a hard project block, then an easy volume block on anything ([#6650](https://github.com/boardsesh/boardsesh/pull/6650))
+  Blocks you don't touch keep their climbs while you edit another
+- Sort any playlist by difficulty, newest added, rating or shuffle it ([#6655](https://github.com/boardsesh/boardsesh/pull/6655))
+  Filter a playlist by grade, progress and more, just like the climb list
+- Add another block mid-session: pick a type and grade, and it joins the end of your queue ([#6649](https://github.com/boardsesh/boardsesh/pull/6649))
+  Turn any session into a workout from the session tab, no restart needed
+- Build a session out of blocks: warm up, then a pyramid, then volume ([#6648](https://github.com/boardsesh/boardsesh/pull/6648))
+  Every block works the same way, and a warm-up can go anywhere in the session
+
+### Fixed
+
+- Choose community leaders for MoonBoard, Decoy, Touchstone, Grasshopper, So iLL, and Woods. ([#6672](https://github.com/boardsesh/boardsesh/pull/6672))
+- Board downloads finish without downloading the same catalogue twice. ([#6663](https://github.com/boardsesh/boardsesh/pull/6663))
+  Hide download progress and keep climbing; another download brings it back.
+  Retry an unfinished download from My Boards.
+
+## 2026-10-22
+
+### App update
+
+A new version shipped to the App Store and Play Store.
+
+### New
+
+- Generated workouts now show which part you're on, like "Warm-up · 2 of 5" ([#6647](https://github.com/boardsesh/boardsesh/pull/6647))
+  A workout card on the session tab tracks how many climbs are left in each block
+
+### Fixed
+
+- Closing a climb no longer freezes the app when someone else takes over the board ([#6629](https://github.com/boardsesh/boardsesh/pull/6629))
+
+## 2026-10-21
+
+### New
+
+- Make Home yours: show your board, your session, your playlists and fresh beta, in the order you like ([#6546](https://github.com/boardsesh/boardsesh/pull/6546))
+  Settings has a Home page, and Focused shows just your board, session and playlists
+- See a MoonBoard climb's holds by coordinate below the board. Turn on Active holds in View options. ([#6544](https://github.com/boardsesh/boardsesh/pull/6544))
+
+### Fixed
+
+- Log a send at a different angle: expand the log sheet and slide to the angle you climbed it at ([#6628](https://github.com/boardsesh/boardsesh/pull/6628))
+- The app opens faster: it waits at most 5 seconds for a new version instead of 10 ([#6627](https://github.com/boardsesh/boardsesh/pull/6627))
+  A fresh install now tells you it's installing the latest update
+- Your board angle is back in the Climbs toolbar, one tap to change. ([#6624](https://github.com/boardsesh/boardsesh/pull/6624))
+  Android: the Angle chip is back at the start of the filter row.
+- Android Board look presets and Climb view previews stay visible. ([#6605](https://github.com/boardsesh/boardsesh/pull/6605))
+
+## 2026-10-20
+
+### Fixed
+
+- Settings on Android groups its options into clearly separate cards ([#6618](https://github.com/boardsesh/boardsesh/pull/6618))
+- Session notifications can recover after a failed climb update. ([#6601](https://github.com/boardsesh/boardsesh/pull/6601))
+- See a clear error when a preview cannot return to production. ([#6606](https://github.com/boardsesh/boardsesh/pull/6606))
+- Your analytics choice now syncs when you sign in on the browser. ([#6607](https://github.com/boardsesh/boardsesh/pull/6607))
+
+## 2026-10-19
+
+### App update
+
+A new version shipped to the Play Store.
+
+### New
+
+- Previewing a climb is calmer: tap the face up top to go back to what's on the wall ([#6583](https://github.com/boardsesh/boardsesh/pull/6583))
+  Put on the wall now sits right in your action row, and no longer hides under the buttons
+  When a crewmate lights the wall while you're looking around, the app tells you who
+
+### Fixed
+
+- Climbing with friends? Everyone in your session now sees each other's names and sends, even private accounts. ([#6589](https://github.com/boardsesh/boardsesh/pull/6589))
+  Climbing now and nearby sessions still keep you anonymous if you chose that.
+
 ## 2026-10-18
+
+### App update
+
+A new version shipped to the App Store.
 
 ### New
 

@@ -1,6 +1,649 @@
 {
-  "generatedAt": "2026-10-18T22:01:05.620Z",
+  "generatedAt": "2026-10-25T20:25:08.296Z",
   "entries": [
+    {
+      "prNumber": 6834,
+      "category": "fixed",
+      "title": "Previous goes back to the queued climb you just played, even after you swiped up and down the list.",
+      "mergedAt": "2026-10-25T20:00:30Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6834"
+    },
+    {
+      "prNumber": 6798,
+      "category": "new",
+      "title": "Your queue plays first. Add a climb to Up next and it comes before the list picks back up.",
+      "mergedAt": "2026-10-25T19:18:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6798",
+      "body": "After your queued climbs, the list continues from where you left it."
+    },
+    {
+      "prNumber": 6825,
+      "category": "fixed",
+      "title": "A send you logged offline can no longer end up on someone else's account when they sign in on your phone.",
+      "mergedAt": "2026-10-25T18:39:32Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6825",
+      "body": "Climbs from setters you follow show under Following right after you sign in, no restart needed."
+    },
+    {
+      "prNumber": 6805,
+      "category": "new",
+      "title": "Print a poster for your Spraywall or board from Share link. Climbers scan it and land straight on your wall.",
+      "mergedAt": "2026-10-25T18:03:12Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6805"
+    },
+    {
+      "prNumber": 6819,
+      "category": "fixed",
+      "title": "Production runs the notification worker, which already makes this check; only a backend started without Redis took the inline path, so climbers see no change.",
+      "mergedAt": "2026-10-25T18:02:51Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6819"
+    },
+    {
+      "prNumber": 6821,
+      "category": "fixed",
+      "title": "Signing in on a shared phone no longer shows the last climber's offline boards.",
+      "mergedAt": "2026-10-25T18:02:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6821"
+    },
+    {
+      "prNumber": 6822,
+      "category": "fixed",
+      "title": "Joining a gym's always-on session no longer says everyone there sees your name and sends",
+      "mergedAt": "2026-10-25T17:51:57Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6822"
+    },
+    {
+      "prNumber": 6823,
+      "category": "new",
+      "title": "Share Boardsesh with your crew: About now has a QR code they can scan to grab the app",
+      "mergedAt": "2026-10-25T17:51:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6823"
+    },
+    {
+      "prNumber": 6814,
+      "category": "fixed",
+      "title": "The wall no longer jumps back to the last climb when the app reconnects mid-session.",
+      "mergedAt": "2026-10-25T17:45:31Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6814"
+    },
+    {
+      "prNumber": 6783,
+      "category": "new",
+      "title": "4x4 workouts now stay on one climb for every rep in a set, then rest, then move on. Set the reps, sets and both rests when you build it.",
+      "mergedAt": "2026-10-25T17:45:14Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6783"
+    },
+    {
+      "prNumber": 6784,
+      "category": "new",
+      "title": "Scanned a Spraywall's code without the app? You now get a straight link to the App Store or Google Play, and an Open button if you have it.",
+      "mergedAt": "2026-10-25T17:44:54Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6784"
+    },
+    {
+      "prNumber": 6776,
+      "category": "new",
+      "title": "Swipe a climb in any list to play it next.",
+      "mergedAt": "2026-10-25T15:40:06Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6776",
+      "body": "Queue menus now say Play next and Play last, so you know where a climb lands."
+    },
+    {
+      "prNumber": 6782,
+      "category": "fixed",
+      "title": "Opening a day's group of sends no longer shows an edit pencil or like and comment buttons that fail. Like and comment from the feed card instead.",
+      "mergedAt": "2026-10-25T14:07:56Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6782"
+    },
+    {
+      "prNumber": 6789,
+      "category": "fixed",
+      "title": "Opening a Woods climb link with the wrong board size now takes you to the size the climb fits, and a broken board link shows a not-found page instead of an error.",
+      "mergedAt": "2026-10-25T14:07:20Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6789"
+    },
+    {
+      "prNumber": 6781,
+      "category": "fixed",
+      "title": "On Android, the Custom look preview, Climb list preview and presets, and Garmin pairing code now show up.",
+      "mergedAt": "2026-10-25T14:04:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6781"
+    },
+    {
+      "prNumber": 6785,
+      "category": "fixed",
+      "title": "Woods climbs in your session feed now show the holds for the board size they were set on.",
+      "mergedAt": "2026-10-25T14:04:23Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6785"
+    },
+    {
+      "prNumber": 6786,
+      "category": "fixed",
+      "title": "Woods climb lists on boardsesh.com pick up new grades and new climbs faster.",
+      "mergedAt": "2026-10-25T14:03:37Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6786"
+    },
+    {
+      "prNumber": 6787,
+      "category": "fixed",
+      "title": "Smart list counts match the climbs you can scroll to, and long lists no longer repeat or skip a climb.",
+      "mergedAt": "2026-10-25T14:03:11Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6787"
+    },
+    {
+      "prNumber": 6796,
+      "category": "fixed",
+      "title": "Climbs in an older saved queue now show their Boardsesh grade and crowd stats in the player, including the header numbers.",
+      "mergedAt": "2026-10-25T14:02:16Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6796"
+    },
+    {
+      "prNumber": 6802,
+      "category": "fixed",
+      "title": "Climbs you queue from your logbook or a session now keep their no-match symbol on your crew's phones.",
+      "mergedAt": "2026-10-25T13:59:55Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6802"
+    },
+    {
+      "prNumber": 6804,
+      "category": "fixed",
+      "title": "Friends who open your unlisted Spraywall's link in a browser now see the wall photo.",
+      "mergedAt": "2026-10-25T13:59:44Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6804",
+      "body": "A wall's flattened or hold-only look now shows on its web pages too."
+    },
+    {
+      "prNumber": 6810,
+      "category": "fixed",
+      "title": "Undo and \"Light this\" put a climb back on the wall the way it was lit, mirrored or not",
+      "mergedAt": "2026-10-25T13:52:46Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6810",
+      "body": "Flipping a lit climb now shows up in the board's history"
+    },
+    {
+      "prNumber": 6788,
+      "category": "fixed",
+      "title": "Spray wall photo alerts and live send counts come back after you turn Offline mode off.",
+      "mergedAt": "2026-10-25T13:48:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6788"
+    },
+    {
+      "prNumber": 6791,
+      "category": "fixed",
+      "title": "Every board a gym lists now shows when you open that gym in Find a gym, even boards without their own map pin.",
+      "mergedAt": "2026-10-25T13:48:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6791"
+    },
+    {
+      "prNumber": 6793,
+      "category": "fixed",
+      "title": "Attempt and Flash now match in height when you log a tick.",
+      "mergedAt": "2026-10-25T13:48:17Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6793"
+    },
+    {
+      "prNumber": 6795,
+      "category": "new",
+      "title": "Print a poster for your Spraywall: a QR code climbers scan to open the wall in Boardsesh. Pick a photo poster, a plain one, or a sheet of four cards.",
+      "mergedAt": "2026-10-25T13:48:07Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6795"
+    },
+    {
+      "prNumber": 6743,
+      "category": "fixed",
+      "title": "Get out of an empty climb search by removing one filter while keeping your board and angle.",
+      "mergedAt": "2026-10-25T08:56:05Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6743"
+    },
+    {
+      "prNumber": 6775,
+      "category": "fixed",
+      "title": "On Android with the largest text size, the list name and \"Preview, not lit\" at the top of the player no longer run into the drag handle",
+      "mergedAt": "2026-10-25T08:37:59Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6775"
+    },
+    {
+      "prNumber": 6702,
+      "category": "new",
+      "title": "Tapping a climb in a playlist now plays from that playlist and keeps your queue as it is.",
+      "mergedAt": "2026-10-25T07:43:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6702",
+      "body": "A Play button on the playlist header starts the whole list.\nNew setting to load a tapped playlist into your queue instead.\nThe lighting switches now say what they do: light on tap, light on swipe.\nA preview says \"Preview, not lit\" so you know it isn't on the wall, and in a crew, \"Only you see this\"."
+    },
+    {
+      "prNumber": 6716,
+      "category": "new",
+      "title": "See what's Up next without leaving the list you're walking.",
+      "mergedAt": "2026-10-25T07:30:53Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6716",
+      "body": "The queue button shows how many climbs are lined up."
+    },
+    {
+      "prNumber": 6768,
+      "category": "fixed",
+      "title": "Swiping through a long logbook stays quick, and a mirrored send opens mirrored",
+      "mergedAt": "2026-10-25T07:28:19Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6768"
+    },
+    {
+      "prNumber": 6759,
+      "category": "new",
+      "title": "Workouts fill a short grade from the nearest grade, and say which rows came from a nearby grade.",
+      "mergedAt": "2026-10-25T06:47:54Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6759"
+    },
+    {
+      "prNumber": 6763,
+      "category": "fixed",
+      "title": "Workouts keep the sends and stars under the climb name; your stage and round sit at the top of the player",
+      "mergedAt": "2026-10-25T06:10:59Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6763"
+    },
+    {
+      "prNumber": 6757,
+      "category": "new",
+      "title": "The rest timer follows whoever holds the board in a crew, so everyone sees the same clock and the wall moves once per beat.",
+      "mergedAt": "2026-10-25T06:09:37Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6757",
+      "body": "A line under the timer says who is pacing the wall.\nChange the rest length or cadence from any phone in the crew, and everyone's timer follows."
+    },
+    {
+      "prNumber": 6761,
+      "category": "new",
+      "title": "Your paired Rogue gym timer now restarts when the queue moves you on, and on every beat of a fixed window.",
+      "mergedAt": "2026-10-25T06:08:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6761",
+      "body": "In a fixed window, logging a climb leaves the gym timer running, so the window holds.\nA climb restarts it only when you just logged it on this phone. One dated more than a minute back, or picked back up from your session when you reopen the app or switch the rest timer on, leaves it running.\nPair a gym timer to any of your boards from Settings › Timers."
+    },
+    {
+      "prNumber": 6700,
+      "category": "new",
+      "title": "Tap a climb in your logbook, sessions, profile, similar climbs or board history, and swipes stay on that list.",
+      "mergedAt": "2026-10-25T05:59:53Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6700",
+      "body": "Light problems when tapping the list now applies to every list."
+    },
+    {
+      "prNumber": 6765,
+      "category": "fixed",
+      "title": "After turning Offline mode off, your crew session reconnects properly, so confirming a climb on the wall works again.",
+      "mergedAt": "2026-10-25T05:57:02Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6765"
+    },
+    {
+      "prNumber": 6758,
+      "category": "new",
+      "title": "Log a fall or a send in one tap during limit, 4x4 and on-the-minute workout blocks. Fell and Sent sit where the small buttons were and start your rest straight away.",
+      "mergedAt": "2026-10-25T05:47:22Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6758"
+    },
+    {
+      "prNumber": 6762,
+      "category": "fixed",
+      "title": "The rest timer sheet names your cool-down correctly.",
+      "mergedAt": "2026-10-25T05:47:01Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6762"
+    },
+    {
+      "prNumber": 6756,
+      "category": "new",
+      "title": "Your workout now shows which round you're in, how long your rest has left and what's up next. Finish a workout and see how many you sent, tried and skipped.",
+      "mergedAt": "2026-10-25T05:43:01Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6756"
+    },
+    {
+      "prNumber": 6760,
+      "category": "fixed",
+      "title": "Pausing an \"Every N\" rest timer shows the time left in the current window instead of a negative number.",
+      "mergedAt": "2026-10-25T05:42:06Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6760"
+    },
+    {
+      "prNumber": 6750,
+      "category": "new",
+      "title": "Add a warm-up after your last block and it eases you off, stepping down from where the block ended.",
+      "mergedAt": "2026-10-25T05:12:12Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6750"
+    },
+    {
+      "prNumber": 6729,
+      "category": "new",
+      "title": "Your rest timer now follows the workout you're running. 4x4 rests 0:10 between climbs and 0:30 between rounds, Limit Bouldering rests 3:00 after each send, and On the Minute starts a new climb every beat.",
+      "mergedAt": "2026-10-25T04:57:15Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6729"
+    },
+    {
+      "prNumber": 6755,
+      "category": "new",
+      "title": "Fill a workout block from climbs you've sent or liked. Pick Sent or Liked under Climb bias and the block draws only from your own logbook and hearts, whatever their ascents or rating.",
+      "mergedAt": "2026-10-25T04:55:23Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6755",
+      "body": "Attempted works as before and keeps your Min ascents and Min rating."
+    },
+    {
+      "prNumber": 6749,
+      "category": "new",
+      "title": "Workouts now pick climbs you haven't sent first, and only fall back to ones you have when a grade runs short, marked as sent. New \"Skip what I've sent\", \"Skip what I've tried\" and \"Benchmarks only\" switches in a block's Climb filters, and Benchmarks only now finds the real benchmarks on Kilter.",
+      "mergedAt": "2026-10-25T04:39:18Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6749"
+    },
+    {
+      "prNumber": 6746,
+      "category": "fixed",
+      "title": "Sends and stars are back under the climb name in the player",
+      "mergedAt": "2026-10-24T19:19:19Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6746",
+      "body": "The list you're playing from now sits at the top of the player, and long list names no longer hide your place in it"
+    },
+    {
+      "prNumber": 6751,
+      "category": "fixed",
+      "title": "Climbs without a real benchmark grade no longer show the benchmark mark in your logbook, and the Benchmarks filter skips them.",
+      "mergedAt": "2026-10-24T19:18:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6751"
+    },
+    {
+      "prNumber": 6733,
+      "category": "new",
+      "title": "Set your rest length, rest cadence and auto-advance in Settings › Timers, without opening a session first.",
+      "mergedAt": "2026-10-24T18:47:45Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6733",
+      "body": "Choose whether the last seconds of a rest count down."
+    },
+    {
+      "prNumber": 6744,
+      "category": "new",
+      "title": "Ladders can start at your top grade and step down.",
+      "mergedAt": "2026-10-24T18:46:27Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6744"
+    },
+    {
+      "prNumber": 6730,
+      "category": "new",
+      "title": "The rest timer turns violet for the last three seconds, so you can see the rest ending from across the room",
+      "mergedAt": "2026-10-24T18:30:14Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6730"
+    },
+    {
+      "prNumber": 6723,
+      "category": "improved",
+      "title": "In a crew, only the climber connected to the wall can switch on \"Move to the next climb\" in the rest timer. Everyone else sees why it's off.",
+      "mergedAt": "2026-10-24T15:26:56Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6723"
+    },
+    {
+      "prNumber": 6710,
+      "category": "fixed",
+      "title": "Logging a send and offline sync keep working on Android right after the app installs an update.",
+      "mergedAt": "2026-10-24T12:29:27Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6710"
+    },
+    {
+      "prNumber": 6720,
+      "category": "fixed",
+      "title": "Workout previews now pick climbs by the grade you see. With Boardsesh grades on, a V5 block shows V5 climbs, not a mix of V4+ and V5.",
+      "mergedAt": "2026-10-24T12:28:44Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6720"
+    },
+    {
+      "prNumber": 6526,
+      "category": "fixed",
+      "title": "Flick quickly between climbs in either direction while keeping the holds visible.",
+      "mergedAt": "2026-10-24T12:23:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6526"
+    },
+    {
+      "prNumber": 6695,
+      "category": "fixed",
+      "title": "Start playlist on a very long playlist now starts cleanly from the climb you tapped, with a note when the queue is trimmed to 500.",
+      "mergedAt": "2026-10-24T11:53:37Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6695"
+    },
+    {
+      "prNumber": 6714,
+      "category": "fixed",
+      "title": "Keep your chosen profile photo ready to retry when an upload fails.",
+      "mergedAt": "2026-10-24T09:08:21Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6714"
+    },
+    {
+      "prNumber": 6715,
+      "category": "fixed",
+      "title": "See your sends and flashes in playlists before opening each climb.",
+      "mergedAt": "2026-10-24T09:08:19Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6715"
+    },
+    {
+      "prNumber": 6696,
+      "category": "fixed",
+      "title": "Keep tick notes and action buttons above the iOS keyboard, including on iPad.",
+      "mergedAt": "2026-10-24T09:04:34Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6696"
+    },
+    {
+      "prNumber": 6712,
+      "category": "fixed",
+      "title": "Disabled buttons now look disabled in iOS View options.",
+      "mergedAt": "2026-10-24T09:01:10Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6712"
+    },
+    {
+      "prNumber": 6713,
+      "category": "fixed",
+      "title": "Reach every climb-view section switch when using larger text.",
+      "mergedAt": "2026-10-24T09:00:38Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6713"
+    },
+    {
+      "prNumber": 6698,
+      "category": "fixed",
+      "title": "Downloaded boards and your logbook keep syncing while you scroll climbs, instead of stalling until the next try.",
+      "mergedAt": "2026-10-24T07:46:57Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6698"
+    },
+    {
+      "prNumber": 6608,
+      "category": "fixed",
+      "title": "A failed Bluetooth connection no longer leaves your board hidden from scans.",
+      "mergedAt": "2026-10-24T07:21:11Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6608"
+    },
+    {
+      "prNumber": 6682,
+      "category": "fixed",
+      "title": "Your saved sends, hearts and owned playlists stay with you offline. Keep browsing downloaded playlist climbs, then reconnect to refresh your history and counts.",
+      "mergedAt": "2026-10-24T06:39:31Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6682"
+    },
+    {
+      "prNumber": 6688,
+      "category": "fixed",
+      "title": "Your imported sends show up on the You page as soon as a board's first sync finishes.",
+      "mergedAt": "2026-10-24T06:38:48Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6688"
+    },
+    {
+      "prNumber": 6685,
+      "category": "fixed",
+      "title": "On Android, pick your Kilter or Tension JSON export straight from Google Drive",
+      "mergedAt": "2026-10-24T06:21:09Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6685",
+      "body": "Pick the wrong file for an import and the app tells you which file it needs"
+    },
+    {
+      "prNumber": 6678,
+      "category": "fixed",
+      "title": "Reporting a climb as junk now says it is a vote to hide it, and that it disappears for everyone once enough climbers agree.",
+      "mergedAt": "2026-10-24T05:55:16Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6678"
+    },
+    {
+      "prNumber": 6671,
+      "category": "new",
+      "title": "The player now shows which list you're climbing from, and swipes stay on that list.",
+      "mergedAt": "2026-10-24T04:31:05Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6671",
+      "body": "At the end of a list, you choose: stop there or keep going with your queue.\nLong playlists and searches keep going past 250 climbs.\nClosing a climb takes you back to the list you came from.\nThe queue sheet now labels History, Up next and Suggestions.\nPlaylists highlight the climb you're on, like search results do."
+    },
+    {
+      "prNumber": 6662,
+      "category": "new",
+      "title": "Sort and filter your Liked Climbs, Five Stars and Projects lists",
+      "mergedAt": "2026-10-23T18:42:21Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6662",
+      "body": "Sort a setter's climbs by difficulty, rating or shuffle them\nFilter a playlist by setter, hold type or board region"
+    },
+    {
+      "prNumber": 6672,
+      "category": "fixed",
+      "title": "Choose community leaders for MoonBoard, Decoy, Touchstone, Grasshopper, So iLL, and Woods.",
+      "mergedAt": "2026-10-23T18:18:45Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6672"
+    },
+    {
+      "prNumber": 6650,
+      "category": "new",
+      "title": "Give each block its own climb filters: a hard project block, then an easy volume block on anything",
+      "mergedAt": "2026-10-23T17:29:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6650",
+      "body": "Blocks you don't touch keep their climbs while you edit another"
+    },
+    {
+      "prNumber": 6663,
+      "category": "fixed",
+      "title": "Board downloads finish without downloading the same catalogue twice.",
+      "mergedAt": "2026-10-23T17:29:16Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6663",
+      "body": "Hide download progress and keep climbing; another download brings it back.\nRetry an unfinished download from My Boards."
+    },
+    {
+      "prNumber": 6655,
+      "category": "new",
+      "title": "Sort any playlist by difficulty, newest added, rating or shuffle it",
+      "mergedAt": "2026-10-23T14:49:06Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6655",
+      "body": "Filter a playlist by grade, progress and more, just like the climb list"
+    },
+    {
+      "prNumber": 6649,
+      "category": "new",
+      "title": "Add another block mid-session: pick a type and grade, and it joins the end of your queue",
+      "mergedAt": "2026-10-23T14:43:41Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6649",
+      "body": "Turn any session into a workout from the session tab, no restart needed"
+    },
+    {
+      "prNumber": 6648,
+      "category": "new",
+      "title": "Build a session out of blocks: warm up, then a pyramid, then volume",
+      "mergedAt": "2026-10-23T05:10:45Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6648",
+      "body": "Every block works the same way, and a warm-up can go anywhere in the session"
+    },
+    {
+      "prNumber": 6647,
+      "category": "new",
+      "title": "Generated workouts now show which part you're on, like \"Warm-up · 2 of 5\"",
+      "mergedAt": "2026-10-22T10:47:24Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6647",
+      "body": "A workout card on the session tab tracks how many climbs are left in each block"
+    },
+    {
+      "prNumber": 6629,
+      "category": "fixed",
+      "title": "Closing a climb no longer freezes the app when someone else takes over the board",
+      "mergedAt": "2026-10-22T01:58:18Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6629"
+    },
+    {
+      "prNumber": 6628,
+      "category": "fixed",
+      "title": "Log a send at a different angle: expand the log sheet and slide to the angle you climbed it at",
+      "mergedAt": "2026-10-21T16:47:22Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6628"
+    },
+    {
+      "prNumber": 6627,
+      "category": "fixed",
+      "title": "The app opens faster: it waits at most 5 seconds for a new version instead of 10",
+      "mergedAt": "2026-10-21T12:51:12Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6627",
+      "body": "A fresh install now tells you it's installing the latest update"
+    },
+    {
+      "prNumber": 6624,
+      "category": "fixed",
+      "title": "Your board angle is back in the Climbs toolbar, one tap to change.",
+      "mergedAt": "2026-10-21T08:42:27Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6624",
+      "body": "Android: the Angle chip is back at the start of the filter row."
+    },
+    {
+      "prNumber": 6546,
+      "category": "new",
+      "title": "Make Home yours: show your board, your session, your playlists and fresh beta, in the order you like",
+      "mergedAt": "2026-10-21T08:32:51Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6546",
+      "body": "Settings has a Home page, and Focused shows just your board, session and playlists"
+    },
+    {
+      "prNumber": 6544,
+      "category": "new",
+      "title": "See a MoonBoard climb's holds by coordinate below the board. Turn on Active holds in View options.",
+      "mergedAt": "2026-10-21T08:32:17Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6544"
+    },
+    {
+      "prNumber": 6605,
+      "category": "fixed",
+      "title": "Android Board look presets and Climb view previews stay visible.",
+      "mergedAt": "2026-10-21T05:56:37Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6605"
+    },
+    {
+      "prNumber": 6618,
+      "category": "fixed",
+      "title": "Settings on Android groups its options into clearly separate cards",
+      "mergedAt": "2026-10-20T19:37:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6618"
+    },
+    {
+      "prNumber": 6601,
+      "category": "fixed",
+      "title": "Session notifications can recover after a failed climb update.",
+      "mergedAt": "2026-10-20T12:46:44Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6601"
+    },
+    {
+      "prNumber": 6606,
+      "category": "fixed",
+      "title": "See a clear error when a preview cannot return to production.",
+      "mergedAt": "2026-10-20T12:46:00Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6606"
+    },
+    {
+      "prNumber": 6607,
+      "category": "fixed",
+      "title": "Your analytics choice now syncs when you sign in on the browser.",
+      "mergedAt": "2026-10-20T12:45:38Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6607"
+    },
+    {
+      "prNumber": 6589,
+      "category": "fixed",
+      "title": "Climbing with friends? Everyone in your session now sees each other's names and sends, even private accounts.",
+      "mergedAt": "2026-10-19T04:46:56Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6589",
+      "body": "Climbing now and nearby sessions still keep you anonymous if you chose that."
+    },
+    {
+      "prNumber": 6583,
+      "category": "new",
+      "title": "Previewing a climb is calmer: tap the face up top to go back to what's on the wall",
+      "mergedAt": "2026-10-19T03:06:30Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6583",
+      "body": "Put on the wall now sits right in your action row, and no longer hides under the buttons\nWhen a crewmate lights the wall while you're looking around, the app tells you who"
+    },
     {
       "prNumber": 6574,
       "category": "new",
@@ -7755,6 +8398,65 @@
     }
   ],
   "nativeReleases": [
+    {
+      "kind": "native-release",
+      "date": "2026-10-25T14:05:55Z",
+      "sha": "bb907a53cf2df5d4bd0be4734f8c02360d419ac4",
+      "platforms": [
+        "ios"
+      ],
+      "fingerprints": {
+        "ios": "db6e30d4e61ba5afd72bbc0b4c9f8b38da9d0570"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-25T04:39:31Z",
+      "sha": "1270d026ad6fbe8a231b5a13a312689f12d1846a",
+      "platforms": [
+        "android",
+        "ios"
+      ],
+      "fingerprints": {
+        "android": "6cef23ecfb432c12616b1f8b30541be339d45728",
+        "ios": "a1edbb4b9ac7c92dd9b537b28a9d91e537da3cbc"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-22T01:58:52Z",
+      "sha": "af441bb2406299f3f7d42eebef59ccfd94f4e707",
+      "platforms": [
+        "android",
+        "ios"
+      ],
+      "fingerprints": {
+        "android": "2562b12f4b5bc595d8833b7b9e4bf11d4cffc32f",
+        "ios": "7aebfe3a4c4b6ac5d6451d41ead44a5b6c48c06e"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-19T08:34:05+11:00",
+      "sha": "1e4e03a3ad2fe130945137f8b76de4d256a4f6ad",
+      "platforms": [
+        "android"
+      ],
+      "fingerprints": {
+        "android": "6fde57b050d53b2e12df01ce0210ebf87ac187d3"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-18T22:32:05Z",
+      "sha": "805fe99dfd3764a853a9953ec2abee75b1b36893",
+      "platforms": [
+        "ios"
+      ],
+      "fingerprints": {
+        "ios": "0725582a16be052bf6ef7cb00987775e1f162b5d"
+      }
+    },
     {
       "kind": "native-release",
       "date": "2026-10-14T11:50:09+11:00",
