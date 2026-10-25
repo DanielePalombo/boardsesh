@@ -170,19 +170,13 @@ describe('useBoardListActivation', () => {
     );
     expect(options().hasMoreRows).toBe(true);
 
-    const fetchPage = options().snapshotFetchPage?.() ?? options().fetchPage;
-    const page = await fetchPage({
-      page: 0,
-      pageSize: 100,
-      board: { boardName: 'kilter', layoutId: 1, sizeId: 10, setIds: '1,2', angle: 40 },
-      signal: new AbortController().signal,
-    });
+    // A track walks the list by position, from the first climb past the rows.
+    const trackLoader = options().snapshotListLoader?.();
+    if (!trackLoader) throw new Error('expected a track loader');
+    const load = await trackLoader({ offset: 1, count: 100, signal: new AbortController().signal });
 
     expect(loadMore).toHaveBeenCalledTimes(1);
-    expect(page).toEqual({
-      climbs: [expect.objectContaining({ uuid: 'climb-a' }), expect.objectContaining({ uuid: 'climb-b' })],
-      hasMore: false,
-    });
+    expect(load).toEqual({ climbs: [expect.objectContaining({ uuid: 'climb-b' })], nextOffset: null });
   });
 
   it('stops a track paging once the screen shows another list', async () => {
@@ -199,19 +193,14 @@ describe('useBoardListActivation', () => {
         listKey,
       }),
     );
-    const trackFetchPage = options().snapshotFetchPage?.();
-    if (!trackFetchPage) throw new Error('expected a snapshot fetcher');
+    const trackLoader = options().snapshotListLoader?.();
+    if (!trackLoader) throw new Error('expected a track loader');
 
     listKey = 'filters-b';
     rerender();
-    const page = await trackFetchPage({
-      page: 0,
-      pageSize: 100,
-      board: { boardName: 'kilter', layoutId: 1, sizeId: 10, setIds: '1,2', angle: 40 },
-      signal: new AbortController().signal,
-    });
+    const load = await trackLoader({ offset: 1, count: 100, signal: new AbortController().signal });
 
-    expect(page).toEqual({ climbs: [], hasMore: false });
+    expect(load).toEqual({ climbs: [], nextOffset: null });
     expect(loadMore).not.toHaveBeenCalled();
   });
 });

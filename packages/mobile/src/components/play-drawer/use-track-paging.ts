@@ -67,8 +67,17 @@ export function useTrackPaging({
     const index = findPlaylistClimbIndex(source, displayedClimbUuid);
     if (index < 0 || source.climbs.length - 1 - index > TRACK_PAGE_LOOKAHEAD) return;
     if (!canLoadMoreOfTrack(source)) return;
+    const atLastClimb = index === source.climbs.length - 1;
     const land = (page: PlaylistTrackPage | null) => {
       if (!page) return;
+      // A page that added nothing and starts the next one where this one did
+      // (a logbook's run of repeat-only pages) changes nothing on the track.
+      // Landing it anyway would hand the track a new identity, rerun this
+      // effect and ask again straight away, page after page with no swipe. So
+      // it lands only when the climber is on the last climb and Next waits on
+      // it; otherwise the next swipe asks again.
+      const stalled = page.climbs.length === 0 && page.nextPage === source.continuation?.nextPage;
+      if (stalled && !atLastClimb) return;
       if (previewTrack) {
         setPreviewSource((current) =>
           current && continuesFrom(current, source) ? appendPlaylistTrackPage(current, page) : current,

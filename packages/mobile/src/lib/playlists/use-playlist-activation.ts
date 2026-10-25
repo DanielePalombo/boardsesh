@@ -58,6 +58,7 @@ import { reportHandledError } from '../error-reporting';
 import { track } from '../analytics';
 import { toSchemaClimb } from '../climb-types';
 import { getPrivacyRevocationGeneration, subscribeToPrivacyRevocations } from '../privacy/privacy-cache';
+import type { LoadedListTrackLoader } from './loaded-list-pages';
 import { getSetting } from '../../settings/hooks';
 import { getPlaylistRenderBoardTarget } from './playlist-climb-render-board';
 import { registerPendingTrackLoader, registerTrackPageLoader, type TrackPageLoader } from './track-pager';
@@ -230,12 +231,22 @@ export type UsePlaylistActivationOptions = {
    * The loaded rows are the list itself, from its first row (a logbook, a
    * session's ticks, a profile's climbs), and `fetchPage` pages that same list.
    * A tap then plays from the rows on screen without asking the server for the
-   * list again, and the track carries on through `fetchPage` from the page the
-   * rows end in while `hasMoreRows` says there is more.
+   * list again, and the track carries on past them while `hasMoreRows` says
+   * there is more: through `snapshotListLoader` from the first climb past the
+   * rows when it is set, otherwise through `fetchPage` from the page the rows
+   * end in.
    */
   loadedRowsAreTheList?: boolean;
   /** With `loadedRowsAreTheList`: the list has rows past the ones loaded. */
   hasMoreRows?: boolean;
+  /**
+   * With `loadedRowsAreTheList`: a loader bound to the list on screen now. A
+   * track then walks the list by position instead of by `fetchPage`'s pages:
+   * each request starts at the first climb not yet served and loads only a few
+   * of the screen's pages, so a list whose pages add few climbs (a logbook of
+   * projects) is never loaded in one go, and a short request skips nothing.
+   */
+  snapshotListLoader?: () => LoadedListTrackLoader;
   /**
    * The loaded rows are this list's own pages, from the top, for the board a
    * preview carries on with (search: the same frozen search on the active
@@ -329,6 +340,7 @@ export function usePlaylistActivation({
   drawerBoardFor,
   loadedRowsAreTheList = false,
   hasMoreRows = false,
+  snapshotListLoader,
   loadedRowsArePages = false,
   refreshErrorMessage,
   replaceQueueOnActivate = false,
@@ -525,6 +537,22 @@ export function usePlaylistActivation({
   const registerPageLoader = useCallback(
     (board: ActivationFetchBoard, isClimbable: (climb: Climb) => boolean): string => {
       // Bound now, at the tap that built the track, not when a page is asked for.
+      const listLoader = snapshotListLoader?.();
+      if (listLoader) {
+        // By position: the continuation's `nextPage` is the list position to
+        // start at, so each "page" is one climb wide.
+        return registerTrackPageLoader(async (offset, signal) => {
+          const load = await listLoader({ offset, count: PLAYLIST_SUGGESTION_REFRESH_PAGE_SIZE, signal });
+          const climbs = load.climbs.filter(isClimbable);
+          return {
+            page: offset,
+            pageSize: 1,
+            climbs,
+            filteredOut: climbs.length !== load.climbs.length,
+            nextPage: load.nextOffset,
+          };
+        });
+      }
       const trackFetchPage = snapshotFetchPage?.() ?? fetchPage;
       const loadPage: TrackPageLoader = async (page, signal) => {
         const load = await fetchPlaylistTrackPage({
@@ -547,7 +575,14 @@ export function usePlaylistActivation({
       };
       return registerTrackPageLoader(loadPage);
     },
-    [fetchPage, snapshotFetchPage],
+    [fetchPage, snapshotFetchPage, snapshotListLoader],
+  );
+
+  /** Where a track over the loaded rows carries on: past the last loaded climb. */
+  const continuationAfterLoadedRows = useCallback(
+    (loadedClimbCount: number) =>
+      snapshotListLoader ? loadedClimbCount : Math.floor(loadedClimbCount / PLAYLIST_SUGGESTION_REFRESH_PAGE_SIZE),
+    [snapshotListLoader],
   );
 
   const fetchClimbsForBoard = useCallback(
@@ -578,7 +613,7 @@ export function usePlaylistActivation({
             ? {
                 continuation: {
                   loaderId: registerPageLoader(board, target.isClimbable),
-                  nextPage: Math.floor(loadedClimbs.length / PLAYLIST_SUGGESTION_REFRESH_PAGE_SIZE),
+                  nextPage: continuationAfterLoadedRows(loadedClimbs.length),
                 },
               }
             : {}),
@@ -608,7 +643,7 @@ export function usePlaylistActivation({
             }),
       };
     },
-    [activeBoard, fetchPage, fetchTotalSafely, loadedRowsAreTheList, registerPageLoader],
+    [activeBoard, continuationAfterLoadedRows, fetchPage, fetchTotalSafely, loadedRowsAreTheList, registerPageLoader],
   );
 
   const fetchAllClimbsForBoard = useCallback(
@@ -1136,12 +1171,10 @@ export function usePlaylistActivation({
       return {
         loaderId: registerPageLoader(board, acceptEveryClimb),
         nextPage:
-          loadedRowsArePages || loadedRowsAreTheList
-            ? Math.floor(loadedClimbsRef.current.length / PLAYLIST_SUGGESTION_REFRESH_PAGE_SIZE)
-            : 0,
+          loadedRowsArePages || loadedRowsAreTheList ? continuationAfterLoadedRows(loadedClimbsRef.current.length) : 0,
       };
     },
-    [registerPageLoader, loadedRowsArePages, loadedRowsAreTheList],
+    [continuationAfterLoadedRows, registerPageLoader, loadedRowsArePages, loadedRowsAreTheList],
   );
 
   // Open the drawer immediately, then let the shared hook commit the climb. The
@@ -1155,11 +1188,17 @@ export function usePlaylistActivation({
       if (privacyGeneration !== getPrivacyRevocationGeneration()) return Promise.resolve();
       // Row adapters may clone a climb. Prefer the loaded projection over
       // details retained by a menu or native gesture callback. Not when it is
-      // the same climb at another angle: a logbook holds a climb once per angle
-      // it was sent at, the track keeps the first, and the row the climber
-      // tapped is the one they mean.
+      // the same climb at another angle or the other way round (mirrored): a
+      // logbook holds a climb once per angle and orientation it was sent in,
+      // the track keeps the first, and the row the climber tapped is the one
+      // they mean.
       const loadedClimb = loadedClimbsByUuid.get(requestedClimb.uuid);
-      const climb = loadedClimb && loadedClimb.angle === requestedClimb.angle ? loadedClimb : requestedClimb;
+      const climb =
+        loadedClimb &&
+        loadedClimb.angle === requestedClimb.angle &&
+        Boolean(loadedClimb.mirrored) === Boolean(requestedClimb.mirrored)
+          ? loadedClimb
+          : requestedClimb;
       const schemaClimb = toSchemaClimb(climb);
       const readyBoardArt =
         tappedBoardArt?.climbUuid === climb.uuid && tappedBoardArt.frames === climb.frames ? tappedBoardArt : undefined;
