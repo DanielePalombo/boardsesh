@@ -1,18 +1,26 @@
 // Protocol limits the client and the party backend have to agree on.
 
 /**
- * Hard cap on the number of items a wholesale `Mutation.setQueue` payload may
- * carry. The backend enforces it in
- * `packages/backend/src/graphql/resolvers/queue/mutations.ts` —
- * `parseArrayTolerant(ClimbQueueItemSchema, rawQueue, 'queue', 500)` THROWS on a
- * longer array rather than truncating, so a client that lets the queue grow past
- * this wedges every later full-queue sync for that session.
+ * Hard cap on History + Up next in the synced queue. The climb on the wall is
+ * extra (docs/current-climb-outside-queue.md, section 5), so the stored array
+ * holds at most this + 1 entries with a climb current and this many with
+ * nothing current. The backend reads it through `maxPayloadItems` in
+ * `packages/backend/src/graphql/resolvers/queue/now-slot-payload.ts` (the
+ * `setQueue` and `joinSession` raw guard) and through `isUpNextFull`
+ * (`addQueueItem`, and the payload's Up next check).
  *
- * A replace can only trip it with a >500-climb payload; an append can trip it by
- * addition, which is why the bulk append clamps against it before broadcasting.
+ * F3: outside `QUEUE_NOW_SLOT_PERCENT`, a placement-less `setQueue` or seed
+ * longer than this + 1 (current climb in the payload) or this (otherwise)
+ * still THROWS (`parseArrayTolerant`). Inside it, or when the payload carries
+ * `historyCount`, the server accepts up to 1,000 raw items and trims the
+ * oldest History entries to fit; it throws only when Up next alone exceeds
+ * the cap. `addQueueItem` refuses with `QUEUE_FULL` when Up next already
+ * fills it.
  *
- * The resolver still has the literal `500` inline — swapping it for this import
- * is tracked separately so a mobile change doesn't drag the backend suite along.
+ * An append can still trip the throw by addition, which is why the bulk append
+ * clamps against it before broadcasting. `clampQueueAroundCurrent` below keeps
+ * this many entries in all, the current climb included: stricter than the
+ * server, so its payloads are never refused.
  */
 export const MAX_SYNCED_QUEUE_ITEMS = 500;
 
