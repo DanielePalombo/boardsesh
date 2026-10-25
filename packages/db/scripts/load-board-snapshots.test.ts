@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { catalogSnapshotBoardTypeFilter } from '../src/catalog-snapshot.js';
 import {
   artifactSelectSql,
   booleanToPg,
@@ -300,6 +301,22 @@ describe('artifactSelectSql', () => {
       artifactSelectSql('snapshot_meta', ['table_name', 'row_count']),
       'SELECT table_name, row_count FROM snapshot_meta',
     );
+  });
+});
+
+describe('catalogSnapshotBoardTypeFilter', () => {
+  it('builds the spray filter for a bare or table-qualified column', () => {
+    assert.equal(catalogSnapshotBoardTypeFilter('board_type'), "board_type NOT IN ('spray')");
+    assert.equal(
+      catalogSnapshotBoardTypeFilter('board_layouts.board_type'),
+      "board_layouts.board_type NOT IN ('spray')",
+    );
+  });
+
+  it('refuses a column reference that is not a plain identifier', () => {
+    for (const unsafe of ['', 'board_type; DROP TABLE board_layouts', "board_type OR '1'='1'", 'a.b.c', 'Board_Type']) {
+      assert.throws(() => catalogSnapshotBoardTypeFilter(unsafe), /unsafe column reference/);
+    }
   });
 });
 

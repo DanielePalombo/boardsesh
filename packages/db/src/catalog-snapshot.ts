@@ -84,12 +84,18 @@ export const CATALOG_SNAPSHOT_REDACTED_VALUE = 'redacted';
  */
 export const CATALOG_SNAPSHOT_EXCLUDED_BOARD_TYPES = ['spray'] as const;
 
+/** A bare or table-qualified lowercase SQL identifier, e.g. `board_type` or `board_layouts.board_type`. */
+const SAFE_COLUMN_REFERENCE = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?$/;
+
 /**
  * `<column> NOT IN ('spray')` for a SQL WHERE clause. The values are the
- * literals above, never input, so splicing them is safe; `column` must be a
- * vetted identifier.
+ * literals above, never input, so splicing them is safe. `column` is spliced
+ * too, so anything but a plain (optionally table-qualified) identifier throws.
  */
 export function catalogSnapshotBoardTypeFilter(column: string): string {
+  if (!SAFE_COLUMN_REFERENCE.test(column)) {
+    throw new Error(`catalogSnapshotBoardTypeFilter: unsafe column reference ${JSON.stringify(column)}`);
+  }
   const excluded = CATALOG_SNAPSHOT_EXCLUDED_BOARD_TYPES.map((boardType) => `'${boardType}'`).join(', ');
   return `${column} NOT IN (${excluded})`;
 }
