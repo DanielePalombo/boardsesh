@@ -640,7 +640,9 @@ every pending run. A cancelled run's unfinished jobs are not retried, so the
 Discord report says for each stopped run whether `publish` had already succeeded.
 If it had not, dispatch the workflow again for that branch unless a later run
 there publishes the same platforms (`gh workflow run mobile-ota-production.yml
---ref <branch>`, adding `-f platform=…` for a per-platform republish). The full rules, and the
+--ref <branch>`, adding `-f platform=…` for a per-platform republish). If it
+cannot read a held run's job list it goes red and names the run rather than
+reporting all clear: open that run and check it by hand. The full rules, and the
 lane-sharing workflows it does not watch, are in
 [docs/production-deploy.md](production-deploy.md#the-ota-lane).
 

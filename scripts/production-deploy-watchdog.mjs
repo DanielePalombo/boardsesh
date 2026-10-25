@@ -60,6 +60,9 @@ const DEFAULT_STALL_MINUTES = 45;
 const DEFAULT_RUNNING_ALERT_MINUTES = 150;
 const DEFAULT_MAX_RUN_MINUTES = 360;
 const CANCEL_GRACE_MS = 5 * 60_000;
+// How long every job must have been finished before a run that our cancel left
+// short of `completed` counts as settled (see MOBILE_OTA_LANE).
+const SETTLED_QUIET_MS = 2 * 60_000;
 const FORCE_CONFIRM_MS = 60_000;
 const POLL_INTERVAL_MS = 15_000;
 const WATCHDOG_BUDGET_MS = 8 * 60_000;
@@ -113,6 +116,13 @@ const PRODUCTION_DEPLOY_LANE = Object.freeze({
   stallMinutes: DEFAULT_STALL_MINUTES,
   runningAlertMinutes: DEFAULT_RUNNING_ALERT_MINUTES,
   maxRunMinutes: DEFAULT_MAX_RUN_MINUTES,
+  // Never force-cancel just because every listed job has finished.
+  // sync-static-assets, build-web, migrate and deploy-production-backend run
+  // under `always()` without `!cancelled()`, so they keep going after an
+  // ordinary cancel; a snapshot between build-web finishing and migrate being
+  // created reads "all finished", and force-cancelling then can kill migrate.
+  // The six-hour ceiling is this lane's backstop for a cancel that never lands.
+  forceSettledRunAfterCancel: false,
   redispatch: true,
   deliveryJobName: null,
   copy: {
@@ -153,6 +163,13 @@ const MOBILE_OTA_LANE = Object.freeze({
   // run can wait hours in the queue before it starts.
   runningAlertMinutes: null,
   maxRunMinutes: null,
+  // With no ceiling, a run our cancel left short of `completed` — every job
+  // finished, nothing executing — would hold the lane forever, so force it.
+  // Safe here because every job after the gate uses `always() && !cancelled()`,
+  // so nothing new starts once the cancel lands; the newest job must also have
+  // finished SETTLED_QUIET_MS ago, so a future `always()` job cannot reopen the
+  // race production-deploy has.
+  forceSettledRunAfterCancel: true,
   // `queue: max` keeps every pending run, so nothing needs re-dispatching.
   redispatch: false,
   // Jobs are created only once their `needs` finish, so a run parked at
@@ -178,8 +195,9 @@ const LANES = Object.freeze({
   [MOBILE_OTA_LANE.name]: MOBILE_OTA_LANE,
 });
 
-// The classifyRun options a lane implies. cancelAndConfirm re-checks with the
-// same rules, so a lane without an age ceiling never gains one mid-cancel.
+// The decision rules a lane implies: classifyRun's options, plus the cancel
+// ladder's force rule. cancelAndConfirm re-checks with the same rules, so a
+// lane without an age ceiling never gains one mid-cancel.
 function laneRules(lane) {
   return {
     stallMinutes: lane.stallMinutes,
@@ -187,6 +205,7 @@ function laneRules(lane) {
     maxRunMinutes: lane.maxRunMinutes,
     parkedJobStatuses: lane.parkedJobStatuses,
     parkedWithoutJobs: lane.parkedWithoutJobs,
+    forceSettledRunAfterCancel: lane.forceSettledRunAfterCancel,
   };
 }
 
@@ -211,19 +230,14 @@ function isLatestRunCancelled(runs) {
 // old a minute into its publish. GitHub creates a run's jobs only once it
 // leaves the queue, so the earliest job's created_at is the real start.
 // Cancellation can add later jobs but never an earlier one, so it cannot move
-// this forward. Only the current attempt's jobs count: a partial re-run lists
-// the jobs it carried over from attempt 1 with their old created_at, and the
-// max() keeps the re-run's own start if nothing else is readable.
-function isCurrentAttemptJob(run, job) {
-  return (
-    !Number.isInteger(run?.run_attempt) || !Number.isInteger(job?.run_attempt) || job.run_attempt === run.run_attempt
-  );
-}
-
+// this forward. A re-run attempt lists every job, including the ones it carried
+// over, with the new attempt number and a fresh created_at (carried-over jobs
+// keep their old started_at/completed_at — run 39713346612, attempt 2), so the
+// earliest created_at dates the attempt. The max() never lets the hold start
+// before run_started_at.
 function holdStartMs(run, jobs) {
   const runStartMs = Date.parse(run?.run_started_at ?? run?.created_at ?? '');
   const jobCreatedTimes = (Array.isArray(jobs) ? jobs : [])
-    .filter((job) => isCurrentAttemptJob(run, job))
     .map((job) => Date.parse(job?.created_at ?? ''))
     .filter(Number.isFinite);
   const firstJobCreatedMs = jobCreatedTimes.length > 0 ? Math.min(...jobCreatedTimes) : Number.NaN;
@@ -475,10 +489,21 @@ function describeRun(entry, lane = PRODUCTION_DEPLOY_LANE) {
 
 function formatSummary(
   plan,
-  { dryRun = false, failedCancelIds = new Set(), dispatched = plan.redispatch, lane = PRODUCTION_DEPLOY_LANE } = {},
+  {
+    dryRun = false,
+    failedCancelIds = new Set(),
+    dispatched = plan.redispatch,
+    lane = PRODUCTION_DEPLOY_LANE,
+    unreadableRuns = [],
+  } = {},
 ) {
   const verb = dryRun ? 'would cancel' : 'stopped';
   const lines = [];
+  for (const run of unreadableRuns) {
+    lines.push(
+      `could NOT read the job list of ${describeRun({ run, reason: 'it holds the lane, and this lane has no age ceiling to fall back on. Not cancelled; check the run by hand' }, lane)}`,
+    );
+  }
   for (const entry of plan.cancel) {
     const failed = failedCancelIds.has(String(entry.run.id));
     lines.push(`${failed ? 'could NOT cancel' : verb} ${describeRun(entry, lane)}`);
@@ -716,6 +741,17 @@ function createCliGitHub({ repository, workflowFile, branch = 'main', api, now =
   };
 }
 
+// Every listed job has finished, and the newest finished SETTLED_QUIET_MS ago.
+// An empty or unreadable list is never settled: it proves nothing about what
+// is running.
+function isSettled(jobs, nowMs) {
+  if (!Array.isArray(jobs) || jobs.length === 0) return false;
+  if (!jobs.every((job) => job?.status === 'completed')) return false;
+  const completedTimes = jobs.map((job) => Date.parse(job?.completed_at ?? ''));
+  if (!completedTimes.every(Number.isFinite)) return false;
+  return nowMs - Math.max(...completedTimes) >= SETTLED_QUIET_MS;
+}
+
 // Both stages require observed completion: a 202 response only acknowledges
 // the request. Recheck eligibility before force-cancelling an idle intervention,
 // under the SAME lane rules that picked the target: re-checking an OTA run
@@ -768,13 +804,12 @@ async function cancelAndConfirm({
   run = github.getRun(runId);
   if (run.status === 'completed') return 'stopped';
   const freshJobs = github.listJobs(runId);
-  // Our cancel took the parked job down but the run never reached `completed`:
-  // every job has finished, nothing executes, and the run still holds the
-  // group. classifyRun reads that as "not parked", and on a lane with no age
-  // ceiling nothing would ever end it. Force-cancelling it can stop nothing.
-  const stuckAfterCancel =
-    Array.isArray(freshJobs) && freshJobs.length > 0 && freshJobs.every((job) => job?.status === 'completed');
-  if (!stuckAfterCancel && classifyRun({ run, jobs: freshJobs, nowMs: now(), ...rules }).action !== 'cancel') {
+  // Our cancel took the parked job down but the run never reached `completed`.
+  // classifyRun reads that as "not parked", and on a lane with no age ceiling
+  // nothing would ever end it. Only lanes that opt in (see
+  // forceSettledRunAfterCancel) force it.
+  const settledAfterCancel = rules.forceSettledRunAfterCancel === true && isSettled(freshJobs, now());
+  if (!settledAfterCancel && classifyRun({ run, jobs: freshJobs, nowMs: now(), ...rules }).action !== 'cancel') {
     if (freshJobs === null) throw new Error('could not read complete job list before force cancellation');
     return 'resumed';
   }
@@ -812,6 +847,13 @@ async function runCli({
     if (isHoldingRun(run)) jobsByRunId[String(run.id)] = github.listJobs(run.id);
   }
   const plannedActions = planWatchdogActions({ runs, jobsByRunId, headSha, nowMs: nowMs ?? now(), lane });
+  // production-deploy's six-hour ceiling still applies to a run whose jobs it
+  // cannot read. A lane with no age limit has no such backstop: without the job
+  // list it can neither cancel nor clear the run, so it must not report "all
+  // clear". The run is named and the watchdog job goes red; nothing is cancelled.
+  const unreadableRuns = Number.isFinite(lane.maxRunMinutes)
+    ? []
+    : runs.filter((run) => isHoldingRun(run) && jobsByRunId[String(run.id)] === null);
   const failedCancelIds = new Set();
   const resumedIds = new Set();
   const hadCandidates = plannedActions.cancel.length > 0;
@@ -888,14 +930,19 @@ async function runCli({
   if (failedCancelIds.size > 0) plan.followUp = 'cancel-failed';
   else if (lane.redispatch && (!historyOk || dispatchFailed)) plan.followUp = 'dispatch-deferred';
 
-  const summary = formatSummary(plan, { dryRun, failedCancelIds, dispatched, lane });
+  const summary = formatSummary(plan, { dryRun, failedCancelIds, dispatched, lane, unreadableRuns });
   console.error(`${logPrefix} ${summary}`);
   const discordContent = dryRun ? '' : formatDiscordContent(plan, { runUrlBase, failedCancelIds, lane });
   if (discordContent !== '' && discordFilePath) writeFileSync(discordFilePath, discordContent, 'utf8');
   if (outputPath) appendFileSync(outputPath, `notify=${discordContent === '' ? 'false' : 'true'}\n`, 'utf8');
-  // An incomplete run listing fails both lanes: a watchdog that cannot see the
-  // lane must go red rather than report "all clear".
-  return { ...plan, failed: !dryRun && (failedCancelIds.size > 0 || !historyOk || dispatchFailed) };
+  // An incomplete run listing fails both lanes, and an unreadable holder fails a
+  // lane with no age ceiling: a watchdog that cannot see the lane must go red
+  // rather than report "all clear".
+  return {
+    ...plan,
+    unreadableRuns,
+    failed: !dryRun && (failedCancelIds.size > 0 || !historyOk || dispatchFailed || unreadableRuns.length > 0),
+  };
 }
 
 function resolveLane(laneName) {
