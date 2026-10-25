@@ -141,6 +141,45 @@ describe('useTrackPaging', () => {
     expect(refreshCommittedSource).not.toHaveBeenCalled();
   });
 
+  // PR #6700 review: a logbook's run of repeat-only pages answers with no climbs
+  // and the same place to carry on from. Landing that would rerun the request
+  // with no swipe, page after page.
+  const stalledPage = vi.fn<TrackPageLoader>(async (page) => ({
+    page,
+    pageSize: 1,
+    climbs: [],
+    filteredOut: false,
+    nextPage: page,
+  }));
+
+  it('asks once per swipe while pages add nothing and climbs are still ahead', async () => {
+    stalledPage.mockClear();
+    const source = trackWith(registerTrackPageLoader(stalledPage));
+    const { rerender, refreshCommittedSource } = render(source, source.climbs[PAGE_SIZE - 3].uuid);
+
+    await waitFor(() => expect(stalledPage).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refreshCommittedSource).not.toHaveBeenCalled();
+    expect(stalledPage).toHaveBeenCalledTimes(1);
+
+    rerender({ displayed: source.climbs[PAGE_SIZE - 2].uuid });
+    await waitFor(() => expect(stalledPage).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refreshCommittedSource).not.toHaveBeenCalled();
+  });
+
+  it('lands a page that adds nothing when the climber waits on the last climb', async () => {
+    stalledPage.mockClear();
+    const source = trackWith(registerTrackPageLoader(stalledPage));
+    const { refreshCommittedSource } = render(source, source.climbs[PAGE_SIZE - 1].uuid);
+
+    // Next waits on the track, so it keeps asking until a climb or the end.
+    await waitFor(() => expect(refreshCommittedSource).toHaveBeenCalledTimes(1));
+    const landed = refreshCommittedSource.mock.calls[0][0] as PlaylistSuggestionSource;
+    expect(landed.climbs).toHaveLength(PAGE_SIZE);
+    expect(landed.continuation).toMatchObject({ nextPage: 1 });
+  });
+
   it('does nothing for a track that has ended', () => {
     const ended = trackWith(registerTrackPageLoader(loadPage));
     delete ended.continuation;

@@ -35,15 +35,10 @@ const listActivation = vi.hoisted(() => ({
   real: false,
 }));
 // What the real list hook hands the activation hook, and the tap it makes.
-type TrackPage = { climbs: { uuid: string }[]; hasMore: boolean };
+type TrackLoad = { climbs: { uuid: string }[]; nextOffset: number | null };
 type PlaylistActivationOptions = {
   hasMoreRows?: boolean;
-  snapshotFetchPage?: () => (request: {
-    page: number;
-    pageSize: number;
-    board: Record<string, unknown>;
-    signal: AbortSignal;
-  }) => Promise<TrackPage>;
+  snapshotListLoader?: () => (request: { offset: number; count: number; signal: AbortSignal }) => Promise<TrackLoad>;
 };
 const playlistActivation = vi.hoisted(() => ({
   activate: vi.fn(),
@@ -284,17 +279,13 @@ describe('ProfileClimbsTab track paging', () => {
 
     expect(playlistActivation.activate).toHaveBeenCalledWith(expect.objectContaining({ uuid: 'climb-1' }), undefined);
     expect(playlistActivation.options?.hasMoreRows).toBe(true);
-    const fetchTrackPage = playlistActivation.options?.snapshotFetchPage?.();
-    if (!fetchTrackPage) throw new Error('expected a snapshot fetcher');
-    const page = await fetchTrackPage({
-      page: 0,
-      pageSize: 100,
-      board: { boardName: 'kilter', layoutId: 1, sizeId: 10, setIds: '1,2', angle: 40 },
-      signal: new AbortController().signal,
-    });
+    // The track walks the list by position, from the first climb past the loaded rows.
+    const trackLoader = playlistActivation.options?.snapshotListLoader?.();
+    if (!trackLoader) throw new Error('expected a track loader');
+    const load = await trackLoader({ offset: 1, count: 100, signal: new AbortController().signal });
 
     expect(feed.fetchNextPage).toHaveBeenCalledWith({ cancelRefetch: false });
-    expect(page.climbs.map(({ uuid }) => uuid)).toEqual(['climb-1', 'climb-2']);
-    expect(page.hasMore).toBe(false);
+    expect(load.climbs.map(({ uuid }) => uuid)).toEqual(['climb-2']);
+    expect(load.nextOffset).toBeNull();
   });
 });

@@ -27,7 +27,12 @@ import { toQueueClimb } from '../climb-types';
 import { getSetting } from '../../settings/hooks';
 import type { ReadyBoardArtSnapshot } from '../board-render/ready-board-art';
 import { usePlaylistActivation } from './use-playlist-activation';
-import { createLoadedListFetchPage, type LoadedList, type LoadedListSource } from './loaded-list-pages';
+import {
+  createLoadedListFetchPage,
+  createLoadedListTrackLoader,
+  type LoadedList,
+  type LoadedListSource,
+} from './loaded-list-pages';
 
 /** What a list row plays. */
 export type BoardListRow = {
@@ -124,11 +129,14 @@ export function useBoardListActivation<Row>({
     }),
     [describeRow],
   );
+  // The hook's whole-list loads (start a list, add it to the queue) read whole
+  // pages, so they take the uncapped reader. A row tap never calls it: its
+  // track pages through `snapshotListLoader` below, a few pages at a time.
   const fetchPage = useMemo(() => createLoadedListFetchPage(listSource), [listSource]);
-  // Bound at the tap: a track keeps paging the list it was built from.
-  const snapshotFetchPage = useCallback(() => {
+  // Bound at the tap: a track keeps walking the list it was built from.
+  const snapshotListLoader = useCallback(() => {
     const builtUnderKey = listKeyRef.current;
-    return createLoadedListFetchPage(listSource, () => listKeyRef.current === builtUnderKey);
+    return createLoadedListTrackLoader(listSource, () => listKeyRef.current === builtUnderKey);
   }, [listSource]);
 
   // The board of the row being tapped, set just before the activation reads
@@ -155,7 +163,7 @@ export function useBoardListActivation<Row>({
     sourceId,
     allClimbs: list.climbs,
     fetchPage,
-    snapshotFetchPage,
+    snapshotListLoader,
     label,
     viewOnlyBoard,
     drawerBoardFor: boardForTappedClimb,

@@ -16,6 +16,7 @@ import {
   type UsePlaylistActivationOptions,
 } from '../use-playlist-activation';
 import { canLoadMoreOfTrack, loadNextTrackPage, _resetTrackPagerForTests } from '../track-pager';
+import type { LoadedListTrackLoader } from '../loaded-list-pages';
 import { invalidatePrivacySnapshots } from '../../privacy/privacy-cache';
 import { setSetting } from '../../../settings/hooks';
 import { useInfiniteSearchClimbs } from '../../graphql/hooks/use-infinite-search-climbs';
@@ -193,6 +194,7 @@ function renderActivation(
     loadedRowsArePages?: boolean;
     loadedRowsAreTheList?: boolean;
     hasMoreRows?: boolean;
+    snapshotListLoader?: UsePlaylistActivationOptions['snapshotListLoader'];
     drawerBoardFor?: UsePlaylistActivationOptions['drawerBoardFor'];
   } = {},
 ) {
@@ -206,6 +208,7 @@ function renderActivation(
       loadedRowsArePages: options.loadedRowsArePages,
       loadedRowsAreTheList: options.loadedRowsAreTheList,
       hasMoreRows: options.hasMoreRows,
+      snapshotListLoader: options.snapshotListLoader,
       drawerBoardFor: options.drawerBoardFor,
       label: options.label,
       viewOnlyBoard: options.viewOnlyBoard,
@@ -833,6 +836,64 @@ describe('usePlaylistActivation (mobile wrapper)', () => {
       expect(fetchPage.mock.calls[0][0]).toMatchObject({ page: 1 });
     });
 
+    // PR #6700 review: a logbook's pages can add few climbs each, so a track
+    // walks it by position, a few of the screen's pages per request.
+    it('walks the list by position from the first climb past the rows', async () => {
+      const rows = Array.from({ length: 120 }, (_, index) => makeClimb(`row-${index}`));
+      const fetchPage = vi.fn();
+      const listLoader = vi.fn(async ({ offset }: { offset: number }) => ({
+        climbs: [makeClimb(`list-${offset}`)],
+        nextOffset: offset + 1,
+      }));
+      const snapshotListLoader = vi.fn(() => listLoader);
+      renderActivation(fetchPage, {
+        allClimbs: rows,
+        loadedRowsAreTheList: true,
+        hasMoreRows: true,
+        snapshotListLoader,
+      });
+      const target = captured().resolveTarget(rows[0])!;
+
+      const load = await captured().fetchClimbsForBoard({
+        target,
+        activatedClimbUuid: 'row-0',
+        signal: new AbortController().signal,
+      });
+
+      // A climb position, not the 100-climb page the rows end in.
+      expect(load.continuation).toMatchObject({ nextPage: rows.length });
+      const source = { playlistUuid: 'p', activatedClimbUuid: 'row-0', boardKey: 'k', ...load };
+      const page = await loadNextTrackPage(source);
+      expect(listLoader).toHaveBeenCalledTimes(1);
+      expect(listLoader.mock.calls[0][0]).toMatchObject({ offset: rows.length, count: 100 });
+      expect(page).toMatchObject({
+        page: rows.length,
+        pageSize: 1,
+        climbs: [expect.objectContaining({ uuid: 'list-120' })],
+        nextPage: rows.length + 1,
+      });
+      expect(fetchPage).not.toHaveBeenCalled();
+    });
+
+    it("starts a preview's track at the first climb past the rows", async () => {
+      const rows = Array.from({ length: 120 }, (_, index) => makeClimb(`row-${index}`));
+      const listLoader = vi.fn<LoadedListTrackLoader>(async () => ({ climbs: [], nextOffset: null }));
+      const { result } = renderActivation(vi.fn(), {
+        allClimbs: rows,
+        previewOnly: true,
+        loadedRowsAreTheList: true,
+        hasMoreRows: true,
+        snapshotListLoader: () => listLoader,
+      });
+
+      await result.current.activate(rows[3]);
+
+      const previewTrack = mocks.openPlayDrawer.mock.calls[0][1].playlistSuggestionSource;
+      expect(previewTrack.continuation).toMatchObject({ nextPage: rows.length });
+      await loadNextTrackPage(previewTrack);
+      expect(listLoader.mock.calls[0][0]).toMatchObject({ offset: rows.length, count: 100 });
+    });
+
     it('gives a preview no loader when the rows are the whole list', async () => {
       const climb = makeClimb('a');
       const { result } = renderActivation(vi.fn(), {
@@ -880,6 +941,19 @@ describe('usePlaylistActivation (mobile wrapper)', () => {
     it('opens the row tapped, not the first row of the same climb at another angle', async () => {
       const firstRow = makeClimb('a', { angle: 40 });
       const tappedRow = makeClimb('a', { angle: 25 });
+      const drawerBoardFor = vi.fn(() => TICK_BOARD);
+      const { result } = renderActivation(vi.fn(), { allClimbs: [firstRow], drawerBoardFor });
+
+      await result.current.activate(tappedRow);
+
+      expect(mocks.activate).toHaveBeenCalledWith(tappedRow);
+      expect(drawerBoardFor).toHaveBeenCalledWith(tappedRow);
+    });
+
+    // PR #6700 review: a mirrored send of a climb is its own logbook row.
+    it('opens the mirrored row tapped, not the first row of the same climb', async () => {
+      const firstRow = makeClimb('a', { angle: 40 });
+      const tappedRow = makeClimb('a', { angle: 40, mirrored: true });
       const drawerBoardFor = vi.fn(() => TICK_BOARD);
       const { result } = renderActivation(vi.fn(), { allClimbs: [firstRow], drawerBoardFor });
 
