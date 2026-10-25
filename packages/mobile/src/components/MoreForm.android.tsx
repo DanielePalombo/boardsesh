@@ -55,11 +55,9 @@ import {
   assertNeverRow,
   guardedButtonPress,
   isButtonRowPressable,
-  modelHasCustomRow,
   selectedOptionLabel,
   useOpensOutsideAppHint,
 } from './MoreForm.logic';
-import { MoreFormRN } from './MoreForm.rn';
 import { materialStepCount, useSliderCommit } from './MoreForm.slider';
 import type {
   MoreButtonRow,
@@ -468,7 +466,12 @@ function renderRow(row: MoreRow, colors: RowColors): ReactNode {
     case 'slider':
       return <SliderRow key={row.key} row={row} colors={colors} />;
     case 'custom':
-      // MoreForm routes models with custom rows to MoreFormRN, so this is unreachable.
+      // Screens with a custom row render MoreFormRN themselves on Android (a
+      // Compose RNHostView row draws blank, #6500). Fail loudly in dev rather
+      // than leave a blank gap.
+      if (__DEV__) {
+        throw new Error(`MoreForm.android cannot draw custom row "${row.key}"; render MoreFormRN on Android`);
+      }
       return null;
     default:
       return assertNeverRow(row);
@@ -507,12 +510,9 @@ function SliderRow({ row, colors }: { row: MoreSliderRow; colors: RowColors }) {
 }
 
 // Compose RNHostView rows report their height but draw blank on Android
-// (#6500, #6585, #6546), so any model with React Native content renders in the RN tree.
-export function MoreForm(props: MoreFormProps) {
-  return modelHasCustomRow(props.model) ? <MoreFormRN model={props.model} /> : <ComposeMoreForm {...props} />;
-}
-
-function ComposeMoreForm({ model }: MoreFormProps) {
+// (#6500, #6585, #6546). Screens whose model has a `custom` row therefore pick
+// MoreFormRN themselves, once per screen, so the renderer never swaps mid-flow.
+export function MoreForm({ model }: MoreFormProps) {
   const { brandColors, systemColors, colorScheme } = useTheme();
   const colors: RowColors = {
     brandColors,

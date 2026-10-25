@@ -5,7 +5,7 @@
 // one hook here (`useOpensOutsideAppHint`) only reads a translation.
 
 import { useTranslation } from 'react-i18next';
-import type { MoreButtonRow, MoreFormModel, MoreOption } from './MoreForm.types';
+import type { MoreButtonRow, MoreOption } from './MoreForm.types';
 
 /**
  * Exhaustiveness guard for the `MoreRow` discriminated union. Each platform's
@@ -15,11 +15,6 @@ import type { MoreButtonRow, MoreFormModel, MoreOption } from './MoreForm.types'
  */
 export function assertNeverRow(row: never): never {
   throw new Error(`Unhandled MoreRow kind: ${JSON.stringify(row)}`);
-}
-
-/** Whether any section holds a `custom` row (React Native content hosted inside the form). */
-export function modelHasCustomRow(model: MoreFormModel): boolean {
-  return model.sections.some((section) => section.rows.some((row) => row.kind === 'custom'));
 }
 
 /**

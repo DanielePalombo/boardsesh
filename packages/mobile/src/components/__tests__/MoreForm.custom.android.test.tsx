@@ -71,13 +71,7 @@ vi.mock('../../providers/theme-provider', async () => {
   const theme = makeThemeMock({ variant: 'material' });
   return { useTheme: () => theme };
 });
-vi.mock('../MoreForm.rn', () => ({
-  MoreFormRN: ({ model }: { model: MoreFormModel }) =>
-    createElement('div', { 'data-testid': 'rn-form' }, String(model.sections.length)),
-}));
-
 import { MoreForm } from '../MoreForm.android';
-import { modelHasCustomRow } from '../MoreForm.logic';
 
 const customModel: MoreFormModel = {
   sections: [
@@ -95,20 +89,25 @@ const plainModel: MoreFormModel = {
 afterEach(cleanup);
 
 describe('MoreForm on Android with custom rows', () => {
-  it('detects a custom row in any section', () => {
-    expect(modelHasCustomRow(customModel)).toBe(true);
-    expect(modelHasCustomRow(plainModel)).toBe(false);
+  it('fails loudly in dev when handed a custom row', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(() => render(createElement(MoreForm, { model: customModel }))).toThrow(/custom row "preview"/);
+    vi.restoreAllMocks();
   });
 
-  it('renders a model with a custom row through the React Native form', () => {
-    const { queryByTestId } = render(createElement(MoreForm, { model: customModel }));
-    expect(queryByTestId('rn-form')).not.toBeNull();
-    expect(queryByTestId('compose-host')).toBeNull();
-  });
-
-  it('keeps the Compose form for models without custom rows', () => {
-    const { queryByTestId } = render(createElement(MoreForm, { model: plainModel }));
-    expect(queryByTestId('compose-host')).not.toBeNull();
-    expect(queryByTestId('rn-form')).toBeNull();
+  it('keeps the same Compose host when a model gains a section on rerender', () => {
+    const { getByTestId, rerender } = render(createElement(MoreForm, { model: plainModel }));
+    const host = getByTestId('compose-host');
+    rerender(
+      createElement(MoreForm, {
+        model: {
+          sections: [
+            ...plainModel.sections,
+            { key: 'extra', rows: [{ kind: 'value', key: 'w', label: 'W', value: 'y' }] },
+          ],
+        },
+      }),
+    );
+    expect(getByTestId('compose-host')).toBe(host);
   });
 });
