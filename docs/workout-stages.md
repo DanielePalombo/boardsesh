@@ -1,7 +1,7 @@
 # Workout stages
 
 How the mobile app knows that a queued climb is part of a workout, and which part:
-"Warm-up · 2 of 5" in the player, and the "Your workout" card on the session screen.
+"Warm-up · 2 of 5" in the player's top bar, and the "Your workout" card on the session screen.
 Issue [#5379](https://github.com/boardsesh/boardsesh/issues/5379), part of epic
 [#5399](https://github.com/boardsesh/boardsesh/issues/5399).
 
@@ -71,6 +71,11 @@ wide only). Each block becomes one **stage**. The code lives in
   stage's climbs step down wherever they sit: a cool-down the climber moves in front of the
   workout, or one a mid-session block lands after, still reads "Cool-down". A warm-up that ramps up (one the climber drags behind
   the workout, or a partner warm-up with its own `targetGrade`) never does.
+- The player shows it in its top bar, between ⌄ and the rest timer + ⋯, in the spot a
+  list's "Projects · 4 of 23" uses (a climb in the workout shows its stage). The stage
+  name and the numbers are two texts (`formatWorkoutStageParts`): with the timer up the
+  name is cut, the numbers never are. It used to lead the header's stats line, where it
+  pushed the sends and stars off a phone in German and Spanish (#6745).
 
 Stage kinds use the partner API block names (`warmUp`, `volume`, `pyramid`, `ladder`,
 `gradeFocus`, `onTheMinute`, `fourByFour`, `limitBouldering`; see `docs/partner-api.md`,
@@ -223,6 +228,11 @@ stage, leaves the climber's own rest settings in charge, exactly as before. The 
   climber's own settings. Pause, Reset and Turn off stay.
 - **Crew.** Stage pacing lives on the phone that built the workout. In a crew only the phone
   holding the wall moves it (`docs/rest-timer.md`), stage or not; a passenger's sheet says so.
+  The builder's phone hands each stage's pacing to the session's shared rest clock (#5382) as
+  the climb on the wall changes, so every phone, the holder's included, counts that stage's
+  rest and waits on its rule; if the builder's phone sleeps, the crew keeps the last pacing it
+  sent. A workout started over a crewmate's running clock takes it over on its first paced
+  climb: on the minute the beat starts then, a tick or send rule waits for the climb's tick.
 
 **The runner** (#6291). The Record tab's "Your workout" card runs the workout without a
 separate engine: it reads the queue, the run, the run's tick log and the rest timer through
@@ -388,8 +398,9 @@ offers it, and on volume at the stage's grade where it does not (`defaultMidSess
   block adds "about N min" (`estimateWorkoutMinutes` in `plan-summary.ts`): 45 s a try plus
   the rest the stage paces after it (`stageRestSeconds`, so round rests and the 10 s
   changeover count), one interval a climb on the minute, three tries a climb where the
-  stage moves on only after a send (3 × 45 s, then one rest after the send, so the default
-  limit block of 3 climbs at 3:00 reads "about 15 min"), and two minutes a climb for a stage
+  stage moves on only after a send (3 × (45 s + rest), since the rest timer starts after
+  every logged try, falls included, so the default limit block of 3 climbs at 3:00 reads
+  "about 30 min"), and two minutes a climb for a stage
   with no pacing of its own; no rest after the last climb; whole minutes under 10, then
   fives. An untimed workout gets no figure, since its length is the climber's own rests.
 - **Start.** `toStagedQueueItems` (`stagePreviewQueue` in `workout-start-queue.ts`) queues

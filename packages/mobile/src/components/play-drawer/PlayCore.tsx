@@ -28,7 +28,7 @@ import { scopedRouter as router } from '../../lib/routing/scoped-navigation';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BoardName, Climb } from '@boardsesh/shared-schema';
-import { configKey, isClimbOnReachableBoard } from '@boardsesh/queue';
+import { configKey, getQueueBoardKey, isClimbOnReachableBoard } from '@boardsesh/queue';
 import type { ClimbQueueItem, PlaylistSuggestionSource } from '@boardsesh/queue';
 import { boardSupportsMirroring } from '@boardsesh/play-view';
 import { formatRenderBoardLabel, resolveClimbRenderBoard } from '../../lib/boards/climb-render-board';
@@ -103,7 +103,7 @@ import { useFullLogbookSheet } from './logbook/use-full-logbook-sheet';
 import { usePushAfterPlayerDismiss } from './use-push-after-player-dismiss';
 import { RestTimerPillHost } from '../queue-control/RestTimerPillHost';
 import { useWorkoutRun } from '../../lib/workout-run-store';
-import { useWorkoutQueueUuids, useWorkoutStageLabel } from './use-workout-stage-label';
+import { useWorkoutQueueUuids, useWorkoutStageParts } from './use-workout-stage-label';
 import { ChromeIconButton, useChromeIconButtonSize } from '../ChromeIconButton';
 import { topBarByVariant } from '../../theme/top-bar';
 import {
@@ -382,7 +382,6 @@ export function PlayCore({
     setCurrentClimb,
     nextClimb,
     previousClimb,
-    addToQueue,
     mirrorCurrentClimb,
     getQueueSnapshot,
     refreshPlaylistSuggestionSource,
@@ -451,7 +450,7 @@ export function PlayCore({
   // session without one, a crew member's phone, and a climb outside the workout.
   const workoutRun = useWorkoutRun(sessionId);
   const workoutQueueUuids = useWorkoutQueueUuids(workoutRun, queue);
-  const workoutStageLabel = useWorkoutStageLabel(workoutRun, workoutQueueUuids, displayedQueueItemUuid);
+  const workoutStageParts = useWorkoutStageParts(workoutRun, workoutQueueUuids, displayedQueueItemUuid);
   // A view-only preview is showing (not the active/wall climb). Commit paths
   // never set `drawerPreviewItem`, so this is true only for genuine previews
   // (workout builder, logbook/cross-board, the peer-driven accessory wall climb).
@@ -740,14 +739,17 @@ export function PlayCore({
     enhancementsReady,
   });
 
-  // The top bar names the list the player is walking (#6664): "Projects · 4 of
-  // 23". Not the header's stats line, where it pushed the sends and stars off
-  // the end.
+  // The top bar says where the player is: the workout stage (#5379) or the list
+  // it walks (#6664), "Projects · 4 of 23". Not the header's stats line, where
+  // either pushed the sends and stars off the end (#6745). A climb outside the
+  // workout has no stage, so a list tapped mid-workout still names itself; a
+  // climb in both says its stage, the frame the climber planned around.
   const trackLocale = i18n.language;
   const currentTrackParts = useMemo(
     () => formatTrackLabelParts(currentTrackLabel, t, trackLocale),
     [currentTrackLabel, t, trackLocale],
   );
+  const topBarParts = workoutStageParts ?? currentTrackParts;
   // The list label sits between ⌄ and the timer + ⋯ cluster, so it needs the
   // cluster's width, which grows when the rest timer comes up. Null until the
   // cluster has laid out (see `resolveTopListContextFrame`).
@@ -776,19 +778,6 @@ export function PlayCore({
     getCommittedSource: getCommittedSuggestionSource,
     refreshCommittedSource: refreshPlaylistSuggestionSource,
   });
-
-  // The neighbours' headers carry their own workout position, so a swipe slides
-  // the right "2 of 5" in rather than popping it on landing.
-  const previousWorkoutStageLabel = useWorkoutStageLabel(
-    workoutRun,
-    workoutQueueUuids,
-    navigationState.canPrevious ? navigationState.prevItem?.uuid : null,
-  );
-  const nextWorkoutStageLabel = useWorkoutStageLabel(
-    workoutRun,
-    workoutQueueUuids,
-    navigationState.canNext ? navigationState.nextItem?.uuid : null,
-  );
 
   // The page each of the three climbs is on. Keyed on the CLIMB, which a
   // suggestion keeps when a swipe turns it into a queue item, so the board that
@@ -1313,6 +1302,33 @@ export function PlayCore({
     );
   }, [displayedClimb, boardName, layoutId, showToast, tClimbs]);
 
+  // The similar-climbs strip plays as a list (#6665). A preview walks it on the
+  // board the player draws the climb on, which is the board its similar climbs
+  // come from. A committed tap keys it to the stored active board, the board
+  // the queue checks a track against: an upsized climb or a tick from another
+  // size is drawn on a bigger board, and a track keyed there would go dormant
+  // the moment it was set, leaving swipes to walk the queue.
+  const similarTrack = useMemo(() => {
+    const renderBoardKey = getQueueBoardKey({
+      board_name: boardName,
+      layout_id: layoutId,
+      size_id: sizeId,
+      set_ids: setIds,
+    });
+    return {
+      boardKey: renderBoardKey,
+      committedBoardKey: activeBoardForNavigation
+        ? getQueueBoardKey({
+            board_name: activeBoardForNavigation.boardType,
+            layout_id: activeBoardForNavigation.layoutId,
+            size_id: activeBoardForNavigation.sizeId,
+            set_ids: activeBoardForNavigation.setIds,
+          })
+        : renderBoardKey,
+      label: t('playView.track.similarClimbs'),
+    };
+  }, [boardName, layoutId, sizeId, setIds, activeBoardForNavigation, t]);
+
   const { handlePrev, handleNext, handleSetActive, handleSimilarClimbPress, commitDisplayedToWall, continueIntoQueue } =
     usePlaySelectionController({
       openTarget,
@@ -1326,7 +1342,8 @@ export function PlayCore({
         setDrawerPreviewIsWallClimb,
         setSharedBrowseLatched,
       },
-      queue: { currentClimbQueueItem, setCurrentClimb, addToQueue, previousClimb, nextClimb },
+      queue: { currentClimbQueueItem, setCurrentClimb, previousClimb, nextClimb },
+      similarTrack,
       navigation: { navigationState, lightOnSwipe, browseByDefault },
       chrome: { clearMirror, resetFavoriteOverride, setIsTickBarActive, setActiveSubDrawer },
       confirmation: {
@@ -1591,7 +1608,6 @@ export function PlayCore({
     ) : undefined,
     onLongPressName: handleCopyName,
     onPressSetter: openSetterPlaylist,
-    workoutStageLabel,
   });
   const supportsMirroring = boardSupportsMirroring(boardName, layoutId);
   // The same layout the action bar resolves from the same inputs, read here for
@@ -1941,10 +1957,10 @@ export function PlayCore({
                             />
                           </>
                         ) : null}
-                        {/* The list the player walks (#6664), under the grabber. Takes no
+                        {/* The workout stage or the list the player walks, under the grabber. Takes no
                           touches of its own, but keeps them (no pointerEvents="none"),
                           which on Android would hide it from TalkBack's explore by touch. */}
-                        {currentTrackParts ? (
+                        {topBarParts ? (
                           <View
                             style={[
                               styles.topListContext,
@@ -1956,7 +1972,7 @@ export function PlayCore({
                               topListContextFrame.measured ? null : styles.topListContextUnmeasured,
                             ]}
                           >
-                            <PlayListContext parts={currentTrackParts} testID="play-drawer-track-label" />
+                            <PlayListContext parts={topBarParts} testID="play-drawer-track-label" />
                           </View>
                         ) : null}
                         {/* Mirrored across the grabber from the close chevron: the rest
@@ -2052,7 +2068,6 @@ export function PlayCore({
                                 boardName={previousHeaderBoard.boardName as BoardName}
                                 layoutId={previousHeaderBoard.layoutId}
                                 angle={previousHeaderBoard.angle}
-                                workoutStageLabel={previousWorkoutStageLabel}
                                 leading={
                                   headerPillState ? (
                                     <WallStatePill state={headerPillState} backTarget={headerBackTarget} reserveOnly />
@@ -2068,7 +2083,6 @@ export function PlayCore({
                                 boardName={nextHeaderBoard.boardName as BoardName}
                                 layoutId={nextHeaderBoard.layoutId}
                                 angle={nextHeaderBoard.angle}
-                                workoutStageLabel={nextWorkoutStageLabel}
                                 leading={
                                   headerPillState ? (
                                     <WallStatePill state={headerPillState} backTarget={headerBackTarget} reserveOnly />

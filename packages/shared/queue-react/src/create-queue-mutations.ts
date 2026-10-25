@@ -20,11 +20,14 @@
 //     explicit Start button / an explicit join, never lazily here).
 // Party / best-effort actions (confirmClimbOnWall, reportWallDisconnect,
 // setSessionBoardSerial, setSessionBoardPath) no-op on BOTH platforms when
-// there is no active session.
+// there is no active session. So does setSessionRestCadence, which instead of
+// swallowing errors hands them back: its callers decide what a lost write means
+// for the wall (#5382).
 
 import type { Client, RateLimitRetryEvent } from '@boardsesh/graphql-client';
 import { execute } from '@boardsesh/graphql-client';
 import type { ClimbQueueItemInput } from '@boardsesh/shared-schema';
+import type { SessionRestCadenceInput, SetSessionRestCadencePayload } from '@boardsesh/shared-schema/generated';
 import { createSetCurrentClimbCoalescer } from '@boardsesh/queue-runtime';
 import {
   ADD_QUEUE_ITEM,
@@ -40,6 +43,7 @@ import {
   REPORT_WALL_DISCONNECT,
   SET_SESSION_BOARD_SERIAL,
   SET_SESSION_BOARD_PATH,
+  SET_SESSION_REST_CADENCE,
 } from '@boardsesh/graphql/operations/queue-session';
 
 export type PublishPlaybackStateInput = {
@@ -64,6 +68,14 @@ export type PublishPlaybackStateInput = {
 };
 
 const NOT_CONNECTED = 'Not connected to session';
+
+/** Per-call transport options for `setSessionRestCadence`. */
+export type SessionRestCadenceSendOptions = {
+  /** Give up after this long (the holder's FIRE waits 2 s, then lets the beat go). */
+  timeoutMs?: number;
+  /** Re-send on RATE_LIMITED. Off for a FIRE: a beat claimed late is no use. */
+  retryWhenRateLimited?: boolean;
+};
 
 /**
  * Does this failure mean the server doesn't know `setQueue`'s `baselineSequence`
@@ -236,6 +248,17 @@ export type QueueMutationsActions<TItem> = {
    * for instant feedback. Best-effort; no-op in solo.
    */
   setSessionBoardPath: (boardPath: string) => Promise<void>;
+  /**
+   * Change the session's shared rest clock (#5382). Resolves null when there is
+   * no session (solo stays local), and THROWS on a transport or server error:
+   * a FIRE that never landed must not move the wall, and the caller decides
+   * whether to skip the beat or repair the clock. `applied: false` in the reply
+   * means the change did not land; the reply's clock is the server's truth.
+   */
+  setSessionRestCadence: (
+    input: SessionRestCadenceInput,
+    options?: SessionRestCadenceSendOptions,
+  ) => Promise<SetSessionRestCadencePayload | null>;
 };
 
 export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): QueueMutationsActions<TItem> {
@@ -334,6 +357,13 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
     return onRateLimited ? execute<TData>(client, operation, { onRateLimited }) : execute<TData>(client, operation);
   }
 
+  // Mobile's `ensureReady` runs JOIN_SESSION on whichever client is current
+  // when the join goes out, so every mobile send reads the client again AFTER
+  // it. A client read before the await can have been disposed while the join
+  // ran (offline mode on → off), and graphql-ws opens a fresh, never-joined
+  // socket for an operation started on a disposed client: "Must be in a
+  // session", on a socket the next offline-mode cut does not close either.
+
   // Core mutating actions. Web (no ensureReady) THROWS when disconnected;
   // mobile (ensureReady) silently no-ops by returning null. `allowCreate`
   // historically let mobile lazily create a session on add / setCurrent;
@@ -350,7 +380,8 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
     if (!allowCreate && !captured) return null;
     const sessionId = await ensureReady(captured);
     if (!sessionId) return null;
-    return { client, sessionId };
+    const joinedClient = getClient();
+    return joinedClient ? { client: joinedClient, sessionId } : null;
   }
 
   // Party / best-effort actions: no-op on BOTH platforms when there's no active
@@ -361,7 +392,8 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
     if (!client || !captured) return null;
     if (!ensureReady) return { client, sessionId: captured };
     const sessionId = await ensureReady(captured);
-    return sessionId ? { client, sessionId } : null;
+    const joinedClient = getClient();
+    return sessionId && joinedClient ? { client: joinedClient, sessionId } : null;
   }
 
   // Serialize-and-supersede SET_CURRENT_CLIMB. `getContext` snapshots the
@@ -375,7 +407,7 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
       // mobile never does, and must not lazily create a session just to send a
       // null — so only the ensureReady (mobile) path short-circuits on null.
       if (ensureReady && !args.item) return;
-      const client = getClient();
+      let client = getClient();
       if (!client) {
         if (ensureReady) return;
         throw new Error(NOT_CONNECTED);
@@ -389,6 +421,8 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
         const sessionId = await ensureReady(capturedSessionId);
         if (!sessionId) return;
         if (capturedSessionId !== null && getSessionId() !== capturedSessionId) return;
+        client = getClient();
+        if (!client) return;
       } else if (!capturedSessionId || getSessionId() !== capturedSessionId) {
         // Web: already-joined, never creates — a missing OR flipped captured
         // session is fatal (throws), unlike mobile which lazily creates above.
@@ -404,7 +438,7 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
       });
     },
     sendDeferredQueueAdd: async (item, capturedSessionId) => {
-      const client = getClient();
+      let client = getClient();
       if (!client || !capturedSessionId || getSessionId() !== capturedSessionId) return;
       if (ensureReady) {
         // capturedSessionId is concrete, so this only joins — but honour a null
@@ -412,6 +446,8 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
         // than fire an ADD against a dead session, mirroring the sendArgs path.
         const sessionId = await ensureReady(capturedSessionId);
         if (!sessionId) return;
+        client = getClient();
+        if (!client) return;
       }
       const input = toQueueItemInput(item);
       // Read the position AFTER the session guards (a dead-session bail costs
@@ -630,6 +666,22 @@ export function createQueueMutations<TItem>(deps: QueueMutationsDeps<TItem>): Qu
       } catch (error) {
         onBestEffortError?.('setSessionBoardPath', error);
       }
+    },
+
+    setSessionRestCadence: async (input, options = {}) => {
+      const ready = await resolveCurrent();
+      if (!ready) return null;
+      const { timeoutMs, retryWhenRateLimited = true } = options;
+      const result = await execute<{ setSessionRestCadence: SetSessionRestCadencePayload }>(
+        ready.client,
+        { query: SET_SESSION_REST_CADENCE, variables: { input } },
+        {
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+          ...(retryWhenRateLimited ? {} : { rateLimitRetries: 0 }),
+          ...(onRateLimited ? { onRateLimited } : {}),
+        },
+      );
+      return result.setSessionRestCadence;
     },
   };
 }

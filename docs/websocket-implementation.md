@@ -497,6 +497,41 @@ consumers do it — `use-session-realtime` defers its join, `board-presence-prov
 provider `client={null}` (its documented inert state) — because a parked consumer produces no rejection
 noise and resumes with a catch-up instead of a retry storm.
 
+**A long-lived consumer must not keep the client it got once.** The dispose replaces the client:
+graphql-ws never reconnects a disposed one, and every later `getWsClient()` call talks to its
+replacement. `disposeWsClient()` therefore announces the client it dropped through
+`subscribeWsClientDisposed` (`lib/graphql/ws-client-lifecycle.ts`), synchronously and after the cache is
+cleared. `use-session-realtime` binds its JOIN_SESSION, both streams and its `closed`/`connected`
+listeners to `getWsClient()` at each join attempt, past the offline gates. On the notice it releases
+that client, bumps the join tracker's epoch so no mutation trusts the old connection's join, and parks
+for the connectivity edge. Until that change the engine held the client it read when the effect ran.
+After Offline mode on → off its streams and listeners sat on the dead client, nothing re-joined, and
+every session mutation (`getWsClient()` at send time) went out on a fresh connection that had never
+joined: "Must be in a session to perform this operation", with a new `connectionId` each time.
+
+**The socket outlives its last operation by 3 s** (`WS_LAZY_CLOSE_TIMEOUT_MS`, graphql-ws
+`lazyCloseTimeout`). The lazy default closes the socket as soon as the last operation completes, and
+before that operation's result reaches its caller. JOIN_SESSION is followed by the session streams, and
+`ensureJoined` is followed by the session mutation, both started from the join's result. With nothing
+else holding the socket, that follow-up landed on a closing connection and then on a fresh one that had
+never joined. On a normal launch a signed-in climber's notification stream usually held the socket,
+which hid the race.
+
+graphql-ws 6 has a bug once that timeout is non-zero. It arms one timer per released operation but
+stores only the last handle, so releasing two operations in one tick and subscribing again leaves a
+timer that closes the socket under the new operation 3 s later. A session restart or an A→B switch does
+exactly that with its two streams. `createGraphQLClient` therefore counts live operations whenever
+`lazyCloseTimeoutMs` is set, and its socket subclass refuses a 1000 close while any is live.
+A dispose still goes through.
+
+**A cached join is retired whenever the shared connection ends.** `ws-client-core` reports every
+`closed` of the cached client, and its dispose, through `subscribeWsConnectionEnded`, and the queue
+provider bumps the join tracker's epoch on each. The engine only hears closes of the client it is
+bound to. A queue mutation's `ensureJoined` can join while the engine is parked and bound to nothing,
+during a backend outage for example, and that join would otherwise stay cached after its socket idled
+out. Mobile `@boardsesh/queue-react` sends also read the client again after `ensureReady`, so a
+mutation never goes out on a client that was disposed while its join ran.
+
 ### Board Queue Preview ("Up next" for gym kiosks)
 
 Party queues live in membership-gated sessions keyed by session UUID; a public gym kiosk is anonymous and only knows a boardId. The bridge is a **redacted, board-keyed queue preview**: `boardQueuePreview(boardId)` (query + subscription), implemented in `packages/backend/src/services/board-queue-preview.ts` and `graphql/resolvers/board-presence/queue-preview.ts`.
@@ -877,7 +912,7 @@ The session's `boardPath` is the route string the host first joined / created on
 
 ### Crew rest clock (#5382)
 
-One rest clock per session, so every crew member's rest timer counts the same rest and the phone holding the board can advance the wall for everyone. The backend half ships first; the mobile client adopts it in a later PR, once this backend is deployed (a new fragment on a type the deployed backend lacks fails the whole `sessionUpdates` subscription).
+One rest clock per session, so every crew member's rest timer counts the same rest and the phone holding the board can advance the wall for everyone. The backend half shipped first and the mobile client followed once it was deployed (a new fragment on a type the deployed backend lacks fails the whole `sessionUpdates` subscription); "The mobile client" below covers the phone's side.
 
 **Wire.** `setSessionRestCadence(input: SessionRestCadenceInput!): SetSessionRestCadencePayload!` (session from the WebSocket context) changes the clock; `SessionRestCadenceChanged` on `sessionUpdates` carries it. It is a `SessionEvent` member, never a `QueueEvent` (the queue channel is gated by sequence numbers and decoded by the native iOS socket) and never part of `JOIN_SESSION` (its recorded fixtures are keyed by document hash). The clock is nested under `restCadence` so its field names cannot collide with sibling union arms under `OverlappingFieldsCanBeMerged`.
 
@@ -938,7 +973,9 @@ The late bound has a cost. An afterTick clock whose deadline went more than 5 s 
 
 **Installed apps.** A bundle whose `sessionUpdates` document has no `... on SessionRestCadenceChanged` fragment receives `{ __typename: 'SessionRestCadenceChanged' }` and drops it (mobile's `toMobileSessionRuntimeEvent` returns null for an unknown typename); every other event keeps flowing. `session-roster-seed.test.ts` pins this with a frozen copy of the pre-#5382 mobile document.
 
-**Known limits.** Stage pacing (a 4x4's round rest, limit bouldering's send rule) reaches the crew clock only as a CONFIGURE from the phone that holds the workout run. If that phone sleeps while someone else holds the board, the holder keeps the last pacing it was sent, and when two members each built a run, the last CONFIGURE wins. A holder on an older bundle keeps its own local clock until it takes the update. A Redis that comes back from an older snapshot also brings back an older `lastFiredBeatAt`, so the beat that was current when it lost state can be claimed once more.
+**The mobile client.** `use-session-realtime.ts` hands `SessionRestCadenceChanged` to `lib/crew-rest-cadence.ts` before the roster mapper, so it never becomes a `RuntimeSessionEvent`. That module applies the revision floor (a snapshot replaces everything and resets it), converts every instant through the server clock offset (`lib/server-clock.ts`: the round-trip midpoint of a mutation reply, else the fastest event frame of the last five minutes) and writes the rest-timer store (`adoptCrewCadence`), whose readers then run on the crew's anchor unchanged. A phone takes an armed clock when it is already armed for that session or another member set it, and, from the subscribe seed only, a clock it set itself unless the climber turned the timer off on that phone since launch: a cold start brings back the setter's live clock, so the setter keeps pacing the wall, and an echo of its own ARM never turns a timer back on. An unknown `mode` or `advanceOn` is held as unsupported and never fired on. `RestTimerCrewPublisher`, mounted for every session, armed or not, turns the store's own local actions into calls one at a time, in order (the store announces nothing for a change it took from the server, so there is no echo loop): arm, disarm, pause, resume and reset map one to one; a tick sends TICK with its queue item and status; a change of workout stage on the wall, or a settings edit in a session alone, sends CONFIGURE with the phone's own pacing, 400 ms debounced, anchor `NOW` or `CLEAR` at a stage boundary or a change of mode (entering `onTheMinute` is always `NOW`); in a crew a settings edit sends nothing, and an edit from the timer's own controls sends CONFIGURE at once with the crew's config and only that change; a rest restarted after the background, a FIRE that never landed or a dead end refilled sends RESET (deadline) or CONFIGURE (`NOW` or `CLEAR`); and the seed of a session whose server has no clock yet, for a timer armed here, sends ARM. With a crew clock the scheduler claims every beat with FIRE (2 s timeout, no rate-limit retry) and moves the wall only on `applied: true`, and sends none for a beat the server's spacing fence would refuse; a refusal whose clock still has the beat retries it at most twice (at the beat by the server clock when the server was not there yet, at once when another write moved the revision), a beat more than 5 s gone restarts the rest, and a holder that hears nothing back skips the beat, then restarts the rest once nobody could claim it. On the minute the rest is never restarted from a phone: a beat let go is marked spent locally, so the next beat is claimed. A phone that takes the board over with an after-tick deadline already past restarts that rest once nobody can claim it. A later clock sample, even on a change too old to take, that moves the offset by more than 250 ms converts the held clock again. A phone alone in its session claims first too, and moves the wall itself only when the server cannot be reached. Passengers and an unheld wall never send FIRE, and a phone that handed the board over while in the background leaves the crew's rest alone when it comes back. The `SessionUpdates` screenshot fixture predates the fragment; `replayCompatibleFixtureResponse` in `scripts/lib/screenshot-fixtures.ts` replays its recorded roster frame for the current document.
+
+**Known limits.** Stage pacing (a 4x4's round rest, limit bouldering's send rule) reaches the crew clock only as a CONFIGURE from the phone that holds the workout run. If that phone sleeps while someone else holds the board, the holder keeps the last pacing it was sent, and when two members each built a run, the last CONFIGURE wins. A holder on an older bundle keeps its own local clock until it takes the update. A phone's optimistic action whose send fails stays local until the server's clock next changes or the phone resubscribes. A crewmate's late tick on the previous climb that reaches the server after the climb on the wall was sent replaces that send as the last tick, so under `send` the wall waits for the next one (phones on this version never send such a tick). A Redis that comes back from an older snapshot also brings back an older `lastFiredBeatAt`, so the beat that was current when it lost state can be claimed once more.
 
 **UserJoined / UserLeft identifier contract:** The `user.id` field in `UserJoined` and the `userId` field in `UserLeft` both carry the **session-scoped participant ID** (a server-derived HMAC for authenticated users, connection ID for anonymous users). The schema-field name `userId` predates the distinction and is a misnomer — renaming it is a breaking change for clients and out of scope. The web client populates its participant list from `UserJoined.user.id` and filters on disconnect with `u.id !== event.userId` (`use-session-lifecycle.ts:562`), so the two events must agree on shape. If you need the stable user UUID downstream (auth checks, tick attribution), use `ctx.userId` on the backend — which auth middleware sets and resolvers must not overwrite — or include `SessionUser.userId` in the payload explicitly (it is a separate field).
 

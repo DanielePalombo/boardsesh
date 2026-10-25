@@ -11,8 +11,10 @@
 //
 // WHAT IS **NOT** HERE: the target interval, the auto-advance switch and the
 // cadence mode. Those are durable preferences and live in `../settings`. This
-// store is purely "what is the timer doing right now", and none of it survives a
-// cold start — see `armed` below.
+// store is purely "what is the timer doing right now", and none of it is
+// persisted — see `armed` below. The one way an arm comes back after a cold
+// start is the crew's: a live crew clock is taken from the session's seed
+// (`crew`, below), whoever set it, bounded by the live session.
 //
 // Two fields are context the timer runs in rather than its own state (#5380):
 // `stagePacing`, the workout stage pacing of the climb on the wall, and
@@ -20,11 +22,21 @@
 // merge the stage pacing with the settings through `useEffectiveRestPacing()`;
 // the scheduler reads `lastTick` to decide whether a finished rest may move the
 // wall under a tick or send rule (`restAdvanceAllowed`). Neither is persisted.
+//
+// The crew clock (#5382): in a session, the backend keeps one rest clock every
+// member follows. `crew` holds it as this phone took it (lib/crew-rest-cadence.ts),
+// and `adoptCrewCadence` writes its anchor, pause and last tick into the timer's
+// own fields, so the pill and the scheduler read it unchanged. Every action this
+// phone takes itself is announced to `subscribeLocalRestTimerActions`, which the
+// crew publisher turns into `setSessionRestCadence` calls; taking a crew change
+// announces nothing, so the two never echo each other.
 
+import type { CrewRestCadence } from './crew-rest-cadence';
 import { getRestTimerStartMs, type RestTimerMode } from './rest-timer';
 import { getAfterTickRestFloorMs, isTickFreshEnoughToArm } from './rest-timer-auto-advance';
 import {
   sameStagePacing,
+  type CrewRestConfig,
   type RestTimerLastTick,
   type RestTimerPacingTransition,
   type RestTimerStagePacing,
@@ -43,6 +55,21 @@ export type RestTimerState = {
    * it in when the session id appears.
    */
   armedForSessionId: string | null;
+  /**
+   * The crew's shared clock for `armedForSessionId`, when this phone follows
+   * one (#5382). Written only by `adoptCrewCadence` and `clearCrewCadence`; a
+   * local arm or disarm drops it until the server's answer comes back. Its
+   * config is null for a clock this app cannot run (never fired on).
+   */
+  crew: CrewRestCadence | null;
+  /**
+   * A change to the crew clock's length, cadence or auto-advance this phone
+   * made from the timer's own controls (`editCrewRestPacing`) that the server
+   * has not answered yet. Only the controls show it, so a second tap steps on
+   * from the first; the timer keeps running on the crew's config until the
+   * answer comes back. Cleared by that answer, or a crew config that matches it.
+   */
+  crewPacingDraft: CrewRestConfig | null;
   /** What the countdown counts from. `null` = armed but nothing to count yet. */
   anchorMs: number | null;
   isRunning: boolean;
@@ -81,8 +108,22 @@ export type RestTimerState = {
    * lit for the wrong one. Under `afterTick` a running rest that began before
    * it counts from it instead (`floorRestTimerAnchorAtLastAdvance`). Cleared on
    * arm and disarm, so it only ever speaks for this arm.
+   *
+   * Only ever a real advance: the tick floor and the after-tick rest floor read
+   * it as the wall's last move. A crew beat let go without one is
+   * `crewBeatSkippedMs`.
    */
   lastFiredDeadlineMs: number | null;
+  /**
+   * The last beat of a crew's clock on the minute this phone let go without
+   * moving the wall (`noteRestTimerCrewBeatSkipped`): its FIRE failed, came back
+   * refused or too late, or the phone slept through it. The scheduler's
+   * on-the-minute walk and its reached cue count it as handled, so they move on
+   * to the next beat. Kept out of `lastFiredDeadlineMs`, since the server never
+   * took it: read as an advance, a tick after the crew switched to after-tick
+   * would floor its rest there and fall behind the crew's (Fable, #6757).
+   */
+  crewBeatSkippedMs: number | null;
   /**
    * The workout stage pacing of the climb on the wall, or null when no stage
    * paces it. Written ONLY by `RestTimerPacingSync`; arm and disarm keep it,
@@ -102,6 +143,8 @@ export type RestTimerState = {
 const INITIAL_STATE: RestTimerState = {
   armed: false,
   armedForSessionId: null,
+  crew: null,
+  crewPacingDraft: null,
   anchorMs: null,
   isRunning: false,
   pausedElapsedSeconds: 0,
@@ -110,12 +153,71 @@ const INITIAL_STATE: RestTimerState = {
   queueEnded: false,
   listEnded: false,
   lastFiredDeadlineMs: null,
+  crewBeatSkippedMs: null,
   stagePacing: null,
   lastTick: null,
 };
 
 let state: RestTimerState = INITIAL_STATE;
 const listeners = new Set<() => void>();
+
+/**
+ * Something this phone did to its own timer, for the crew publisher to send on.
+ * Each carries the session the timer was armed for at that moment, so an action
+ * from a session the phone has since left is never sent into the new one.
+ */
+export type LocalRestTimerAction =
+  | { type: 'arm'; sessionId: string | null }
+  | { type: 'bound'; sessionId: string }
+  | { type: 'disarm'; sessionId: string | null }
+  | {
+      type: 'tick';
+      sessionId: string | null;
+      tick: RestTimerLastTick | null;
+      tickStartMs: number;
+      /** False when the tick was kept out of `lastTick` (a late tick on another climb). */
+      tickRecorded: boolean;
+    }
+  | { type: 'pause'; sessionId: string | null; pausedElapsedSeconds: number }
+  | { type: 'resume'; sessionId: string | null }
+  | { type: 'reset'; sessionId: string | null; isRunning: boolean }
+  | { type: 'queueEndedCleared'; sessionId: string | null; anchorAfter: RestTimerAnchorAfter }
+  /** This phone moved the wall itself (no crew clock, or a solo FIRE that got no answer). */
+  | { type: 'fired'; sessionId: string | null; anchorAfter: RestTimerAnchorAfter }
+  | { type: 'reanchored'; sessionId: string | null }
+  /** `atMs`: the instant an `anchorNow` transition started the beat at, so the crew's NOW counts from it. */
+  | { type: 'stagePacing'; sessionId: string | null; transition: RestTimerPacingTransition; atMs: number }
+  /** The climber changed the crew clock from the timer's controls: `crewPacingDraft` holds what to send. */
+  | { type: 'crewPacingEdited'; sessionId: string | null };
+
+const localActionListeners = new Set<(action: LocalRestTimerAction) => void>();
+
+function announce(action: LocalRestTimerAction): void {
+  for (const listener of localActionListeners) listener(action);
+}
+
+/**
+ * Every timer action this phone takes itself, after it applied. Never called
+ * for a crew change taken from the server, so a publisher can send each one on
+ * without an echo loop.
+ */
+export function subscribeLocalRestTimerActions(listener: (action: LocalRestTimerAction) => void): () => void {
+  localActionListeners.add(listener);
+  return () => {
+    localActionListeners.delete(listener);
+  };
+}
+
+/**
+ * Reads the queue item on the wall now, for a crew clock with a tick or send
+ * rule and no workout stage of its own (see `lastTickAfter`). Set by the crew
+ * publisher, which can read the queue without subscribing to it.
+ */
+let readWallQueueItemUuid: () => string | null = () => null;
+
+export function setRestTimerWallQueueItemReader(reader: (() => string | null) | null): void {
+  readWallQueueItemUuid = reader ?? (() => null);
+}
 
 function setState(next: RestTimerState): void {
   if (next === state) return;
@@ -149,12 +251,16 @@ export function armRestTimer(mode: RestTimerMode, nowMs: number, sessionId: stri
     isRunning: true,
     cycleId: state.cycleId + 1,
   });
+  announce({ type: 'arm', sessionId });
 }
 
 export function disarmRestTimer(): void {
+  const sessionId = state.armedForSessionId;
+  const wasArmed = state.armed;
   // Keep the cycle counter climbing so any timeout scheduled against the old
   // cycle can never match after a re-arm.
   setState({ ...INITIAL_STATE, stagePacing: state.stagePacing, cycleId: state.cycleId + 1 });
+  if (wasArmed) announce({ type: 'disarm', sessionId });
 }
 
 /**
@@ -176,6 +282,12 @@ function tickAnchorMs(tickStartMs: number, nowMs: number): number {
   return Math.min(nowMs, floorMs);
 }
 
+/** Following a crew clock that moves on only after a tick (or a send) on the climb on the wall. */
+function followsCrewTickRule(): boolean {
+  const config = state.crew?.config;
+  return config !== null && config !== undefined && config.advanceOn !== 'deadline';
+}
+
 /**
  * The last tick after this one lands. A tick naming no queue item, or left out,
  * keeps the last one. A tick on another queue item than the climb on the wall
@@ -183,12 +295,16 @@ function tickAnchorMs(tickStartMs: number, nowMs: number): number {
  * wall's: a save started on the previous climb can finish after the advance,
  * even after the new climb's own tick, and taking its place would leave the new
  * climb never moving on under a tick or send rule until it was logged again.
- * With no stage naming the climb on the wall (the climber's own settings, which
- * advance on the deadline) every tick on a queue item replaces it, as before.
+ * Under a crew clock's tick or send rule with no stage of this phone's own, the
+ * climb on the wall is the queue's current item (contracts §16, #6729). With
+ * neither (the climber's own settings, or a crew clock that advances on the
+ * deadline) every tick on a queue item replaces it, as before.
  */
 function lastTickAfter(tick: RestTimerLastTick | undefined): RestTimerLastTick | null {
   if (!tick || tick.queueItemUuid === null) return state.lastTick;
-  const onTheWall = state.stagePacing?.queueItemUuid ?? null;
+  // A crew clock with a tick or send rule needs the same protection on a phone
+  // that has no stage of its own: the climb on the wall is read from the queue.
+  const onTheWall = state.stagePacing?.queueItemUuid ?? (followsCrewTickRule() ? readWallQueueItemUuid() : null);
   const wallTickStands =
     onTheWall !== null && tick.queueItemUuid !== onTheWall && state.lastTick?.queueItemUuid === onTheWall;
   return wallTickStands ? state.lastTick : { status: tick.status, queueItemUuid: tick.queueItemUuid };
@@ -240,6 +356,24 @@ export function noteRestTimerTick(
   const tickStartMs = getRestTimerStartMs(climbedAt) ?? nowMs;
   const isFresh = isTickFreshEnoughToArm(tickStartMs, nowMs);
   const lastTick = isFresh ? lastTickAfter(tick) : state.lastTick;
+  const tickAction: LocalRestTimerAction = {
+    type: 'tick',
+    sessionId: state.armedForSessionId,
+    tick: tick ?? null,
+    tickStartMs,
+    tickRecorded: tick !== undefined && lastTick !== state.lastTick,
+  };
+
+  // Under a crew clock's tick or send rule the crew's rest belongs to the climb
+  // on the wall: a tick kept out of the last tick (another climb, one from a
+  // list, or one from history) never reaches the shared clock (see the crew
+  // publisher), so it must not move this phone's rest either, or the two would
+  // count different rests.
+  if (followsCrewTickRule() && !tickAction.tickRecorded) {
+    setState({ ...state, lastTickAt: climbedAt });
+    announce(tickAction);
+    return;
+  }
   const anchorFromTick = isFresh ? tickAnchorMs(tickStartMs, nowMs) : historicalTickAnchorMs(tickStartMs, nowMs);
 
   if (mode === 'onTheMinute') {
@@ -257,13 +391,16 @@ export function noteRestTimerTick(
       queueEnded: isFresh ? false : state.queueEnded,
       cycleId: state.queueEnded && isFresh ? state.cycleId + 1 : state.cycleId,
     });
+    announce(tickAction);
     return;
   }
 
   if (!isFresh && !state.isRunning) {
     // A historical tick on a paused timer: the pause and the rest it froze
     // stand. Resuming here would lose the pause and count up from yesterday.
+    // The crew's clock does the same with its TICK (#6754).
     setState({ ...state, lastTickAt: climbedAt });
+    announce(tickAction);
     return;
   }
 
@@ -279,6 +416,7 @@ export function noteRestTimerTick(
     // look. A historical one leaves the dead-end latch as it was.
     queueEnded: isFresh ? false : state.queueEnded,
   });
+  announce(tickAction);
 }
 
 export function pauseRestTimer(nowMs: number): void {
@@ -291,6 +429,7 @@ export function pauseRestTimer(nowMs: number): void {
     pausedElapsedSeconds: elapsedSeconds,
     cycleId: state.cycleId + 1,
   });
+  announce({ type: 'pause', sessionId: state.armedForSessionId, pausedElapsedSeconds: elapsedSeconds });
 }
 
 export function resumeRestTimer(nowMs: number): void {
@@ -303,6 +442,7 @@ export function resumeRestTimer(nowMs: number): void {
     pausedElapsedSeconds: 0,
     cycleId: state.cycleId + 1,
   });
+  announce({ type: 'resume', sessionId: state.armedForSessionId });
 }
 
 /**
@@ -318,12 +458,14 @@ export function resetRestTimer(nowMs: number): void {
     cycleId: state.cycleId + 1,
     queueEnded: false,
   });
+  announce({ type: 'reset', sessionId: state.armedForSessionId, isRunning: state.isRunning });
 }
 
 /** A pre-session arm carrying into the session that just started. */
 export function bindRestTimerToSession(sessionId: string): void {
   if (!state.armed || state.armedForSessionId === sessionId) return;
   setState({ ...state, armedForSessionId: sessionId });
+  announce({ type: 'bound', sessionId });
 }
 
 /**
@@ -364,6 +506,7 @@ export function noteRestTimerAutoAdvanceFired(
     cycleId: state.cycleId + 1,
     lastFiredDeadlineMs: firedDeadlineMs,
   });
+  announce({ type: 'fired', sessionId: state.armedForSessionId, anchorAfter });
   return true;
 }
 
@@ -404,6 +547,7 @@ export function clearRestTimerQueueEnded(
     pausedElapsedSeconds: 0,
     cycleId: state.cycleId + 1,
   });
+  announce({ type: 'queueEndedCleared', sessionId: state.armedForSessionId, anchorAfter });
 }
 
 /**
@@ -414,7 +558,29 @@ export function clearRestTimerQueueEnded(
  */
 export function reanchorRestTimerAfterBackground(nowMs: number, deadlineMs: number | null): void {
   if (!state.armed || !state.isRunning || deadlineMs === null || deadlineMs > nowMs) return;
+  // A crew's fixed beat is the crew's: its next beat is still ahead, and moving
+  // it here would put this phone out of step with everyone else (contracts §10).
+  if (state.crew?.config?.mode === 'onTheMinute') return;
   setState({ ...state, anchorMs: nowMs, pausedElapsedSeconds: 0, cycleId: state.cycleId + 1 });
+  announce({ type: 'reanchored', sessionId: state.armedForSessionId });
+}
+
+/**
+ * A beat of a crew's clock on the minute went by without this phone moving the
+ * wall: its FIRE failed, came back refused or too late, or its timeout ran with
+ * the beat already stale. The crew's beat is never moved here (see above), so
+ * nothing else in the store changes, and the scheduler, which works out the
+ * next beat when it renders, would sit on the one that went. Marking it spent
+ * walks the scheduler on to the next beat, never as an advance
+ * (`crewBeatSkippedMs`). Announces nothing: the crew's clock did not change.
+ */
+export function noteRestTimerCrewBeatSkipped(beatMs: number): void {
+  if (!state.armed || state.crew?.config?.mode !== 'onTheMinute') return;
+  setState({
+    ...state,
+    crewBeatSkippedMs: Math.max(state.crewBeatSkippedMs ?? beatMs, beatMs),
+    cycleId: state.cycleId + 1,
+  });
 }
 
 /**
@@ -467,6 +633,7 @@ export function applyRestTimerStagePacing(
   if (sameStagePacing(state.stagePacing, next)) return;
   if (!state.armed || transition === 'none') {
     setState({ ...state, stagePacing: next });
+    if (state.armed) announce({ type: 'stagePacing', sessionId: state.armedForSessionId, transition, atMs: nowMs });
     return;
   }
   setState({
@@ -476,10 +643,205 @@ export function applyRestTimerStagePacing(
     pausedElapsedSeconds: 0,
     cycleId: state.cycleId + 1,
   });
+  announce({ type: 'stagePacing', sessionId: state.armedForSessionId, transition, atMs: nowMs });
+}
+
+function sameCrewTimerConfig(left: CrewRestCadence['config'], right: CrewRestCadence['config']): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.mode === right.mode &&
+    left.targetSeconds === right.targetSeconds &&
+    left.autoAdvance === right.autoAdvance &&
+    left.advanceOn === right.advanceOn &&
+    left.source === right.source &&
+    left.setByParticipantId === right.setByParticipantId
+  );
+}
+
+function sameLastTick(left: RestTimerLastTick | null, right: RestTimerLastTick | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.status === right.status && left.queueItemUuid === right.queueItemUuid;
+}
+
+/** The five fields a CONFIGURE carries, compared one by one. */
+function sameCrewPacingFields(
+  left: Pick<CrewRestConfig, 'mode' | 'targetSeconds' | 'autoAdvance' | 'advanceOn' | 'source'>,
+  right: Pick<CrewRestConfig, 'mode' | 'targetSeconds' | 'autoAdvance' | 'advanceOn' | 'source'>,
+): boolean {
+  return (
+    left.mode === right.mode &&
+    left.targetSeconds === right.targetSeconds &&
+    left.autoAdvance === right.autoAdvance &&
+    left.advanceOn === right.advanceOn &&
+    left.source === right.source
+  );
+}
+
+/**
+ * The climber changed the crew clock's length, cadence or auto-advance from the
+ * timer's controls (lib/crew-rest-cadence.ts `editCrewRestPacing` builds
+ * `config`). Held as the draft the controls show, and announced so the crew
+ * publisher sends it as a CONFIGURE. Only while this phone follows a crew clock
+ * it can run. The timer itself waits for the server's answer.
+ */
+export function setCrewRestPacingDraft(config: CrewRestConfig): boolean {
+  const crew = state.crew;
+  if (!state.armed || crew === null || crew.config === null) return false;
+  setState({ ...state, crewPacingDraft: config });
+  announce({ type: 'crewPacingEdited', sessionId: crew.sessionId });
+  return true;
+}
+
+/**
+ * The server answered (or failed to answer) a CONFIGURE sent for `sent`. The
+ * draft goes unless the climber has changed it again since, in which case the
+ * newer one is still on its way.
+ */
+export function settleCrewRestPacingDraft(
+  sent: Pick<CrewRestConfig, 'mode' | 'targetSeconds' | 'autoAdvance' | 'advanceOn' | 'source'>,
+): void {
+  const draft = state.crewPacingDraft;
+  if (draft === null || !sameCrewPacingFields(draft, sent)) return;
+  setState({ ...state, crewPacingDraft: null });
+}
+
+/** The publisher for the draft's session went: nothing will send it. */
+export function dropCrewRestPacingDraft(sessionId: string): void {
+  if (state.crewPacingDraft === null || state.crew?.sessionId !== sessionId) return;
+  setState({ ...state, crewPacingDraft: null });
+}
+
+/**
+ * How far a better clock-offset estimate has to move a crew instant the server
+ * did not move before this phone takes the new conversion. Below it the instant
+ * stays put, so the deadline does not jitter with every clock sample.
+ */
+export const CREW_RECONVERT_THRESHOLD_MS = 250;
+
+/** Whether a fresh conversion of a server instant moved it past the threshold from the one held. */
+export function crewConversionMoved(heldMs: number | null, freshMs: number | null): boolean {
+  if (heldMs === null || freshMs === null) return heldMs !== freshMs;
+  return Math.abs(freshMs - heldMs) > CREW_RECONVERT_THRESHOLD_MS;
+}
+
+/**
+ * Follow the crew clock (lib/crew-rest-cadence.ts decides when). The timer is
+ * armed for the crew's session and runs on its anchor, pause and last tick.
+ *
+ * What the SERVER changed is what moves: when its anchor, pause and running
+ * state are the ones already held, this phone's own fields stay as they are,
+ * so an action this phone just took (a reset whose echo is still on its way)
+ * is not undone by an unrelated change. The cycle rolls only when something
+ * the scheduler reads changed. The last advance is the later of the two
+ * clocks', so neither phone's beat can fire twice.
+ *
+ * An instant the server did not move keeps the conversion already held, unless
+ * the clock offset estimate moved it by more than CREW_RECONVERT_THRESHOLD_MS
+ * and this phone has no action of its own waiting. A clock is converted when it
+ * is taken, and on a cold start the first estimate can be seconds out (a lower
+ * bound, read late); on the minute the server never moves the anchor, so that
+ * error would otherwise last the whole block.
+ *
+ * A clock this app cannot run (config null) is only held: the timer keeps its
+ * own state and the scheduler refuses to fire while it is there.
+ */
+export function adoptCrewCadence(
+  crew: CrewRestCadence,
+  { replaceLocal = false }: { replaceLocal?: boolean } = {},
+): void {
+  // A snapshot (the subscribe seed) is the whole truth: it replaces whatever
+  // this phone did meanwhile, including an action whose send never landed.
+  const previous = !replaceLocal && state.crew !== null && state.crew.sessionId === crew.sessionId ? state.crew : null;
+  const config = previous !== null && sameCrewTimerConfig(previous.config, crew.config) ? previous.config : crew.config;
+  // A draft the crew's config now matches has landed; one for another session never will.
+  const crewPacingDraft =
+    state.crewPacingDraft === null ||
+    previous === null ||
+    (config !== null && sameCrewPacingFields(state.crewPacingDraft, config))
+      ? null
+      : state.crewPacingDraft;
+  if (config === null) {
+    setState({ ...state, crew: { ...crew, config }, crewPacingDraft: null, cycleId: state.cycleId + 1 });
+    return;
+  }
+  const serverClockHeld =
+    previous !== null &&
+    previous.config !== null &&
+    previous.anchorServerMs === crew.anchorServerMs &&
+    previous.isRunning === crew.isRunning &&
+    previous.pausedElapsedSeconds === crew.pausedElapsedSeconds;
+  const serverTickHeld = previous !== null && sameLastTick(previous.lastTick, crew.lastTick);
+  const lastFiredHeld = previous !== null && previous.lastFiredBeatServerMs === crew.lastFiredBeatServerMs;
+  // The crew's instants on this phone's clock, as held unless the server or the offset moved them.
+  const crewAnchorMs =
+    serverClockHeld && !crewConversionMoved(previous.anchorMs, crew.anchorMs) ? previous.anchorMs : crew.anchorMs;
+  const crewLastFiredBeatMs =
+    lastFiredHeld && !crewConversionMoved(previous.lastFiredBeatMs, crew.lastFiredBeatMs)
+      ? previous.lastFiredBeatMs
+      : crew.lastFiredBeatMs;
+  // The server's clock is the one held and this phone's own fields still match
+  // it: no action of this phone's is waiting for its echo.
+  const followsHeldClock =
+    serverClockHeld &&
+    state.anchorMs === previous.anchorMs &&
+    state.isRunning === previous.isRunning &&
+    state.pausedElapsedSeconds === previous.pausedElapsedSeconds;
+  const keepsOwnClock = serverClockHeld && state.armed && !followsHeldClock;
+  const anchorMs = keepsOwnClock ? state.anchorMs : crewAnchorMs;
+  const isRunning = keepsOwnClock ? state.isRunning : crew.isRunning;
+  const pausedElapsedSeconds = keepsOwnClock ? state.pausedElapsedSeconds : crew.pausedElapsedSeconds;
+  const lastTick = serverTickHeld && state.armed ? state.lastTick : crew.lastTick;
+  const lastFiredDeadlineMs =
+    crewLastFiredBeatMs === null
+      ? state.lastFiredDeadlineMs
+      : lastFiredHeld && state.lastFiredDeadlineMs === previous.lastFiredBeatMs
+        ? // Nothing fired here since: follow the conversion.
+          crewLastFiredBeatMs
+        : Math.max(state.lastFiredDeadlineMs ?? crewLastFiredBeatMs, crewLastFiredBeatMs);
+  const timerChanged =
+    !state.armed ||
+    state.armedForSessionId !== crew.sessionId ||
+    anchorMs !== state.anchorMs ||
+    isRunning !== state.isRunning ||
+    pausedElapsedSeconds !== state.pausedElapsedSeconds ||
+    lastFiredDeadlineMs !== state.lastFiredDeadlineMs ||
+    !sameCrewTimerConfig(state.crew?.config ?? null, config);
+  setState({
+    ...state,
+    armed: true,
+    armedForSessionId: crew.sessionId,
+    crew: { ...crew, config, anchorMs: crewAnchorMs, lastFiredBeatMs: crewLastFiredBeatMs },
+    crewPacingDraft,
+    anchorMs,
+    isRunning,
+    pausedElapsedSeconds,
+    lastTick,
+    lastFiredDeadlineMs,
+    // A beat let go only means something on the minute.
+    crewBeatSkippedMs: config.mode === 'onTheMinute' ? state.crewBeatSkippedMs : null,
+    // The crew clock restarting is a reason to look at the queue again, as a tick is.
+    queueEnded: anchorMs !== state.anchorMs ? false : state.queueEnded,
+    cycleId: timerChanged ? state.cycleId + 1 : state.cycleId,
+  });
+}
+
+/**
+ * The crew turned its clock off. A followed clock turns this phone's timer off
+ * with it; an unsupported one was never running it, so only the hold goes.
+ */
+export function clearCrewCadence(): void {
+  if (state.crew === null) return;
+  if (state.crew.config === null) {
+    setState({ ...state, crew: null, cycleId: state.cycleId + 1 });
+    return;
+  }
+  setState({ ...INITIAL_STATE, stagePacing: state.stagePacing, cycleId: state.cycleId + 1 });
 }
 
 /** Test-only: drop every listener and return to the initial state. */
 export function resetRestTimerStoreForTests(): void {
   state = INITIAL_STATE;
   listeners.clear();
+  localActionListeners.clear();
+  readWallQueueItemUuid = () => null;
 }

@@ -179,7 +179,7 @@
       "limitReached": "You've reached the maximum number of boards for one account. Delete a board you no longer use to add another.",
       "timer": "Workout timer",
       "timerNone": "No timer paired",
-      "timerHint": "Pair a Rogue gym timer to this board. While you're driving the wall, every send starts its stopwatch.",
+      "timerHint": "Pair a Rogue gym timer to this board. While you're driving the wall, its stopwatch restarts with each rest, or on every logged climb when the rest timer is off.",
       "timerPairCta": "Pair a timer",
       "timerChangeCta": "Change timer",
       "timerRemoveCta": "Remove",
@@ -311,7 +311,8 @@
       "title": "Pair a workout timer",
       "subtitle": "Pick the Rogue or Echo timer next to this board.",
       "scanning": "Looking for nearby timers…",
-      "empty": "No timers found. Make sure the timer is powered on and within range."
+      "empty": "No timers found. Make sure the timer is powered on and within range.",
+      "permissionDenied": "Allow Bluetooth permissions to look for timers."
     },
     "gymGrant": {
       "sectionTitle": "Write access",
