@@ -717,6 +717,7 @@ export function PlayCore({
     navigationState,
     currentTrackLabel,
     trackEndCard,
+    listWalkUpNextCount,
     nextHeaderClimb,
     previousHeaderClimb,
     nextHeaderBoard,
@@ -1800,6 +1801,7 @@ export function PlayCore({
       supportsMirroring={supportsMirroring}
       isFavorited={isFavorited}
       remainingQueueCount={navigationState.remainingCount}
+      upNextBadgeCount={listWalkUpNextCount}
       lightbulbActive={lightbulbActive}
       lightbulbConnected={bluetoothConnected || wallHeldLocally}
       lightbulbPending={lightbulbPending}
