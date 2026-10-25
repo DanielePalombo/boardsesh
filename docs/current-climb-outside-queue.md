@@ -161,9 +161,12 @@ phones (`lineAfterDelta`, below), whoever sent it and whatever `QUEUE_NOW_SLOT_P
    its index, so they change no membership. The widget and Garmin navigate stops at the ends
    instead of wrapping (section 3).
 4. History holds at most 125 entries and is trimmed to 100. History + Up next hold at most
-   `MAX_SYNCED_QUEUE_ITEMS` = 500 (`shared/queue/src/limits.ts:17`); the climb on the wall is
+   `MAX_SYNCED_QUEUE_ITEMS` = 500 (`shared/queue/src/limits.ts:25`); the climb on the wall is
    extra, so the array holds at most 501 entries with a climb current and 500 with nothing
    current. Opening a climb is never rejected and never drops a queued climb (section 5).
+   Navigation moves (the widget, Garmin and controller Next and Previous) add nothing and never
+   trim, so after one a History above 125 stays there until the next placement trims it. That
+   causes no drift: new phones never trim in a session (section 5).
 5. Every server write stores a `historyCount` computed by `now-slot.ts`. No writer leaves it to
    a default.
 
@@ -177,7 +180,7 @@ reducer, the same way `state-hash.ts` is shared so the two sides can't drift (#2
 | `upNextStart(queue, current, historyCount)` | `indexOf(current) + 1` when the current climb is in `queue`, else (nothing current, or an orphan) `historyCount ?? 0`. Every reader that today does `findIndex(current)` and treats -1 as "all Up next" calls this instead. |
 | `historyLine(state)`, `historyOf(state)`, `upNextOf(state)` | The line and the two slices. Readers never do index arithmetic on `queue` themselves. |
 | `placeOnWall(state, item, placement, shouldAddToQueue)` | The table below. `shouldAddToQueue` only tells an old Next (`false`) from a shipped row tap (`true`) and the native socket (absent) on the `next-from-line` row. Returns `{ queue, currentClimbQueueItem, historyCount, rewrite }`, a state the other functions take as is. Never trims. |
-| `capHistory(state, headroom)` | Trims History, oldest first (section 5). `headroom` is the number of entries about to be added (1 before `addQueueItem`). Returns the state plus `trimmedCount`. Run `normaliseOrphanCurrent` first: an orphan counts as nothing current and passes through. |
+| `capHistory(state, headroom)` | Trims History, oldest first (section 5). `headroom` is the number of entries about to be added; 0 once the add is already in the array, which is how `addQueueItem` calls it, after its write 1. Returns the state plus `trimmedCount`. Run `normaliseOrphanCurrent` first: an orphan counts as nothing current and passes through. |
 | `isUpNextFull(state, adding)`, `QUEUE_FULL` | The cap check on Up next and the `addQueueItem` error code (section 5). The climb on the wall doesn't count, and History doesn't either, because `capHistory` trims all of it first. Run `normaliseOrphanCurrent` first: an orphan is not counted until it is inserted. |
 | `historyAndUpNextCount(state)` | The entries the 500 cap counts: the array minus the current climb when it is in the array. `capHistory` trims against it. |
 | `isSameWallClimb(a, b)` | The match key (below). |
@@ -306,7 +309,9 @@ type QueueState {
 - No event type or event field changes. `FullSync.state` carries `historyCount`. Every delta
   keeps flat positions. Both sides derive `historyCount` from a delta with `lineAfterDelta`.
 - `addQueueItem` gains one failure: a GraphQL error with `extensions.code = 'QUEUE_FULL'`
-  (section 5).
+  (section 5). A `setQueue` or `joinSession` payload whose Up next alone exceeds 500 is
+  rejected with the same code (`UpNextOverCapError`), where today's 500 check threw a plain
+  error with no code.
 - **Input validation.** `setQueue(historyCount:)` and `joinSession(initialHistoryCount:)` go
   through `normaliseHistoryCount`: `QueueIndexSchema` (`validation/schemas/primitives.ts:125`,
   integer ≥ 0) first, then, after `parseArrayTolerant` and `capHistory`, a clamp to
@@ -399,7 +404,9 @@ crewmate's newly opened climb. That is today's behaviour and stays out of scope.
   `currentChangedAt`. `UPDATE_QUEUE_STATE_CAS_SCRIPT` (`:95-150`) takes `historyCount` and the
   new current uuid as two more ARGV and writes the fields in the same `HSET` (`:139-147`), so
   they move atomically with `queue` under the same version check. `historyCountVersion` is set
-  to the new version. The non-CAS `updateQueueState` (`:212`) writes them the same way;
+  to the new version. The non-CAS `updateQueueState` (`:212`) writes the same fields, but always stamps
+  `currentChangedAt`: its only callers seed or settle a room (the join seed and the Postgres
+  settle);
   `saveSession` copies what it is given.
 - **Both CAS callers carry it.** The script has two callers, both through `casWithDormancyFloor`
   (`services/room-manager/queue-state.ts:22`): `updateQueueState` (`:82`, used by
@@ -430,14 +437,20 @@ crewmate's newly opened climb. That is today's behaviour and stays out of scope.
   `:1548`, `:1895`), title and notes edits (`social/session-mutations.ts:154`) and board-path
   changes (`room-manager/session-discovery.ts:82`) also bump. When `historyCountVersion` is
   stale (an old-script write), the reader returns `lastActivity`, which that old write just
-  stamped; it errs towards lighting.
+  stamped; it errs towards lighting. The write side follows the same rule: when the stored
+  fields are stale (no `currentUuid`, or `historyCountVersion` behind `version`), the stored uuid
+  can't be trusted, so the next new-script write stamps `currentChangedAt = now` whatever the
+  uuids say. That also errs towards lighting, once per room after the deploy.
 - **Writes that need the stored line are versioned.** The derivation with nothing current needs
   the stored `historyCount` and queue, read in Node. Today's no-baseline `setQueue` is a blind
   `CAS_ANY_VERSION` write (`queue/mutations.ts:522`, `queue-state.ts:137`), so a crewmate's
   removal between the read and the write would leave the line one off. Rule: a write that
   leaves nothing current always passes the version it read and retries on conflict, the way
   `setCurrentClimbAndPublish` does (`resolvers/shared/queue-retry.ts:38-39`). A blind write is
-  allowed only when a climb is current, because then the line is derived.
+  allowed only when a climb is current, because then the line is derived. The same holds for a
+  payload orphan without `historyCount`, whose line is the same derivation. If the versioned
+  write burns its retries, it falls back to a blind write composed from a fresh read, as the
+  #3933 merge does, so a contended session never turns a `setQueue` into a user-facing error.
 
 ### Postgres (`packages/db/src/schema/app/sessions.ts:172-182`)
 
@@ -481,9 +494,9 @@ percent gates only the placement rules, the clamps and the caps (section 8). The
 | `reorderQueueItem` | `lineAfterDelta` for the reorder (after the clamp, inside the percent) |
 | `removeQueueItem` (`queue/mutations.ts:147-154`) | `lineAfterDelta`: the current climb's index when it was removed, −1 for a History entry |
 | `setQueue`, `joinSession` seed | `normaliseHistoryCount` on the input, or the derivation in section 3 when there is none |
-| `replaceQueueItem` (`queue/mutations.ts:313-361`) | The stored value: it swaps an entry by uuid in place |
-| `mirrorSessionClimb` (`services/queue-mirror.ts:14-36`) | The stored value: it rewrites the current entry in place |
-| `navigateToQueueItem` (`services/queue-navigation.ts:127-183`), widget and Garmin `navigateSessionQueue`, controller `navigateQueue` | Derived: they always set a current climb |
+| `replaceQueueItem` (`queue/mutations.ts:313-361`) | The stored value: it swaps an entry by uuid in place. A stored orphan is normalised by the write (it already publishes a `FullSync`). |
+| `mirrorSessionClimb` (`services/queue-mirror.ts:14-36`) | The stored value: it rewrites the current entry in place. A write that normalises a stored orphan publishes a `FullSync` instead of `ClimbMirrored`; the widget route still answers with the mirror fields. |
+| `navigateToQueueItem` (`services/queue-navigation.ts:127-183`), widget and Garmin `navigateSessionQueue`, controller `navigateQueue` | Derived: they always set a current climb. A stored orphan is normalised first (invariant 1); the move then publishes a `FullSync` + trailing instead of the pointer event. |
 
 `getQueueState` (`:401`) returns `historyCount` and `currentChangedAt` beside `queue`.
 
@@ -584,12 +597,13 @@ Shipped mobile calls `setQueue` from four places. Add to queue is `addQueueItem`
   [B | C D] after A was removed, payload [A B C D], line 2. A restored entry that sits right at
   the line goes to the head of Up next. The write is versioned and retried on conflict
   (section 2, Redis), so a crewmate's removal can't slip between the read and the write.
-- A payload over the cap is trimmed from History instead of thrown (section 5), so an old phone
-  can no longer wedge sync this way. The climb on the wall doesn't count: a room at 501 entries
-  with a climb current (500 History + Up next) writes back as is, and the raw guard outside the
-  percent takes 501 entries when the payload's current climb is in it. With nothing current the
-  excess over 500 comes off the head of the array, the oldest entries, and the line moves down
-  by the number trimmed.
+- Inside the percent, a payload over the cap is trimmed from History instead of thrown
+  (section 5), so an old phone can no longer wedge sync this way. The climb on the wall doesn't
+  count: a room at 501 entries with a climb current (500 History + Up next) writes back as is at
+  every percent, because the raw guard outside the percent takes 501 entries when the payload's
+  current climb is in it. Up next is never trimmed: when Up next alone exceeds 500 the payload is
+  rejected with `QUEUE_FULL`, with a climb current or not, and the phone keeps its state as it
+  does today.
 - No per-item field is added, so there is nothing for an old client to strip on write-back
   (the #3927 / #3995 class stays closed).
 - **A reshape inside the write's round trip is lost (S14).** The #3933 merge
@@ -718,12 +732,21 @@ wall lights: the backend PR (the trailing event), the #4979 hold, and PR 7.
 (owner decision, 2026-10-24): the stored array holds at most 501 entries while a climb is
 current and at most 500 while nothing is. Opening a climb is never rejected and never drops a
 queued climb. With nothing current and 500 climbs in Up next, opening a new climb takes the
-`insert` row and stores 501 entries; there is no History to trim and none has to go. Today
-`setQueue` and `joinSession` throw above 500 (`parseArrayTolerant(..., 500)`,
-`queue/mutations.ts:381`, `sessions/mutations.ts:146`), while `addQueueItem`
-(`queue/mutations.ts:37-130`) and `setCurrentClimb` have no cap. A long session can pass 500
-through opens, after which every full-queue write throws. That wedge is fixed here for every
-client.
+`insert` row and stores 501 entries; there is no History to trim and none has to go. Before
+F3, `setQueue` and `joinSession` threw above 500 (a literal `500` passed to
+`parseArrayTolerant`), while `addQueueItem` and `setCurrentClimb` had no cap. F3 passes
+`maxPayloadItems` (`queue/now-slot-payload.ts`) instead, at `queue/mutations.ts:567-572` and
+`sessions/mutations.ts:165-170`. A long session could pass 500 through opens, after which
+every full-queue write threw. That wedge is fixed here inside the
+percent, and for every request that carries `placement` or `historyCount`. Outside the percent
+opens still grow the array past 501 as today, so a placement-less `setQueue` from such a room
+is still rejected. Two things change there at every percent: the raw guard takes 501 entries
+when the payload's current climb is in it, so a room at the new limit is never wedged by its
+own write-back, and an orphan inserted into a payload of exactly 500 is the extra Now entry
+(501 stored, nothing trimmed). An old phone's clear (no `placement`) outside the percent keeps
+today's array, so a 501-entry room with nothing current can still form there and its next
+placement-less `setQueue` is refused until a climb goes back on the wall or an entry is removed:
+a percent-0 residual. A new phone's clear carries `placement` and trims as below.
 
 `capHistory`: when History reaches 125 entries, trim it to the newest 100. When History + Up
 next would pass 500 (`historyAndUpNextCount`), drop the oldest History entries first. The
@@ -749,7 +772,7 @@ never trips the cap.
 | `setClimbFromLedPositions` | Uncapped insert | Same as `setCurrentClimb` | `FullSync` + controller event |
 | `addQueueItem`, Play next | Uncapped | If Up next is already 500, reject with `QUEUE_FULL`. History is trimmed first, so this is "History + Up next is still 500 after `capHistory`"; the climb on the wall isn't counted. New clients pre-check and say "Up next is full (500)". An old phone's optimistic add is undone by the next resync. Otherwise insert, then `capHistory`. | `QueueItemAdded`, then a `FullSync` under the next sequence (below) |
 | `addQueueItem` with a position inside History | Inserted there | Honoured while a climb is current, as today. Clamped to `historyCount` only when nothing is current, so an old Play next sent at position 0 lands at the head of Up next (S16). (An old coalescer's deferred add never targets History: it lands in Up next, section 3 residual 3.) | `QueueItemAdded` at the clamped position, then a `FullSync` |
-| `setQueue`, `joinSession` seed | Throw above 500 | Without the caps (outside the percent, no `historyCount`) the raw guard is 501 entries when the payload's current climb is in the payload queue and 500 otherwise, so a 501-entry room an old phone writes back isn't refused. With the caps: accept up to 1,000 raw items (still a memory guard), then `capHistory`. With a climb current, throw only when Up next alone exceeds 500. With nothing current, never throw: the excess over 500 comes off the head (section 3). Stored: at most 501 with a climb current, 500 without. | `FullSync` (already) |
+| `setQueue`, `joinSession` seed | Throw above 500 | Without the caps (outside the percent, no `historyCount`) the raw guard is 501 entries when the payload's current climb is in the payload queue and 500 otherwise, so a 501-entry room an old phone writes back isn't refused. With the caps: accept up to 1,000 raw items (still a memory guard), then `capHistory`. Throw `QUEUE_FULL` only when Up next alone exceeds 500, whether a climb is current or not: History goes first, all of it if needed, and Up next is never trimmed, so a 600-climb playlist with nothing current is rejected as today instead of losing its first 100 climbs. Stored: at most 501 with a climb current, 500 without. | `FullSync` (already) |
 | `setQueue` #3933 merge survivors (`set-queue-merge.ts`) | Re-appended at the end | Unchanged. The merge folds only `QueueItemAdded` and `QueueItemRemoved` (`set-queue-merge.ts:124-132`), which is why an add that trims still publishes its `QueueItemAdded`. | — |
 | History | Unbounded inside 500 | 100, trimmed at 125 | — |
 | Mobile bulk append (`queue-provider.tsx:1735-1750`) | Clamps to `500 - queue.length` | Clamps to `500 - Up next`, trimming History in the payload with the same `capHistory`. That is a whole-queue write the server stores as sent, so it can't drift. | — |
@@ -786,12 +809,18 @@ What shipped JS does at 501 entries:
 
 **An add that trims or clamps is two writes.** Write 1 stores the add (at the clamped position)
 and publishes `QueueItemAdded` under sequence n. Write 2, only when write 1 left History over
-125, History + Up next over 500, or the position clamped, is a versioned write of the array, trimmed
-when needed, under the version write 1 returned, and publishes `FullSync` under n + 1. The `FullSync`
+125, History + Up next over 500, the position clamped, or write 1 normalised a stored orphan
+(invariant 1, at every percent), is a versioned write of the array, trimmed when needed, under
+the version write 1 returned, and publishes `FullSync` under n + 1. The `FullSync`
 corrects an old phone that inserted at its own position. Publishing only a `FullSync` would hide
 the add from the #3933 merge: an old phone's in-flight Undo would find no `QueueItemAdded` in
 its window and overwrite the crewmate's add. The cost is one more Redis round trip on one add in
-25 and on clamps. If write 2 fails, the array stays untrimmed until the next write trims it.
+25 and on clamps. If write 2 loses its version (a crewmate's write landed in between), the array
+stays untrimmed until the next write trims it, and nothing republishes the correction: an old
+origin phone whose add was clamped keeps its own position (its `QueueItemAdded` echo is
+suppressed by `clientId`), and shipped peers that applied the add's position to an array
+without a just-normalised orphan sit one entry off. Both differ from the server's ordered hash
+and are repaired by the 60 s watchdog resync.
 
 **Who trims, and why the client doesn't in a session.** The server caps every request that
 carries `placement` and every `setQueue` that carries `historyCount`, whatever
@@ -804,8 +833,8 @@ a pointer move is echo-suppressed and an add is a plain `QueueItemAdded`. The 60
 untrimmed array, and the next move would trim again: a `Queue Sync Hash Drift` loop on new
 builds. Leaving the trim to the server removes the loop at any percent.
 
-Swap the inline `500` in both resolvers for `MAX_SYNCED_QUEUE_ITEMS` in the same PR (the
-`limits.ts` comment tracks it).
+Both resolvers read the cap through `maxPayloadItems`, which is built on
+`MAX_SYNCED_QUEUE_ITEMS`; no inline `500` is left in them.
 
 ---
 
@@ -1032,7 +1061,19 @@ PR 3 test plan says so.
   It governs requests **without** `placement` (old clients, the native socket, the LED path,
   every `addQueueItem` and `reorderQueueItem`): their placement rules, the History clamps, the
   stop-at-the-ends navigate and the caps. At 0 those requests produce today's arrays and events,
-  with one exception: no orphan is stored. The `historyCount` bookkeeping and the orphan rules
+  with these exceptions, all readers of the line, which is maintained at every percent:
+  - No orphan is stored (an orphan inserted into a payload of exactly 500 is the extra Now
+    entry, 501 stored, section 5).
+  - A placement-less `setQueue` or `joinSession` seed may carry 501 entries when its current
+    climb is in it (section 5).
+  - The widget, Garmin and controller navigate read the line with nothing current (Next goes to
+    `queue[historyCount]`, Previous to `queue[historyCount - 1]`); the controller does the same
+    when the ESP32's reference uuid is no longer in the queue, where today it jumped to index 0
+    or the end. These are pointer moves every shipped client predicts. Only their stop at the
+    ends is gated.
+  - The kiosk preview starts Up next at the line (`upNextStart`). With nothing current, after
+    the current climb is removed, a gym kiosk stops listing History as Up next (S11's "Kiosk Up
+    next C D" holds at every percent). The `historyCount` bookkeeping and the orphan rules
   (invariant 1) run at every percent (section 2, the backend choke point). No shipped client
   reads `historyCount`, and without it a new phone's line would be erased by an old phone's add.
   The orphan rules turn today's orphan writes (the native socket's stale item, a payload orphan
@@ -1114,7 +1155,7 @@ was measured, so old and new clients can be compared.
 | `backend/src/__tests__/queue-navigation.test.ts` | `setCurrentClimbAndPublish` per `rewrite`: the right event, the trailing event's same sequence and null `correlationId`, `FullSync` on a trim. The trailing event is not in the replay buffer, and the APNs and kiosk hooks still run for it. `next-from-line` publishes `FullSync` + trailing, not a pointer event. Percent 0 gives today's arrays and events for placement-less calls, except that no orphan is stored; placement-carrying calls get the new rules at any percent. Percent 0, placement `NOW`, History at 125: the server trims and publishes `FullSync` + trailing. A native-shaped request (no `shouldAddToQueue`, no `placement`) with a stale item, at percent 0 and at 100: `insert` at the Now slot plus the trailing event, never an orphan. A room holding a pre-PR-2 orphan is normalised on its first write at percent 0. The percent parser: unset, `abc`, `-5`, `150`. |
 | `backend/src/__tests__/mixed-crew-now-slot.test.ts` (new, real Redis) | S1 to S18 from section 3, through the real resolvers, with a legacy-fixture subscriber and a new-reducer subscriber. S14 is the Undo case: O removes A, N's `move-up-next` lands while O's Undo `setQueue` is in flight; the test records the resulting array and current climb as the residual. S15: History H1..H60, the current climb removed, O's Next: History stays 60 for N and the kiosk. Nothing current, percent 0: O adds, removes a History entry and reorders; after each, the server's `historyCount` equals N's and the next `FullSync` carries it (the line is never erased). Also: the watchdog firing inside the gap, a `setQueue` composed inside the gap, a coalescer deferred add after a dedupe (old phone only), an old-phone reorder across the line with nothing current (clamped, `FullSync`), and a 130-entry History in a session outside the percent with a new phone pressing Next (no hash drift). |
 | `backend/src/__tests__/queue-now-slot-redis.test.ts` (new) | Rolling deploy: write with the old Lua script, read with the new one, `historyCountVersion` stale, line derived, `currentChangedAt` from `lastActivity`. `addQueueItem` and `reorderQueueItem` through `updateQueueOnly` with nothing current keep `historyCount` valid (`historyCountVersion == version`). `currentChangedAt` moves when the current uuid changes, and not on an add, a reorder, a mirror flip, a tick, or a no-op `setQueue` write-back whose items were re-serialised the way mobile rebuilds them (different key order, slim fields). A nothing-current `setQueue` raced by a removal between read and write conflicts and retries. Dormant restore derives `historyCount` and takes `currentChangedAt` from `board_session_queues.updated_at`. |
-| `backend/src/__tests__/set-queue-concurrent-add-merge.test.ts`, `queue-sync-fixes.test.ts` | `historyCount` input: −1, 9999 and a value sent with a current climb. Old-phone Undo of a History removal with nothing current: stored [B \| C D], payload [A B C D], line 2. A playlist clear gives 0. A 600-item old payload is trimmed, not thrown, with and without a current climb. Outside the percent a 501-entry `setQueue` / `joinSession` whose current climb is in the payload is stored, and a 501-entry one with nothing current (or a current climb not in it) is refused as today. `setCurrentClimb` with nothing current and 500 in Up next stores 501 entries. A payload orphan is inserted at the line, not cleared and not appended: `joinSession` with [A B C] + orphan X stores [X A B C] with Up next A B C, at percent 0 and 100. `joinSession` with only a current climb stores `[current]`. `addQueueItem` `QUEUE_FULL` and the History position rule. An add that trims while an old phone's Undo is in flight: the merge sees its `QueueItemAdded` and keeps the add, and the `FullSync` follows under the next sequence. |
+| `backend/src/__tests__/set-queue-concurrent-add-merge.test.ts`, `queue-sync-fixes.test.ts` | `historyCount` input: −1, 9999 and a value sent with a current climb. Old-phone Undo of a History removal with nothing current: stored [B \| C D], payload [A B C D], line 2. A playlist clear gives 0. A 600-item old payload is trimmed from History, not thrown, with and without a current climb, while Up next alone is within 500; over that it is refused with `QUEUE_FULL`. Outside the percent a 501-entry `setQueue` / `joinSession` whose current climb is in the payload is stored, and a 501-entry one with nothing current (or a current climb not in it) is refused as today. `setCurrentClimb` with nothing current and 500 in Up next stores 501 entries. A payload orphan is inserted at the line, not cleared and not appended: `joinSession` with [A B C] + orphan X stores [X A B C] with Up next A B C, at percent 0 and 100. `joinSession` with only a current climb stores `[current]`. `addQueueItem` `QUEUE_FULL` and the History position rule. An add that trims while an old phone's Undo is in flight: the merge sees its `QueueItemAdded` and keeps the add, and the `FullSync` follows under the next sequence. |
 | `backend/src/__tests__/board-queue-preview.test.ts`, `navigate-queue.test.ts`, `widget-navigate.test.ts`, `session-state.test.ts`, `apns.test.ts`, `controller.test.ts` | Nothing current with History: the kiosk's Up next starts at the line; widget next goes to `queue[historyCount]`. Inside the percent the widget and Garmin stop at both ends with `out_of_bounds` (the wrap case at `widget-navigate.test.ts:399` flips); at percent 0 they still wrap. The LED path reuses a queued climb and keeps its controller event. APNs never sees an orphan. |
 | `mobile/src/providers/__tests__/queue-provider-now-slot.test.tsx` (new), `queue-provider-play-next.test.tsx` | Logbook tap on a queued climb: no copy. Similar climbs leaves Up next alone. Track walk forward and back leaves Up next alone. Three fast swipes in a session leave Up next unchanged. Flag off, or probe `false`: no `placement`, today's documents. `Set Active Climb` carries `rewrite`, `placement` and `nowSlotMode`, solo and in a session. |
 | `mobile/src/components/play-drawer/__tests__/use-queue-sheet-handlers.test.tsx`, `climb-actions/__tests__/use-climb-actions.test.tsx` | Long-press a History row with a climb current: the menu shows Replay from here, and tapping it calls `setCurrentClimb` with that row's uuid and `placement: STEP`. A plain tap on the same row still sends `NOW`. The action is absent on Up next rows, on the current climb, with nothing current, and in legacy mode. |
