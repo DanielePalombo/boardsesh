@@ -98,6 +98,17 @@ describe('root layout Smart App Banner', () => {
     },
   );
 
+  it.each([
+    ['/poster/b/garage-wall', 'en-US'],
+    ['/poster/b/garage-wall', 'es'],
+  ])(
+    'puts no banner over the printable poster %s (%s): "Open" would leave the print page',
+    async (pathname, locale) => {
+      // Middleware forwards the pathname with `/es` stripped and the locale beside it.
+      expect(await bannerFor({ [PATHNAME_HEADER]: pathname, 'x-boardsesh-locale': locale })).toBeNull();
+    },
+  );
+
   it('keeps the banner on a page whose name only starts like an excluded one', async () => {
     const banner = await bannerFor({ [PATHNAME_HEADER]: '/authors' });
 

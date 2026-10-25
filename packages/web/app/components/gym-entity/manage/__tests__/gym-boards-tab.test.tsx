@@ -350,3 +350,39 @@ describe('GymBoardsTab — stray boards', () => {
     expect(screen.queryByText(/boards that might be yours/i)).toBeNull();
   });
 });
+
+describe('GymBoardsTab — Print poster', () => {
+  const WALL_UUID = '0144249a-3a8c-47c2-8c1e-54c0c572fe02';
+
+  it('links each board the poster page would print, and only those', async () => {
+    stubRequests({
+      gymBoards: [
+        makeBoard({ uuid: 'led-public', slug: 'main-kilter', name: 'Main Kilter' }),
+        makeBoard({ uuid: 'led-private', slug: 'private-kilter', name: 'Private Kilter', isPublic: false }),
+        makeBoard({
+          uuid: WALL_UUID,
+          slug: 'back-spraywall',
+          name: 'Back Spraywall',
+          boardType: 'spray',
+          isPublic: false,
+          isUnlisted: true,
+        }),
+        makeBoard({
+          uuid: 'spray-private',
+          slug: 'secret-spraywall',
+          name: 'Secret Spraywall',
+          boardType: 'spray',
+          isPublic: false,
+        }),
+      ],
+      myBoards: [],
+    });
+    render(<GymBoardsTab gym={gym} onGymChange={vi.fn()} />);
+    await screen.findByText('Main Kilter');
+
+    const posterLinks = screen.getAllByRole('link', { name: /print poster/i }).map((link) => link.getAttribute('href'));
+    // An unlisted Spraywall's link carries its own uuid, the capability its
+    // share link carries; private boards and walls get no action at all.
+    expect(posterLinks).toEqual(['/poster/b/main-kilter', `/poster/b/back-spraywall?wall=${WALL_UUID}`]);
+  });
+});

@@ -144,6 +144,36 @@
     "sprayWallPhotoAlt": "Foto de {{wallName}}",
     "sprayWallMeta": "{{angle}}° · {{holds}} presas"
   },
+  "boardPoster": {
+    "metaTitle": "Póster QR de {{boardName}}",
+    "fallbackTitle": "Póster QR",
+    "metaDescription": "Un código QR listo para imprimir. Los escaladores lo escanean para ver los bloques de aquí y registrar sus encadenes.",
+    "scanStep": "Escanea el código con la cámara",
+    "openSource": "Boardsesh es gratis y de código abierto.",
+    "printedOn": "Impreso en {{monthYear}}",
+    "layoutLabel": "Diseño del póster",
+    "layouts": {
+      "photo": "Póster con foto",
+      "plain": "Póster sencillo",
+      "cards": "Tarjetas"
+    },
+    "unlistedNotice": "Cualquiera que escanee esto puede abrir el Spraywall.",
+    "spray": {
+      "headline": "Este Spraywall está en Boardsesh",
+      "pickStep": "Elige un bloque en la foto",
+      "logStep": "Registra tu encadene o equipa el tuyo",
+      "justInstalled": "¿Acabas de instalar la app? Escanea otra vez para abrir este Spraywall.",
+      "backAction": "Volver al Spraywall"
+    },
+    "led": {
+      "headline": "Este plafón está en Boardsesh",
+      "pickStep": "Elige un bloque y enciéndelo en el plafón",
+      "logStep": "¿Encadenado? Registra tu encadene",
+      "justInstalled": "¿Acabas de instalar la app? Escanea otra vez para abrir este plafón.",
+      "compatibility": "Compatible con {{boardBrand}}.",
+      "backAction": "Volver al plafón"
+    }
+  },
   "manage": {
     "welcome": {
       "title": "Pon tu rocódromo en marcha",
@@ -291,6 +321,7 @@
         "unlisted": "No listado",
         "private": "Privado"
       },
+      "printPoster": "Imprimir póster",
       "addDialog": {
         "title": "Añade uno de tus plafones",
         "body": "Elige un plafón que poseas para vincularlo a este rocódromo.",

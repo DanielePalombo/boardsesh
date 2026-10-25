@@ -200,11 +200,18 @@ the query on the way to `/b/{slug}/{angle}/list`, so a kiosk scan is now
 attributable from a server log — but the destination still has no tracker, so it
 still fires no `Gym QR Scanned`. The poster is the only scan count there is.
 
+The board poster (`/poster/b/{slug}`, #4415) is the producer for `board`: its
+code is `boardQrUrl(slug, 'board')`, `/b/{slug}?src=qr&medium=board`, with an
+unlisted Spraywall's `wall=<uuid>` in front of the pair. It lands on the same
+`/b/{slug}` hop as the kiosk code, so it fires no `Gym QR Scanned` either; a
+`board` scan is countable from a server log only.
+
 `kiosk` and `board` stay in `GYM_QR_MEDIUMS` anyway: the parser has to accept all
 three so that pointing a future kiosk or board QR at a gym page is a call-site
 change rather than a vocabulary change that invalidates codes already printed on
 walls. Until then, expect `medium: 'poster'` and only `poster` in PostHog — a
-`kiosk` or `board` row appearing means someone shipped a new producer.
+`kiosk` or `board` row appearing means one of those codes was re-aimed at a gym
+page.
 
 `/b/...` is itself a www climbing surface that #4358 is deleting. When it goes,
 the kiosk QR needs a new target; the params and the builders in

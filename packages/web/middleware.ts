@@ -1,7 +1,12 @@
 // middleware.ts
 import { NextResponse, type NextRequest } from 'next/server';
 import { SUPPORTED_BOARDS } from './app/lib/board-data';
-import { getClimbViewPageCacheTTL, getListPageCacheTTL, isSprayWallCapabilityRequest } from './app/lib/list-page-cache';
+import {
+  getClimbViewPageCacheTTL,
+  getListPageCacheTTL,
+  isBoardPosterRequest,
+  isSprayWallCapabilityRequest,
+} from './app/lib/list-page-cache';
 import { BOARD_INVITE_PARAM, isBoardInviteRequest, searchCarriesBoardInvite } from './app/lib/board-invite';
 import { isCrawlerUserAgent } from './app/lib/is-crawler';
 import { CLIMB_SESSION_COOKIE } from './app/lib/climb-session-cookie';
@@ -296,13 +301,15 @@ function routeRequest(request: NextRequest) {
     getClimbViewPageCacheTTL(strippedPath, request.nextUrl.searchParams);
   if (
     isSprayWallCapabilityRequest(strippedPath, request.nextUrl.searchParams) ||
-    isBoardInviteRequest(strippedPath, request.nextUrl.searchParams)
+    isBoardInviteRequest(strippedPath, request.nextUrl.searchParams) ||
+    isBoardPosterRequest(strippedPath)
   ) {
-    // An unlisted spray wall's share link, or a home board's (`?invite=`). Said
-    // out loud rather than left to the missing CDN header: no shared cache may
-    // hold either, so a hide, a switch to private or a link reset takes effect on
-    // the next request, and a token never becomes part of a cache key. See
-    // `isSprayWallCapabilityRequest` and `isBoardInviteRequest`.
+    // An unlisted spray wall's share link, a home board's (`?invite=`), or a
+    // printable board poster. Said out loud rather than left to the missing CDN
+    // header: no shared cache may hold any of them, so a hide, a switch to
+    // private or a link reset takes effect on the next request, and a token
+    // never becomes part of a cache key. See `isSprayWallCapabilityRequest`,
+    // `isBoardInviteRequest` and `isBoardPosterRequest`.
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('CDN-Cache-Control', 'no-store');
     response.headers.set('Vercel-CDN-Cache-Control', 'no-store');
