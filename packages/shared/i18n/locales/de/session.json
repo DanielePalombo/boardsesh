@@ -895,6 +895,22 @@
       "sendSaveLabel": "Getoppt",
       "starRating_one": "{{count}} Stern",
       "starRating_other": "{{count}} Sterne"
+    },
+    "workoutOutcome": {
+      "fell": "Versucht",
+      "sent": "Getoppt",
+      "fellHint": "Trägt einen Versuch an diesem Boulder ein",
+      "sentHint": "Trägt diesen Boulder als getoppt ein",
+      "fellHintPrevious": "Trägt einen Versuch an {{name}} ein, dem vorherigen Boulder",
+      "sentHintPrevious": "Trägt {{name}}, den vorherigen Boulder, als getoppt ein",
+      "attemptLogged": "Versuch eingetragen · {{name}}",
+      "flashLogged": "Flash eingetragen · {{name}}",
+      "sendLogged": "Begehung eingetragen · {{name}}",
+      "wallMovedFirstAscent": "Wisch zurück zu {{name}}, um die Erstbegehung mit Grad einzutragen.",
+      "attemptLoggedLabel": "Versuch eingetragen",
+      "flashLoggedLabel": "Flash eingetragen",
+      "sendLoggedLabel": "Begehung eingetragen",
+      "messageHint": "Zeigt wieder Versucht und Getoppt"
     }
   },
   "mobileDetail": {

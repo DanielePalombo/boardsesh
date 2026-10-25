@@ -895,6 +895,22 @@
       "sendSaveLabel": "Send",
       "starRating_one": "{{count}} star",
       "starRating_other": "{{count}} stars"
+    },
+    "workoutOutcome": {
+      "fell": "Fell",
+      "sent": "Sent",
+      "fellHint": "Logs one try on this climb",
+      "sentHint": "Logs this climb as sent",
+      "fellHintPrevious": "Logs one try on {{name}}, the previous climb",
+      "sentHintPrevious": "Logs {{name}}, the previous climb, as sent",
+      "attemptLogged": "Try logged · {{name}}",
+      "flashLogged": "Flash logged · {{name}}",
+      "sendLogged": "Send logged · {{name}}",
+      "wallMovedFirstAscent": "Swipe back to {{name}} to log its first ascent with a grade.",
+      "attemptLoggedLabel": "Try logged",
+      "flashLoggedLabel": "Flash logged",
+      "sendLoggedLabel": "Send logged",
+      "messageHint": "Brings back Fell and Sent"
     }
   },
   "mobileDetail": {

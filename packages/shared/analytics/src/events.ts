@@ -303,6 +303,10 @@ export const SHARED_EVENTS = {
   // violation means the sheet presented without user intent (the phantom-reopen
   // bug this event was added to watchdog).
   QuickTickOpened: 'Quick Tick Opened',
+  // A mobile save that failed. Props: { climbUuid, layoutId, surface }, with the
+  // same `surface` as Tick Logged below, so a failed one-tap Fell / Sent
+  // ('mobile_workout_runner', no Quick Tick Opened before it) can be left out of
+  // a failure rate or abandonment count built on the sheet's Quick Tick Opened.
   QuickTickFailed: 'Quick Tick Failed',
   // Mobile-only for now: fired when the tick sheet is closed (X button,
   // pan-down, backdrop tap) without a save completing. Props include a
@@ -312,8 +316,11 @@ export const SHARED_EVENTS = {
   // Canonical "a climb was logged" join event and the single commit event on both
   // platforms — it absorbed QuickTickSaved's payload. Required props: { climbUuid,
   // status, platform: 'web' | 'mobile', surface: 'web_full_form' |
-  // 'web_quick_modal' | 'mobile_quick_tick' }, plus the tick detail
-  // (attemptCount, hasQuality, hasDifficulty, difficulty, grade, hasComment).
+  // 'web_quick_modal' | 'mobile_quick_tick' | 'mobile_workout_runner' }, plus the
+  // tick detail (attemptCount, hasQuality, hasDifficulty, difficulty, grade,
+  // hasComment). 'mobile_workout_runner' is the player's one-tap Fell / Sent in a
+  // timed workout block (#6231): no sheet opens, so those ticks have no Quick Tick
+  // Opened and sit outside the Dismissed + Logged <= Opened invariant above.
   // Mobile adds `boardType` (#6027): one of the nine board types or null, from
   // `boardTypeProperty`. `layoutId` alone cannot say "spray wall".
   TickLogged: 'Tick Logged',

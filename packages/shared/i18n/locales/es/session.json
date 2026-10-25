@@ -895,6 +895,22 @@
       "sendSaveLabel": "Encadenado",
       "starRating_one": "{{count}} estrella",
       "starRating_other": "{{count}} estrellas"
+    },
+    "workoutOutcome": {
+      "fell": "Caída",
+      "sent": "Encadenado",
+      "fellHint": "Guarda un intento en este bloque",
+      "sentHint": "Guarda este bloque como encadenado",
+      "fellHintPrevious": "Guarda un intento en {{name}}, el bloque anterior",
+      "sentHintPrevious": "Guarda {{name}}, el bloque anterior, como encadenado",
+      "attemptLogged": "Intento guardado · {{name}}",
+      "flashLogged": "Flash guardado · {{name}}",
+      "sendLogged": "Encadene guardado · {{name}}",
+      "wallMovedFirstAscent": "Vuelve a {{name}} para guardar su primer ascenso con un grado.",
+      "attemptLoggedLabel": "Intento guardado",
+      "flashLoggedLabel": "Flash guardado",
+      "sendLoggedLabel": "Encadene guardado",
+      "messageHint": "Vuelve a mostrar Caída y Encadenado"
     }
   },
   "mobileDetail": {
