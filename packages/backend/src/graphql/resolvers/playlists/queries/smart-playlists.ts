@@ -136,11 +136,15 @@ function smartBaseConditions(
 /**
  * `smartBaseConditions` plus the hydrator's readable-climb rule, for the paged
  * query, its count and the library cards: a `board_climbs` row under the tick's
- * canonical uuid, published or the viewer's draft. A tick on a deleted climb
- * passed `tickPrivacyCondition` for its owner, while the hydrator found no row
- * and dropped it after the page was taken: a lost page slot and one too many in
- * `totalCount` (#6661). A query using these must join `tickAliasJoin`. A view
- * joins `board_climbs` on the canonical uuid instead, the same rule.
+ * canonical uuid, published or the viewer's draft. Today `tickPrivacyCondition`
+ * already demands a listed-or-own `board_climbs` row behind the canonical uuid,
+ * a stricter rule, so this probe is a deliberate guard and not the one doing
+ * the work: it states the hydrator's own contract here, so a later widening of
+ * the privacy rule (its `allowOwnWithoutClimb` branch, say) cannot bring back a
+ * tick the hydrator drops after the page was taken, a lost page slot and one
+ * too many in `totalCount` (#6661). It is one primary-key probe per tick. A
+ * query using these must join `tickAliasJoin`. A view joins `board_climbs` on
+ * the canonical uuid instead, the same rule.
  */
 function pagedSmartConditions(
   userId: string,
@@ -708,34 +712,22 @@ export const smartPlaylist = async (
 };
 
 /**
- * Climb counts for the current user's smart playlists, used to render
- * the cards on the library page.
+ * The library cards' four logbook counts for `userId`, as one statement.
  *
- * Single roundtrip via CTEs — Postgres scans `boardsesh_ticks` once for the
+ * Single roundtrip via CTEs: Postgres scans `boardsesh_ticks` once for the
  * shared `base` and `sent` CTEs, then derives all three counts. Drizzle's
  * query builder can't express co-defined CTEs reused across siblings, hence
- * `db.execute(sql\`...\`)` (the sanctioned escape hatch in CLAUDE.md).
+ * raw `sql` (the sanctioned escape hatch in CLAUDE.md).
  *
  * The card must show the number the list's header shows (#6808), so `base` and
  * `liked_climbs` read the same membership as `countSmartClimbRefs` with the
  * owner as the viewer: `pagedSmartConditions` / `favoriteConditions` on every
  * board, and `base` keyed on the canonical climb. A tick on a deleted climb, an
  * alias tick counted apart from its climb, or a climb on a deleted spray wall
- * no longer inflates the card.
+ * no longer inflates the card. Exported for the EXPLAIN gate in
+ * playlist-climbs-view-explain.test.ts.
  */
-export const mySmartPlaylistCounts = async (
-  _: unknown,
-  __: unknown,
-  ctx: ConnectionContext,
-): Promise<Array<{ type: SmartPlaylistType; count: number }>> => {
-  requireAuthenticated(ctx);
-  const userId = ctx.userId!;
-
-  // One transaction for the whole library-card fan-out: the counts CTE, board
-  // resolution and all four recommendation counts. Serially on one connection
-  // with per-gather parallelism off, instead of up to nine concurrent parallel
-  // hash joins that exhaust Postgres's dynamic shared memory (#4235, Sentry
-  // BOARDSESH-AK).
+export function smartPlaylistCountsSql(userId: string): SQL {
   const ticks = dbSchema.boardseshTicks;
   const baseTicksSql = new QueryBuilder()
     .select({
@@ -751,53 +743,74 @@ export const mySmartPlaylistCounts = async (
     .getSQL();
   const likedClimbsWhere = and(...favoriteConditions(userId, undefined, userId));
 
-  return withSerialPlan(db, async (tx) => {
-    const result = await tx.execute<{ type: SmartPlaylistType; count: number }>(sql`
-      WITH base AS (${baseTicksSql}),
-      sent AS (
-        SELECT DISTINCT climb_uuid, board_type
+  return sql`
+    WITH base AS (${baseTicksSql}),
+    sent AS (
+      SELECT DISTINCT climb_uuid, board_type
+      FROM base
+      WHERE status IN ('flash', 'send')
+    ),
+    five_stars AS (
+      SELECT COUNT(DISTINCT (board_type, climb_uuid))::int AS count
+      FROM base
+      WHERE quality = 5
+    ),
+    most_repeated AS (
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT climb_uuid, board_type
         FROM base
-        WHERE status IN ('flash', 'send')
-      ),
-      five_stars AS (
-        SELECT COUNT(DISTINCT (board_type, climb_uuid))::int AS count
-        FROM base
-        WHERE quality = 5
-      ),
-      most_repeated AS (
-        SELECT COUNT(*)::int AS count
-        FROM (
-          SELECT climb_uuid, board_type
-          FROM base
-          GROUP BY climb_uuid, board_type
-          HAVING SUM(attempt_count) > 1
-        ) r
-      ),
-      projects AS (
-        -- Match sent on (climb_uuid, board_type) so a Kilter send doesn't
-        -- exclude a Tension climb sharing the same UUID; mirrors the
-        -- per-page paged-query semantics in selectSmartClimbRefs.
-        SELECT COUNT(DISTINCT (board_type, climb_uuid))::int AS count
-        FROM base
-        WHERE NOT EXISTS (
-          SELECT 1 FROM sent
-          WHERE sent.climb_uuid = base.climb_uuid
-            AND sent.board_type = base.board_type
-        )
-      ),
-      liked_climbs AS (
-        SELECT COUNT(DISTINCT (board_name, climb_uuid))::int AS count
-        FROM ${dbSchema.userFavorites}
-        WHERE ${likedClimbsWhere}
+        GROUP BY climb_uuid, board_type
+        HAVING SUM(attempt_count) > 1
+      ) r
+    ),
+    projects AS (
+      -- Match sent on (climb_uuid, board_type) so a Kilter send doesn't
+      -- exclude a Tension climb sharing the same UUID; mirrors the
+      -- per-page paged-query semantics in selectSmartClimbRefs.
+      SELECT COUNT(DISTINCT (board_type, climb_uuid))::int AS count
+      FROM base
+      WHERE NOT EXISTS (
+        SELECT 1 FROM sent
+        WHERE sent.climb_uuid = base.climb_uuid
+          AND sent.board_type = base.board_type
       )
-      SELECT 'FIVE_STARS'::text AS type, count FROM five_stars
-      UNION ALL
-      SELECT 'MOST_REPEATED'::text, count FROM most_repeated
-      UNION ALL
-      SELECT 'PROJECTS'::text, count FROM projects
-      UNION ALL
-      SELECT 'LIKED_CLIMBS'::text, count FROM liked_climbs
-    `);
+    ),
+    liked_climbs AS (
+      SELECT COUNT(DISTINCT (board_name, climb_uuid))::int AS count
+      FROM ${dbSchema.userFavorites}
+      WHERE ${likedClimbsWhere}
+    )
+    SELECT 'FIVE_STARS'::text AS type, count FROM five_stars
+    UNION ALL
+    SELECT 'MOST_REPEATED'::text, count FROM most_repeated
+    UNION ALL
+    SELECT 'PROJECTS'::text, count FROM projects
+    UNION ALL
+    SELECT 'LIKED_CLIMBS'::text, count FROM liked_climbs
+  `;
+}
+
+/**
+ * Climb counts for the current user's smart playlists, used to render
+ * the cards on the library page: `smartPlaylistCountsSql`, then the
+ * recommendation cards.
+ */
+export const mySmartPlaylistCounts = async (
+  _: unknown,
+  __: unknown,
+  ctx: ConnectionContext,
+): Promise<Array<{ type: SmartPlaylistType; count: number }>> => {
+  requireAuthenticated(ctx);
+  const userId = ctx.userId!;
+
+  // One transaction for the whole library-card fan-out: the counts CTE, board
+  // resolution and all four recommendation counts. Serially on one connection
+  // with per-gather parallelism off, instead of up to nine concurrent parallel
+  // hash joins that exhaust Postgres's dynamic shared memory (#4235, Sentry
+  // BOARDSESH-AK).
+  return withSerialPlan(db, async (tx) => {
+    const result = await tx.execute<{ type: SmartPlaylistType; count: number }>(smartPlaylistCountsSql(userId));
 
     // db.execute returns either an iterable of rows directly or `{ rows }`
     // depending on the underlying postgres client; normalise here.

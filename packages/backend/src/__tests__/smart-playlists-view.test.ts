@@ -35,6 +35,9 @@ const BOARD_TIE_OWNER = 'smart-view-board-ties';
 const ANGLE_OWNER = 'smart-view-angles';
 // A logbook with ticks logged on catalog-dedup aliases of k-2 and k-3 (#6809).
 const ALIAS_OWNER = 'smart-view-aliases';
+// ALIAS_OWNER's soft-deleted spray wall, with one climb on it (#6808).
+const SPRAY_WALL_BOARD = 'smart-view-spray-wall';
+const SPRAY_WALL_LAYOUT = 96809;
 
 function makeCtx(overrides: Partial<ConnectionContext> = {}): ConnectionContext {
   return {
@@ -159,7 +162,7 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
       .onConflictDoNothing();
     await db.execute(sql`INSERT INTO user_profiles (user_id, is_private) VALUES (${PRIVATE_OWNER}, true)`);
     await db.execute(
-      sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER}, ${GUARDED_OWNER})`,
+      sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER}, ${GUARDED_OWNER}, ${ALIAS_OWNER})`,
     );
 
     // Kilter layout 1 (size 10, set 1) and one Tension climb. The grade each
@@ -326,6 +329,32 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
     ).entries()) {
       await seedTick({ uuid: `sv-al${index}`, userId: ALIAS_OWNER, ...tick });
     }
+    // ALIAS_OWNER's deleted spray wall (#6808): a wall delete is soft and keeps
+    // its climbs, and a climb on it is in nobody's list, so its five-star
+    // project (7 tries) and its heart count on no card either.
+    await db.execute(sql`
+      INSERT INTO user_boards (uuid, slug, owner_id, board_type, layout_id, size_id, set_ids, name)
+      VALUES (${SPRAY_WALL_BOARD}, ${SPRAY_WALL_BOARD}, ${ALIAS_OWNER}, 'spray', ${SPRAY_WALL_LAYOUT}, ${SPRAY_WALL_LAYOUT}, '1', 'Garage')
+    `);
+    await db.execute(sql`
+      INSERT INTO spray_walls (board_uuid, layout_id, deleted_at)
+      VALUES (${SPRAY_WALL_BOARD}, ${SPRAY_WALL_LAYOUT}, '2026-06-12 10:00')
+    `);
+    await seedClimb('s-gone', 'spray', SPRAY_WALL_LAYOUT, 'Kilo');
+    await seedTick({
+      uuid: 'sv-al-spray',
+      userId: ALIAS_OWNER,
+      climbUuid: 's-gone',
+      boardType: 'spray',
+      status: 'attempt',
+      attempts: 7,
+      quality: 5,
+      climbedAt: '2026-06-11 10:00',
+    });
+    await db.execute(sql`
+      INSERT INTO user_favorites (user_id, board_name, climb_uuid, angle, created_at)
+      VALUES (${ALIAS_OWNER}, 'spray', 's-gone', 40, '2026-06-11 10:00')
+    `);
 
     // TIE_OWNER: k-4 tried 5 times, then k-6, k-2 and k-5 three times each.
     for (const [index, [climbUuid, attempts]] of (
@@ -412,9 +441,10 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
   afterAll(async () => {
     // Neither table is in setup.ts's per-file reset list.
     await db.execute(
-      sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER}, ${GUARDED_OWNER})`,
+      sql`DELETE FROM user_favorites WHERE user_id IN (${OWNER}, ${PRIVATE_OWNER}, ${BOARD_TIE_OWNER}, ${GUARDED_OWNER}, ${ALIAS_OWNER})`,
     );
-    await db.execute(sql`DELETE FROM user_boards WHERE uuid = 'smart-view-board'`);
+    await db.execute(sql`DELETE FROM spray_walls WHERE board_uuid = ${SPRAY_WALL_BOARD}`);
+    await db.execute(sql`DELETE FROM user_boards WHERE uuid IN ('smart-view-board', ${SPRAY_WALL_BOARD})`);
     await db.execute(sql`DELETE FROM user_profiles WHERE user_id = ${PRIVATE_OWNER}`);
     await db.execute(sql`DELETE FROM content_privacy WHERE entity_id = 'sv-g2'`);
     await db.execute(sql`DELETE FROM board_climb_aliases WHERE alias_uuid IN ('k-merged', 'k-2-old', 'k-3-old')`);
@@ -721,7 +751,7 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
       }
     });
 
-    it('each library card counts what its list’s header counts, with alias and deleted-climb ticks present (#6808)', async () => {
+    it('each library card counts what its list’s header counts, with alias, deleted-climb and deleted-wall ticks present (#6808)', async () => {
       for (const userId of [GUARDED_OWNER, ALIAS_OWNER]) {
         const ownersOwn = makeCtx({ isAuthenticated: true, userId });
         const cards = await playlistQueries.mySmartPlaylistCounts(null, undefined, ownersOwn);
@@ -732,6 +762,8 @@ describe('smartPlaylist — views (real DB, #6651)', () => {
         }
       }
       // The header counts themselves, so the equality above is not two zeros.
+      // s-gone, on the deleted spray wall, is on no card: no five stars, no
+      // repeat, no project and no heart.
       const aliasCards = await playlistQueries.mySmartPlaylistCounts(
         null,
         undefined,
