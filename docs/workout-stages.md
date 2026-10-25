@@ -257,11 +257,17 @@ grade plus 10, at least 50), as the one request always did. A later tier is read
 the pool holds fewer than every slot plus 10: the 50 floor is refresh headroom, and the
 first tier's climbs already give a row somewhere to go.
 
-| Climb bias           | Tiers, best first                                                                                               | With Skip what I've sent                                | With Skip what I've tried                       |
-| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------- |
-| Unfamiliar (default) | never tried (`hideAttempted` + `hideCompleted`), then tried but not sent (`hideCompleted`), then sent (no flag) | the first two                                           | never tried only                                |
-| Attempted            | tried (`showOnlyAttempted`), one search as before                                                               | tried, not sent (`showOnlyAttempted` + `hideCompleted`) | does not apply; the switch is off and says why  |
-| Any                  | every climb (no flag), one search as before                                                                     | not sent (`hideCompleted`)                              | never tried (`hideAttempted` + `hideCompleted`) |
+| Climb bias           | Tiers, best first                                                                                               | With Skip what I've sent                                | With Skip what I've tried                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Unfamiliar (default) | never tried (`hideAttempted` + `hideCompleted`), then tried but not sent (`hideCompleted`), then sent (no flag) | the first two                                           | never tried only                                                         |
+| Attempted            | tried (`showOnlyAttempted`), one search as before                                                               | tried, not sent (`showOnlyAttempted` + `hideCompleted`) | does not apply; the switch is off and says why                           |
+| Sent                 | sent at this angle (`showOnlyCompleted`), one search                                                            | does not apply; the switch is off and says why          | does not apply; the switch is off and says why                           |
+| Liked                | hearted, at any angle (`onlyFavorited`), one search                                                             | liked, not sent (`onlyFavorited` + `hideCompleted`)     | liked, never tried (`onlyFavorited` + `hideAttempted` + `hideCompleted`) |
+| Any                  | every climb (no flag), one search as before                                                                     | not sent (`hideCompleted`)                              | never tried (`hideAttempted` + `hideCompleted`)                          |
+
+Sent and Liked came later ([#6739](https://github.com/boardsesh/boardsesh/issues/6739)); see
+"Climbs you've tried, sent or liked" below. Tried but not sent is the Attempted row with Skip
+what I've sent, not a bias of its own.
 
 A climb a later tier adds is a top-up, named in the pool's `topUpTiers` with the tier it
 came from. A pool is shuffled within each tier (`shuffleByTier`), on the first build and
@@ -346,6 +352,62 @@ logbook, since the search names no direction. A tier that does not pin the climb
   stars, climb bias, then Skip sent and Benchmarks when on) sits under the title and
   wraps across the card. Beside the title on one line it cut off at "Skip…" on a 393 pt
   phone, in English, before Benchmarks could show.
+
+### Climbs you've tried, sent or liked
+
+Issue [#6739](https://github.com/boardsesh/boardsesh/issues/6739), its first slice. A
+training plan often wants climbs you already know: rehearsed problems on the minute,
+projects for a sending day, a list you scouted last session. Climb bias now offers
+**Sent** (`sent`) and **Liked** (`liked`) next to Attempted, so a block fills from your
+own climbs at its grade. Each is one more row of `SEARCH_TIERS_BY_BIAS` (table above);
+the fetch, the pools, the preview and Start are unchanged.
+
+- **What each one reads.** Sent is `showOnlyCompleted`: a flash or send tick at this
+  angle, the same test the logbook's sent mark uses, so every row it finds carries the
+  sent mark before its ticks load (`adds: 'send'`). Liked is `onlyFavorited`: a heart
+  belongs to the climb, not an angle, so a climb liked at 40° fills a block at 25° when
+  it has a grade there. Both work offline on a downloaded board: the local search answers
+  `showOnlyCompleted` from the synced ticks and `onlyFavorited` from `user_favorites`,
+  once the phone's user data is this climber's (`canServeSearchLocal`).
+- **No crowd floors under Sent and Liked.** Both are lists you made by sending or
+  hearting (`biasDropsFloors`, the table's `dropsFloors` column), so min ascents and min
+  rating do not apply: `fetchFilters` sets both to 0, which the search reads as no floor,
+  and the block's filters hide those two rows while one of them is picked. A climb you
+  scouted on a spray wall with two ascents still fills the block. The stored values are
+  kept, so switching to another bias brings them back. Tall, wide and Benchmarks only
+  still apply.
+- **Attempted is unchanged.** It keeps the block's min ascents and min rating and sends
+  the one search it always sent, byte for byte, so a stored run's Attempted stage and the
+  "Add a block" defaults behave as before. Only Sent and Liked drop the floors. Tried but not sent is Attempted with Skip what I've sent (`showOnlyAttempted` +
+  `hideCompleted`), floors and all. A sixth chip for it would send that same request under
+  a second name and a second pool.
+- **Skip switches.** Neither fits Sent, so both are disabled there and say why
+  (`biasCanSkipSent`, `biasCanSkipTried`), and the fetch drops them. Under Liked both
+  narrow the list: Skip what I've sent leaves the liked climbs you have not sent yet.
+- **Thin lists.** A list holds what you have climbed or hearted at that grade, often a
+  handful. A short one shows the usual shortfall line ("Found 3 of 10 climbs"), and the
+  line under the chips says the block takes only the climbs you have sent or liked, so a
+  short or empty preview explains itself. The pool runs out on its one search, so it is
+  `exhausted` and a rebuild reuses it instead of asking again.
+- **Signed out** there is no logbook or heart to read: every bias falls back to Any, as
+  Unfamiliar and Attempted always did, with the floors applying. The chips show Any picked
+  and every other bias off (`biasNeedsSignIn`), the closed filter line names Any, and the
+  line under the chips says why. The stored bias is kept for when you sign in, like a
+  stored skip switch.
+- **Chips, not a segmented control.** Five biases cut "Unfamiliar" short in an iOS
+  segment on a 393 pt phone, and "Déjà essayés" or "Encadenados" more, so the bias is a
+  wrapping chip row like Min ascents, and it now comes first in the filters, since it
+  decides which rows below it apply. A menu row would hide the five choices behind a tap;
+  as chips they all stay in view, with the line under them saying what the picked one does.
+- **Stored filters.** A new bias is a new value, not a new stage kind, so a run with one
+  stays under `_v1`. A bundle from before Sent and Liked reads such a stage's filters as
+  unreadable (`isStageFilters` checks the bias against `CLIMB_BIAS_OPTIONS`) and drops
+  only the filters, keeping the stage and its climbs; its next "Add a block" starts from
+  the default filters. Bundles from before #6650 never read stage filters at all.
+- **Requests.** One search per pool, like Attempted. No new key reaches a default
+  request, so the screenshot fixtures still replay.
+- **Next.** The rest of #6739: a block filled from a playlist in list order, or from the
+  climbs of this or your last session by outcome, and "Swap for a climb from…" on a row.
 
 ## What comes next
 

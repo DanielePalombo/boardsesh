@@ -42,7 +42,12 @@ describe('the bias to tier table', () => {
       Object.fromEntries(
         Object.entries(SEARCH_TIERS_BY_BIAS).map(([bias, tiers]) => [
           bias,
-          { all: flags(tiers.all), unsent: flags(tiers.unsent), untried: flags(tiers.untried) },
+          {
+            all: flags(tiers.all),
+            unsent: flags(tiers.unsent),
+            untried: flags(tiers.untried),
+            dropsFloors: tiers.dropsFloors,
+          },
         ]),
       ),
     ).toEqual({
@@ -50,19 +55,28 @@ describe('the bias to tier table', () => {
         all: [UNTRIED, { hideCompleted: true }, {}],
         unsent: [UNTRIED, { hideCompleted: true }],
         untried: [UNTRIED],
+        dropsFloors: false,
       },
       attempted: {
         all: [{ showOnlyAttempted: true }],
         unsent: [{ showOnlyAttempted: true, hideCompleted: true }],
         untried: null,
+        dropsFloors: false,
       },
-      any: { all: [{}], unsent: [{ hideCompleted: true }], untried: [UNTRIED] },
+      sent: { all: [{ showOnlyCompleted: true }], unsent: null, untried: null, dropsFloors: true },
+      liked: {
+        all: [{ onlyFavorited: true }],
+        unsent: [{ onlyFavorited: true, hideCompleted: true }],
+        untried: [{ onlyFavorited: true, ...UNTRIED }],
+        dropsFloors: true,
+      },
+      any: { all: [{}], unsent: [{ hideCompleted: true }], untried: [UNTRIED], dropsFloors: false },
     });
   });
 
   it('only ever narrows: a skip switch keeps searches that hide what it skips', () => {
     for (const tiers of Object.values(SEARCH_TIERS_BY_BIAS)) {
-      expect(tiers.unsent.every((rule) => rule.flags.hideCompleted)).toBe(true);
+      expect(tiers.unsent?.every((rule) => rule.flags.hideCompleted) ?? true).toBe(true);
       expect(tiers.untried?.every((rule) => rule.flags.hideAttempted && rule.flags.hideCompleted) ?? true).toBe(true);
     }
   });
