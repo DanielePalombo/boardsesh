@@ -144,6 +144,36 @@
     "sprayWallPhotoAlt": "Foto von {{wallName}}",
     "sprayWallMeta": "{{angle}}° · {{holds}} Griffe"
   },
+  "boardPoster": {
+    "metaTitle": "QR-Poster für {{boardName}}",
+    "fallbackTitle": "QR-Poster",
+    "metaDescription": "Ein druckfertiger QR-Code. Scann ihn, um die Boulder hier zu sehen und deine Begehungen einzutragen.",
+    "scanStep": "Scann den Code mit deiner Kamera",
+    "openSource": "Boardsesh ist kostenlos und Open Source.",
+    "printedOn": "Gedruckt: {{monthYear}}",
+    "layoutLabel": "Poster-Layout",
+    "layouts": {
+      "photo": "Poster mit Foto",
+      "plain": "Schlichtes Poster",
+      "cards": "Karten"
+    },
+    "unlistedNotice": "Wer diesen Code scannt, kann die Spraywall öffnen.",
+    "spray": {
+      "headline": "Diese Spraywall ist auf Boardsesh",
+      "pickStep": "Such dir einen Boulder auf dem Foto aus",
+      "logStep": "Trag deine Begehung ein oder schraub deinen eigenen",
+      "justInstalled": "Gerade installiert? Scann noch mal, um diese Spraywall zu öffnen.",
+      "backAction": "Zurück zur Spraywall"
+    },
+    "led": {
+      "headline": "Dieses Board ist auf Boardsesh",
+      "pickStep": "Such dir einen Boulder aus und beleuchte ihn am Board",
+      "logStep": "Getoppt? Trag deine Begehung ein",
+      "justInstalled": "Gerade installiert? Scann noch mal, um dieses Board zu öffnen.",
+      "compatibility": "Funktioniert mit {{boardBrand}}.",
+      "backAction": "Zurück zum Board"
+    }
+  },
   "manage": {
     "welcome": {
       "title": "Bring deine Wand live",
@@ -291,6 +321,7 @@
         "unlisted": "Nicht gelistet",
         "private": "Privat"
       },
+      "printPoster": "Poster drucken",
       "addDialog": {
         "title": "Eines deiner Boards hinzufügen",
         "body": "Wähl ein Board, das dir gehört, und verknüpf es mit dieser Halle.",

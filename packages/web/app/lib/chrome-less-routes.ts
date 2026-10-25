@@ -8,8 +8,11 @@
 //   overlaid chrome breaks the no-scroll contract.
 // - /embed — iframe embeds (PR G, stacked on the kiosk foundation): embedded
 //   third-party pages must never show Boardsesh navigation.
+// - /poster — printable sheets (`/poster/b/<slug>`, #4415). As with the gym
+//   poster below, the header is `position: fixed` and prints on top of the
+//   sheet, and the footer pushes it onto a second page.
 
-export const CHROME_LESS_ROUTE_PREFIXES = ['/kiosk', '/embed'] as const;
+export const CHROME_LESS_ROUTE_PREFIXES = ['/kiosk', '/embed', '/poster'] as const;
 
 // Chrome-less surfaces that are NOT a whole route subtree, so a prefix cannot
 // express them.

@@ -22,6 +22,7 @@ import {
 } from '@boardsesh/analytics';
 import { INBOUND_CAMPAIGN_PARAMS, parseInboundCampaign } from '@/app/lib/inbound-campaign';
 import { absoluteUrl } from '@/app/lib/seo/base-url';
+import { WALL_CAPABILITY_PARAM } from '@/app/lib/spray/spray-visibility';
 
 /**
  * The absolute URL a printed gym QR encodes.
@@ -37,8 +38,8 @@ export function gymQrUrl(gymSlug: string, medium: GymQrMedium = 'poster'): strin
 }
 
 /**
- * The absolute URL a per-board QR encodes — the kiosk's install code, and any
- * future code stuck to one wall.
+ * The absolute URL a per-board QR encodes — the kiosk's install code, and the
+ * printed board poster (`/poster/b/{slug}`, `medium=board`).
  *
  * IMPORTANT and deliberate: `/b/{slug}` does NOT reach the QR landing tracker,
  * which only mounts on `/gym/[gym_slug]`. A `medium=kiosk` or `medium=board`
@@ -47,9 +48,21 @@ export function gymQrUrl(gymSlug: string, medium: GymQrMedium = 'poster'): strin
  * `app/b/[board_slug]/page.tsx`'s redirect so a first-party counter (#4387) or
  * a server log can attribute the visit, and so pointing one of these codes at a
  * gym page later is a one-line change rather than a reprint.
+ *
+ * `wallUuid` is an UNLISTED spray wall's share-link capability. It goes first,
+ * `?wall=<uuid>&src=qr&medium=board`, the same param `buildSprayWallShareUrl`
+ * puts on the wall's share link (`packages/mobile/src/lib/spray/spray-share.ts`)
+ * and the one `/b/{slug}` re-emits onto its redirect. Without it an unlisted
+ * wall's code would scan to a 404. Leave it out for everything else: a public
+ * wall and every LED board open on the plain slug, and a shorter URL is a
+ * smaller code with bigger modules.
  */
-export function boardQrUrl(boardSlug: string, medium: GymQrMedium): string {
-  return absoluteUrl(buildGymQrHref(`/b/${encodeURIComponent(boardSlug)}`, medium));
+export function boardQrUrl(boardSlug: string, medium: GymQrMedium, options: { wallUuid?: string } = {}): string {
+  const boardPath = `/b/${encodeURIComponent(boardSlug)}`;
+  const path = options.wallUuid
+    ? `${boardPath}?${WALL_CAPABILITY_PARAM}=${encodeURIComponent(options.wallUuid)}`
+    : boardPath;
+  return absoluteUrl(buildGymQrHref(path, medium));
 }
 
 /**

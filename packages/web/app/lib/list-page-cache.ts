@@ -21,6 +21,9 @@ const LIST_PAGE_CACHE_TTL_SECONDS = 86400;
 // in place — a cacheable redirect loop at this TTL would pin for a full day.
 const CLIMB_VIEW_PAGE_CACHE_TTL_SECONDS = 86400;
 
+/** The printable board poster, `/poster/b/{slug}` (#4415). Never cached; see `isBoardPosterRequest`. */
+const BOARD_POSTER_PATH_PREFIX = '/poster/b';
+
 /**
  * Checks whether search params contain any user-specific filters.
  * Used by SSR pages to decide whether to resolve a user session.
@@ -69,6 +72,21 @@ function hasUserSpecificQueryParams(searchParams: URLSearchParams): boolean {
  */
 export function isSprayWallCapabilityRequest(pathname: string, searchParams: URLSearchParams): boolean {
   return (pathname === '/b' || pathname.startsWith('/b/')) && searchParams.has(WALL_CAPABILITY_PARAM);
+}
+
+/**
+ * True for every printable board poster, `/poster/b/{slug}` (#4415), with or
+ * without a `?wall=`. Takes the LOCALE-STRIPPED pathname.
+ *
+ * Never cached, by any shared cache: the poster prints the board's visibility as
+ * of this request (a board switched to private must stop printing on the next
+ * request, not the next day), an unlisted wall's poster URL carries its
+ * capability, and the wall's photo is a fifteen-minute signed URL that must not
+ * outlive the page. Nobody but the owner prints a poster, so it costs the cache
+ * nothing.
+ */
+export function isBoardPosterRequest(pathname: string): boolean {
+  return pathname.startsWith(`${BOARD_POSTER_PATH_PREFIX}/`);
 }
 
 /**
