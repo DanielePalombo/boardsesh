@@ -90,10 +90,29 @@ const FOUR_BY_FOUR: RestTimerStagePacing = {
   kind: 'fourByFour',
   queueItemUuid: 'a1',
   mode: 'afterTick',
-  targetSeconds: 10,
+  targetSeconds: null,
   advanceOn: 'tick',
-  closesRound: false,
-  stagePacing: { mode: 'afterTick', restSeconds: 0, restBetweenRoundsSeconds: 180, advanceOn: 'tick' },
+  closesSet: false,
+  reps: { logged: 1, perSet: 4 },
+  stagePacing: {
+    mode: 'afterTick',
+    restSeconds: 0,
+    advanceOn: 'set',
+    sets: { repsPerSet: 4, restBetweenSetsSeconds: 180 },
+  },
+};
+
+/** Triples with 0:45 between reps. */
+const TRIPLES: RestTimerStagePacing = {
+  ...FOUR_BY_FOUR,
+  targetSeconds: 45,
+  reps: { logged: 1, perSet: 3 },
+  stagePacing: {
+    mode: 'afterTick',
+    restSeconds: 45,
+    advanceOn: 'set',
+    sets: { repsPerSet: 3, restBetweenSetsSeconds: 300 },
+  },
 };
 
 const LIMIT: RestTimerStagePacing = {
@@ -104,7 +123,7 @@ const LIMIT: RestTimerStagePacing = {
   mode: 'afterTick',
   targetSeconds: 180,
   advanceOn: 'send',
-  closesRound: false,
+  closesSet: false,
   stagePacing: { mode: 'afterTick', restSeconds: 180, advanceOn: 'send' },
 };
 
@@ -116,7 +135,7 @@ const ON_THE_MINUTE: RestTimerStagePacing = {
   mode: 'onTheMinute',
   targetSeconds: 45,
   advanceOn: 'deadline',
-  closesRound: false,
+  closesSet: false,
   stagePacing: { mode: 'onTheMinute', restSeconds: 45 },
 };
 
@@ -128,7 +147,7 @@ const WARM_UP: RestTimerStagePacing = {
   mode: 'afterTick',
   targetSeconds: 30,
   advanceOn: 'tick',
-  closesRound: false,
+  closesSet: false,
   stagePacing: { mode: 'afterTick', restSeconds: 30, advanceOn: 'tick' },
 };
 
@@ -175,13 +194,20 @@ describe('RestTimerSheet under a workout stage', () => {
 
     expect(visibleControls(container)).toEqual([]);
     expect(getAllByText('mobile.restTimer.workoutPacingTitle')).toHaveLength(1);
-    // The changeover stands in for a rest of 0.
-    expect(
-      getByText('mobile.restTimer.workoutPacingRounds:mobile.session.preGeneratorFourByFour,0:10,3:00'),
-    ).toBeTruthy();
-    expect(getByText('mobile.restTimer.workoutPacingAdvanceTick')).toBeTruthy();
+    // No rest between reps says nothing about it.
+    expect(getByText('mobile.restTimer.workoutPacingSets:mobile.session.preGeneratorFourByFour,4,3:00')).toBeTruthy();
+    expect(getByText('mobile.restTimer.workoutPacingAdvanceSet')).toBeTruthy();
     // Pause, Reset and Turn off stay: they act on this rest, not on the settings.
     expect(getByText('mobile.restTimer.turnOff')).toBeTruthy();
+  });
+
+  it('names a 4x4’s rest between reps when it has one', () => {
+    paceWith(TRIPLES);
+    const { getByText } = renderSheet();
+    expect(
+      getByText('mobile.restTimer.workoutPacingSetsWithRepRest:mobile.session.preGeneratorFourByFour,3,0:45,5:00'),
+    ).toBeTruthy();
+    expect(getByText('mobile.restTimer.workoutPacingAdvanceSet')).toBeTruthy();
   });
 
   it('says a limit block moves on only after a send', () => {
