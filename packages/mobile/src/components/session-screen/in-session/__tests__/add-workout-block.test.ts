@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ClimbQueueItem } from '@boardsesh/queue';
 import type { WorkoutRun, WorkoutStageFilters } from '@boardsesh/playlist-generator';
-import { DEFAULT_WORKOUT_FILTERS } from '../../pre-session/workout-blocks';
+import { DEFAULT_WORKOUT_FILTERS, buildDefaultOptions } from '../../pre-session/workout-blocks';
 import {
   addWorkoutBlock,
   appendBlockToRun,
@@ -158,7 +158,7 @@ describe('defaultMidSessionBlock', () => {
     const run: WorkoutRun = {
       stages: [...existingRun.stages, { id: 'late-warm', kind: 'warmUp', itemUuids: ['w9'] }],
     };
-    const options = defaultMidSessionBlock(run, 12);
+    const options = defaultMidSessionBlock(run, 12, false);
 
     expect(options.type).toBe('pyramid');
     expect(options.targetGrade).toBe(18);
@@ -166,33 +166,45 @@ describe('defaultMidSessionBlock', () => {
   });
 
   it('opens on a volume block at the fallback grade without a run', () => {
-    const options = defaultMidSessionBlock(null, 12);
+    const options = defaultMidSessionBlock(null, 12, false);
 
     expect(options.type).toBe('volume');
     expect(options.targetGrade).toBe(12);
   });
 
   it('keeps the type but takes the fallback grade for a stage stored without one', () => {
-    const options = defaultMidSessionBlock({ stages: [{ id: 'old', kind: 'ladder', itemUuids: ['l1'] }] }, 12);
+    const options = defaultMidSessionBlock({ stages: [{ id: 'old', kind: 'ladder', itemUuids: ['l1'] }] }, 12, false);
 
     expect(options.type).toBe('ladder');
     expect(options.targetGrade).toBe(12);
   });
 
-  // A timed stage reaches this sheet only after an OTA rollback to a bundle that
-  // models the timed kinds but offers none of them.
-  it.each(['fourByFour', 'limitBouldering', 'onTheMinute'] as const)(
-    'opens on a volume block at the stage grade after a %s stage, which has no chip',
-    (kind) => {
-      const run: WorkoutRun = {
-        stages: [...existingRun.stages, { id: 'timed', kind, itemUuids: ['t1', 't2'], targetGrade: 22, rounds: 4 }],
-      };
+  describe('after a timed stage', () => {
+    const runEndingWith = (kind: 'fourByFour' | 'limitBouldering' | 'onTheMinute'): WorkoutRun => ({
+      stages: [...existingRun.stages, { id: 'timed', kind, itemUuids: ['t1', 't2'], targetGrade: 22, rounds: 4 }],
+    });
 
-      const options = defaultMidSessionBlock(run, 12);
+    // A store build with the flag off offers no timed chip, and a timed stage can
+    // still reach it: a run stored with the flag on, or read after an OTA rollback.
+    it.each(['fourByFour', 'limitBouldering', 'onTheMinute'] as const)(
+      'opens on a volume block at the stage grade after a %s stage when timed blocks are not offered',
+      (kind) => {
+        const options = defaultMidSessionBlock(runEndingWith(kind), 12, false);
 
-      // The same as a volume block opened at that grade: no round or rest fields carried over.
-      expect(options).toEqual(defaultMidSessionBlock(null, 22));
-      expect(options.type).toBe('volume');
-    },
-  );
+        // The same as a volume block opened at that grade: no round or rest fields carried over.
+        expect(options).toEqual(defaultMidSessionBlock(null, 22, false));
+        expect(options.type).toBe('volume');
+      },
+    );
+
+    it.each(['fourByFour', 'limitBouldering', 'onTheMinute'] as const)(
+      'opens on another %s block at the stage grade when timed blocks are offered',
+      (kind) => {
+        expect(defaultMidSessionBlock(runEndingWith(kind), 12, true)).toEqual({
+          ...buildDefaultOptions(kind, 22),
+          warmUp: 'none',
+        });
+      },
+    );
+  });
 });
