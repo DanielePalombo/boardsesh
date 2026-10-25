@@ -300,10 +300,13 @@ describe('smartPlaylist resolver', () => {
       expect(calls.having).toHaveLength(1);
       expect(sqlText(calls.having[0][0])).toMatch(/NOT bool_or\(\s*IN \('flash', 'send'\)\)/);
       expect(calls.as[0]).toEqual(['projects']);
-      // The climb row is not joined, only probed for the hydrator's readable
-      // rule (it exists, and a draft is the viewer's own), so the page and the
-      // count skip a tick the hydrator would drop (#6661).
-      expect(sqlText(calls.where[0][0])).toContain('privacy_reference_climb.is_draft IS NOT TRUE');
+      // The climb row is not joined, only probed by the tick privacy rule (a
+      // listed or own climb behind the canonical uuid), so the page and the
+      // count skip a tick the hydrator would drop (#6661). That rule is
+      // stricter than the hydrator's readable rule, so no second probe runs.
+      const where = renderedSql(calls.where[0][0]);
+      expect(where).toContain('"privacy_tick_climb"');
+      expect(where).not.toContain('privacy_reference_climb');
     }
     expect(pageCalls.leftJoin).toHaveLength(0);
     expect(pageCalls.limit[0]).toEqual([20]);
@@ -710,13 +713,17 @@ describe('mySmartPlaylistCounts resolver', () => {
     );
     expect(rendered).toMatch(/sent\.climb_uuid = base\.climb_uuid\s+AND sent\.board_type = base\.board_type/);
     // The cards read the list header's membership (#6808): the canonical climb
-    // through its alias row, the readable-climb rule and the spray-wall rules.
+    // through its alias row, the tick privacy rule (which needs a listed or
+    // own climb row) and the spray-wall rules; the hearts the readable rule.
     const withNames = renderedSql(countsSqlArg());
     expect(withNames).toContain(
       'WITH base AS (select COALESCE("board_climb_aliases"."canonical_uuid", "boardsesh_ticks"."climb_uuid") as "climb_uuid"',
     );
     expect(withNames).toMatch(/left join "board_climb_aliases"/);
-    expect(withNames).toContain('privacy_reference_climb');
+    expect(withNames).toContain('"privacy_tick_climb"');
+    expect(withNames).toMatch(
+      /"user_favorites"\."user_id" = \$\d+ and EXISTS \(SELECT 1 FROM board_climbs privacy_reference_climb/,
+    );
     expect(withNames).toContain('spray_walls');
   });
 

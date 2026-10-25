@@ -101,8 +101,18 @@ const tickAliasJoin = and(
 const canonicalTickClimbUuid = sql<string>`COALESCE(${dbSchema.boardClimbAliases.canonicalUuid}, ${dbSchema.boardseshTicks.climbUuid})`;
 
 /**
- * Build the WHERE conditions shared by every smart-playlist query path:
- * `userId = ?` plus, when scoped, `boardType = ?`.
+ * Build the WHERE conditions shared by every logbook query path (the paged
+ * query, its count, the view's rows and the library cards): `userId = ?` plus,
+ * when scoped, `boardType = ?`, and the privacy and spray-wall rules.
+ *
+ * `tickPrivacyCondition` (with `allowOwnWithoutClimb` off) is also what keeps
+ * out a tick the hydrator could not show: its climb half demands a listed-or-own
+ * `board_climbs` row behind the tick's canonical uuid, stricter than the
+ * hydrator's published-or-own-draft read. A tick on a deleted climb therefore
+ * takes no page slot and no `totalCount` (#6661), and no separate readable-climb
+ * probe is needed. Turning `allowOwnWithoutClimb` on here would bring that bug
+ * back for the owner; the "deleted climb" test in smart-playlists-view.test.ts
+ * fails if it does.
  */
 function smartBaseConditions(
   userId: string,
@@ -131,33 +141,6 @@ function smartBaseConditions(
     ),
   );
   return conditions;
-}
-
-/**
- * `smartBaseConditions` plus the hydrator's readable-climb rule, for the paged
- * query, its count and the library cards: a `board_climbs` row under the tick's
- * canonical uuid, published or the viewer's draft. Today `tickPrivacyCondition`
- * already demands a listed-or-own `board_climbs` row behind the canonical uuid,
- * a stricter rule, so this probe is a deliberate guard and not the one doing
- * the work: it states the hydrator's own contract here, so a later widening of
- * the privacy rule (its `allowOwnWithoutClimb` branch, say) cannot bring back a
- * tick the hydrator drops after the page was taken, a lost page slot and one
- * too many in `totalCount` (#6661). It is one primary-key probe per tick. A
- * query using these must join `tickAliasJoin`. A view joins `board_climbs` on
- * the canonical uuid instead, the same rule.
- */
-function pagedSmartConditions(
-  userId: string,
-  boardName: string | undefined,
-  viewerUserId: string | null | undefined,
-): SQL[] {
-  return [
-    ...smartBaseConditions(userId, boardName, viewerUserId),
-    climbReferenceReadableCondition(
-      { boardType: dbSchema.boardseshTicks.boardType, climbUuid: canonicalTickClimbUuid },
-      viewerUserId,
-    ),
-  ];
 }
 
 /**
@@ -233,7 +216,7 @@ async function selectSmartClimbRefs(
   pageSize: number,
   viewerUserId: string | null | undefined,
 ): Promise<SmartClimbRef[]> {
-  const conditions = pagedSmartConditions(userId, boardName, viewerUserId);
+  const conditions = smartBaseConditions(userId, boardName, viewerUserId);
   const offset = page * pageSize;
 
   if (type === 'FIVE_STARS') {
@@ -316,7 +299,7 @@ async function countSmartClimbRefs(
   boardName: string | undefined,
   viewerUserId: string | null | undefined,
 ): Promise<number> {
-  const conditions = pagedSmartConditions(userId, boardName, viewerUserId);
+  const conditions = smartBaseConditions(userId, boardName, viewerUserId);
 
   if (type === 'FIVE_STARS') {
     const [row] = await db
@@ -392,9 +375,8 @@ function naturalRankSql(order: SQL) {
 /**
  * A logbook type's rows as `(climb_uuid, board_type, natural_rank)`: the same
  * WHERE, GROUP BY and HAVING as `selectSmartClimbRefs`, unpaged, ranked by the
- * order that query pages in. `climb_uuid` is the canonical climb, so the view's
- * `board_climbs` join supplies the readable-climb rule `pagedSmartConditions`
- * adds there.
+ * order that query pages in. `climb_uuid` is the canonical climb, the one the
+ * view's `board_climbs` join reads.
  */
 function logbookRowsSql(
   type: LogbookPlaylistType,
@@ -721,7 +703,7 @@ export const smartPlaylist = async (
  *
  * The card must show the number the list's header shows (#6808), so `base` and
  * `liked_climbs` read the same membership as `countSmartClimbRefs` with the
- * owner as the viewer: `pagedSmartConditions` / `favoriteConditions` on every
+ * owner as the viewer: `smartBaseConditions` / `favoriteConditions` on every
  * board, and `base` keyed on the canonical climb. A tick on a deleted climb, an
  * alias tick counted apart from its climb, or a climb on a deleted spray wall
  * no longer inflates the card. Exported for the EXPLAIN gate in
@@ -739,7 +721,7 @@ export function smartPlaylistCountsSql(userId: string): SQL {
     })
     .from(ticks)
     .leftJoin(dbSchema.boardClimbAliases, tickAliasJoin)
-    .where(and(...pagedSmartConditions(userId, undefined, userId)))
+    .where(and(...smartBaseConditions(userId, undefined, userId)))
     .getSQL();
   const likedClimbsWhere = and(...favoriteConditions(userId, undefined, userId));
 
