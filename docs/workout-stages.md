@@ -418,6 +418,86 @@ offers it, and on volume at the stage's grade where it does not (`defaultMidSess
   many rounds it runs, and is never negative: Start reads `filledSlotCount`, and the sheet
   counts the slots among the climbs the queue took.
 
+### Borrowing from nearby grades
+
+Issue [#6232](https://github.com/boardsesh/boardsesh/issues/6232). A slot whose grade has
+no climb left takes one from a nearby grade instead of staying empty. `BORROW_GRADE_STEPS`
+(`workout-preview-pool.ts`) is the order: one grade easier, one harder, two easier, two
+harder. The steps walk the board's grade scale (`getGradesForBoard`) by position, since
+MoonBoard and Woods skip difficulty ids. A borrowed climb keeps every filter of its slot
+(Skip what I've sent, Skip what I've tried, Benchmarks only, min ascents and stars,
+tall/wide), so borrowing never undoes a choice the climber made. A slot with nothing
+nearby either stays empty and the shortfall shows as before. With top-ups ("Sent climbs and
+benchmarks" below) a grade rarely runs short on the default filters; the skip switches and
+Benchmarks only are what usually bring it here.
+
+- **Picking.** `selectItemsFromPools` takes the grade scale. Kept rows go first, then every
+  slot at its own grade, then one step at a time across every slot still empty, so each
+  short slot gets the nearest grade before any slot takes one further away. At the planned
+  grade a climb already in the live queue (mid-session) still beats borrowing. At a nearby
+  grade it is the last resort: the steps run once for climbs that are not in the queue,
+  then once more for a queued one, so a fresh climb two grades away beats a queued one
+  next door, and a queued one still beats an empty row. One used-climb set spans every
+  pool, so a borrowed climb never fills a second row, and the slots planned at a grade
+  take its climbs before a neighbour borrows any. Rows keep plan order, stage and section.
+- **Searching.** `borrowForShortSlots` runs between `buildPoolsReusing` and the final
+  pick. It reaches one step further at a time. At each reach it fills the plan from the
+  pools it has, using no step past that reach and no queued climb at a nearby grade, and
+  for each slot still empty searches the nearest step whose pool can still grow, with its
+  filters, sized by the slots planned at that grade or already taking from it plus the ones
+  still short. So a slot searches one grade easier before a pool another block fetched one
+  grade harder, or two away, can fill it. A plan that fills at its own grades sends no extra
+  request. A nearby pool is searched again when slots still come up short there and its
+  last search found more climbs, so a grade that blocks on both sides borrow from grows for
+  both (a 40-climb block at 16 and one at 18 with every climb at 17: 17 is searched for 40,
+  then for 80). It is never searched once it is read out (`exhausted`) or a search found
+  nothing more, and a rebuild reuses it under the same rule as the plan's own pools, so
+  editing another block does not search it again. A nearby search that fails is skipped
+  (the next step can still fill the slot), never fails the preview, and is sent again by the
+  next rebuild, the way a short plan pool is: remembering it would leave the block short
+  after one network blip until Regenerate. A superseded build stops between steps.
+- **Search budget.** `MAX_BORROW_SEARCHES_PER_BUILD` caps a build at 6 nearby searches,
+  nearer steps first; a pool reused from the previous build costs none of them, so the next
+  rebuild picks up the steps the cap left. Once the cap is spent, a short slot can still take
+  a pool the build already has one step further out rather than stay empty. A thin grade
+  reads one page per search tier, three tiers under the default Unfamiliar bias signed in,
+  so the borrow pass sends at most about 18 requests a build on top of the plan's own pools.
+  The search allows 120 a minute (`search-climbs`), shared with the climb list. One block
+  whose filters leave every nearby grade thin costs up to 4 searches, about 12 requests,
+  each time its filters change; past the limit the plan's own pool search fails and the
+  preview shows its error toast.
+- **Rows.** For a borrowed row `PreviewItem.slot.grade` is the grade the climb came from,
+  and `borrowedFrom.plannedGrade` the grade planned. The row says "V4 for V5" under the
+  climb, and its spoken label says it too. When both grades read the same in the climber's
+  format (4a, 4b and 4c are all V0, 5a and 5b both V1), both labels add the Font grade
+  ("V0 / 4B for V0 / 4A"), as the grade rail's chips do (`borrowedGradeLabels`).
+- **Refresh.** A row refresh tries the planned grade first (its cached pool, then one
+  refetch unless the pool is read out), then the nearby grades in step order the same
+  way, for a climb not in the queue, then a queued climb at the nearest grade that has one.
+  It never takes a climb another row shows, since Start would queue it twice: when no grade
+  it may use has one left, the row keeps its climb and its caption, and a toast says every
+  climb that fits the row is in the workout already. Refreshes search each pool again at
+  most once until the preview rebuilds (`refetchedPoolKeys`), since a second search brings
+  back the same climbs, so tapping that row again sends no request. A borrowed row whose
+  planned grade has a climb free again goes back to it. A refresh no longer refetches a
+  pool that is read out, at any grade. Shuffle borrows again from the pools it has, with no
+  request.
+- **Summary and Start.** `summarizePlanFill` counts `substituted`: filled slots whose grade
+  differs from the planned slot with the same index. The card under the summary line says
+  how many climbs came from a nearby grade, above the shortfall line when slots are still
+  empty, and the grade span covers the grades the climbs are at. Start queues exactly the
+  rows on screen, borrowed ones included, under their planned stage. `Session Queue
+  Generated` carries `substitutedCount` on both Start and Add to session. The shortfall
+  line says how many climbs were found, not how many the session starts with, since a 4x4
+  queues each of its climbs once per round. The card's lines sit a fiftieth of a point under
+  the footnote line height (`NOTE_LINE_HEIGHT_SLACK`): deep in the session screen Yoga's
+  float rounding gave a two-line note a 35.9999 pt frame, and iOS then drew one clipped line
+  over an empty one.
+- **Screenshot captures borrow nothing** (`borrowScaleFor`). The pinned fixture set has no
+  answer for a nearby grade's search, nor for the stats of the climbs it would show, where
+  a recorded grade came back short (Woods, and MoonBoard at the recorded grade). Remove
+  that line and re-record the set to show borrowed rows there.
+
 ### Sent climbs and benchmarks
 
 Issue [#6232](https://github.com/boardsesh/boardsesh/issues/6232). Under the default
