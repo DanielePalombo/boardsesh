@@ -17,6 +17,8 @@ const T0 = Date.parse('2026-09-11T10:00:00.000Z');
 const armedState = (overrides: Partial<RestTimerState> = {}): RestTimerState => ({
   armed: true,
   armedForSessionId: 'session-1',
+  crew: null,
+  crewPacingDraft: null,
   anchorMs: T0,
   isRunning: true,
   pausedElapsedSeconds: 0,
@@ -25,6 +27,7 @@ const armedState = (overrides: Partial<RestTimerState> = {}): RestTimerState => 
   queueEnded: false,
   listEnded: false,
   lastFiredDeadlineMs: null,
+  crewBeatSkippedMs: null,
   stagePacing: null,
   lastTick: null,
   ...overrides,
