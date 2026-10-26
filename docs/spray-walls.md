@@ -4532,7 +4532,14 @@ property rather than a catalogue:
 4. **Public snapshots.** `discoverLayoutPairs` in
    `packages/backend/src/scripts/export-board-snapshots.ts` skips `spray`. The
    nightly snapshots go to a public bucket under guessable keys; a spray
-   partition is one climber's wall.
+   partition is one climber's wall. The `v1-catalog` artifact
+   (`export-board-catalog.ts`) drops every `board_type = 'spray'` row from every
+   table it exports, by `CATALOG_SNAPSHOT_EXCLUDED_BOARD_TYPES` in
+   `packages/db/src/catalog-snapshot.ts`: a wall's layout and size rows carry
+   its name and its hole and placement rows carry its marked holds. The shared
+   spray product, set, roles and grades come from migration 0227 instead. The
+   dev-db loader applies the same filter to older artifacts and moves both
+   spray id sequences past any spray row it finds.
 5. **Sitemaps.** `isIndexableBoardType` in
    `packages/web/app/lib/seo/sitemap/indexable-boards.ts` keeps `spray` out of
    both the boards and the climbs shards. Per-wall visibility governs who may
