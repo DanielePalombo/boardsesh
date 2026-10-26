@@ -463,6 +463,25 @@ order). On someone else's logbook the copy says "Their", never "Your", and the f
 the visit: only your own logbook saves them. The setter row pushes a picker route and the sheet
 suspends around it (`useSheetSubRoute`).
 
+On iOS with Liquid Glass, the climbs Filters sheet (Climbs, playlists, smart lists, setter pages)
+draws its body as one SwiftUI `Form`, the grouped look of iOS Settings (#6872,
+`ClimbFilterForm.ios.tsx`). The X / Filters / Reset bar stays our RN `SheetTopBar`.
+- **Opening height.** It opens at half height, with the name field, Recent and the grade rail on
+  screen and the list still visible behind it. Drag it, or focus the name field, for the tall detent.
+- **Controls.** A segmented control only for two or three options (climb type, sort order). Four or
+  more become a menu row with the value on the right: grade accuracy, collection, progress, both
+  star minimums, popularity, sort by. Recent searches are one "Recent" menu row with the current
+  search ticked. Switches are toggle rows with a subtitle. Setters, Hold types and Board region are
+  value-and-chevron rows that push their pickers.
+- **Glass.** The Form's own background is hidden so the sheet's glass shows between the cards. The
+  cards are opaque (`secondarySystemGroupedBackground`): a Form row's default fill is translucent
+  over glass, and in light mode the list behind showed through it.
+- **No pins in the sheet.** Its last row opens Settings › Quick filters, where the chips are switched
+  on and ordered. After any picker round trip the Form comes back at the top: SwiftUI can't scroll a
+  Form to a row.
+
+Android and the Material variant keep the RN sheet with its pin icons.
+
 Neutral tiles in session summaries and Profile's period comparison use `systemColors.tertiaryFill`
 on Liquid Glass, leaving visual emphasis to the actual values and semantic highlights. Material
 keeps `systemColors.fill`. Do not apply a violet background to every content card.
@@ -551,17 +570,34 @@ surface passes final, localised labels and bound handlers. Five kinds (`CapsuleR
 - **Android and the web are tap-only.** A Compose `FilterChip` eats the long-press (#3319, #3322),
   so a `toggleMenu` draws a plain toggle there and its commands are unreachable. Keep anything a
   climber needs on those platforms in the sheet.
-- **Order is the surface's call**, and it is fixed: a capsule never moves because it was pinned
-  later.
+- **Order is the climber's.** Filters (and Material's Angle) lead and never move. The pinned
+  capsules follow in the order their store saved, which Settings › Climbs & grades › Quick filters
+  edits with a switch and ↑/↓ arrows per filter, as Settings › Home does. A newly pinned capsule
+  goes last. The Logbook row still draws in its catalog order.
 
 **Pins.** Which capsules show is the climber's choice, saved per surface by a store from
 `createPinnedChipsStore({ storageKey, catalog, defaults, normalize?, fromStored?, toStored? })`
 (`src/lib/pinned-chips-store.ts`). Each store has its own key, state and listeners, and its hook
-returns `{ pinned, loaded, isPinned, togglePin }`. Climbs uses the key `pinnedFilterChips` and its
-catalog in `src/lib/pinnable-chips.ts`; `normalize` is where a retired kind migrates (a stored
-`shape` pin becomes Tall + Wide). `fromStored` runs on load only, for a migration that must not
-run when a pin changes. An active filter whose capsule isn't pinned still shows as a removable
-token under the row, so a filtered list always says why.
+returns `{ pinned, loaded, isPinned, togglePin }`; the store also has `set`, `toggle` and
+`move(kind, -1 | 1)`. `pinned` is in the saved order, and the default `normalize`
+(`keepStoredPinOrder`) keeps it, dropping unknown kinds and repeats. The catalog is the order a
+fresh install's defaults draw in and the order unpinned filters list in on Quick filters. Climbs
+uses the key `pinnedFilterChips` and its catalog in `src/lib/pinnable-chips.ts`; `normalize` is
+where a retired kind migrates (a stored `shape` pin becomes Tall + Wide where it stood, unless the
+list names them). `fromStored` runs on load only, for a migration that must not run when a pin
+changes. An older bundle reads a reordered list in its own catalog order: it loses the order, never
+a pin. An active filter whose capsule isn't pinned still shows as a removable token under the row,
+so a filtered list always says why.
+
+**Quick filters** (`src/components/settings/quick-filters/`, route `settings/quick-filters`, also
+re-exported on the Climbs and Discover stacks so a filter sheet can push it) edits two stores:
+Climbs, and Playlists (every playlist, smart playlist and setter page). Pinned filters come first
+in the saved order with a switch and arrows, the rest follow in catalog order with a switch only,
+and each row is named as the Filters sheet names its control (`src/lib/filter-chip-labels.ts`). The
+page is built like Settings › Home (`section-layout-form-rows.ts`, `useMovableFormRows`): hosted
+`SectionLayoutFormList` rows on iOS and the browser, native switches with native move buttons on
+Android. The iOS Filters form has no pin switches; the React Native sheet keeps its pin icons for
+now.
 
 Climbs' Recent menu (saved searches) is a pinnable kind too, first in the catalog and pinned by
 default, with its pin under Climb name in Filters. That Filters row also lists the saved searches as
@@ -569,7 +605,7 @@ a horizontal strip of grade-rail chips (`RecentSearchRail`), or a one-line hint 
 none. A chip and the toolbar menu apply a search through the same helpers
 (`src/lib/recent-filter-selection.ts`) and the screen's one apply handler. The toolbar chip still
 shows only while there are saved searches, and unpinning it never deletes them. Every list saved before Recent was pinnable lacks
-it, so the climbs `fromStored` adds `recent` to a list that holds neither `recent` nor the
+it, so the climbs `fromStored` adds `recent`, first, to a list that holds neither `recent` nor the
 `!recent` marker, which is what `toStored` writes when Recent is unpinned. An empty list still loads
 the full defaults, and older bundles drop both values. The Filters capsule itself is never
 pinnable: it is the way back to every pin.
