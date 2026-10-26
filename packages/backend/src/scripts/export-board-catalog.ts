@@ -42,6 +42,7 @@ import {
   CATALOG_SNAPSHOT_EXCLUDED_COLUMNS,
   CATALOG_SNAPSHOT_REDACTED_COLUMNS,
   CATALOG_SNAPSHOT_REDACTED_VALUE,
+  catalogSnapshotBoardTypeFilter,
   type CatalogSnapshotTableName,
 } from '@boardsesh/db/catalog-snapshot';
 import {
@@ -210,7 +211,18 @@ async function streamTableIntoSqlite(
             AND NOT EXISTS (SELECT 1 FROM content_privacy snapshot_alias_privacy
               WHERE snapshot_alias_privacy.entity_type = 'climb' AND snapshot_alias_privacy.entity_id = snapshot_alias_climb.uuid))`
         : '';
-  const selectSql = `SELECT ${selectList} FROM ${tableName}${catalogueScope}`;
+  // Spray walls are private, runtime-created catalogue rows (a wall's name, its
+  // marked holds). No table publishes them. See CATALOG_SNAPSHOT_EXCLUDED_BOARD_TYPES.
+  const boardTypeFilter = columnNames.includes('board_type')
+    ? catalogSnapshotBoardTypeFilter(`${tableName}.board_type`)
+    : null;
+  const rowScope =
+    boardTypeFilter === null
+      ? catalogueScope
+      : catalogueScope === ''
+        ? ` WHERE ${boardTypeFilter}`
+        : `${catalogueScope}\n        AND ${boardTypeFilter}`;
+  const selectSql = `SELECT ${selectList} FROM ${tableName}${rowScope}`;
   for await (const batch of tx.unsafe(selectSql).cursor(2000)) {
     for (const row of batch as RawRow[]) {
       const normalized = normalizeRow(row);

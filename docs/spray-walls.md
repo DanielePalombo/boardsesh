@@ -649,7 +649,10 @@ ships on the `release/next` train because it moves the native fingerprint.
   touch lands on. It is `box-none`, not `none`: on iOS, Fabric turns `none` into
   `userInteractionEnabled = NO`, and UIKit can then refuse it first responder
   and never hit-tests it, which would silence both the key commands and the
-  Pencil interaction. For a climber who can edit, JS hands it the shortcut
+  Pencil interaction. On Android the module's view is an `ExpoView`, which is a
+  `LinearLayout`, so it holds a single JS wrapper child (absolute-fill) that
+  carries the editor's layout; `box-none` only takes effect on that wrapper
+  there. For a climber who can edit, JS hands it the shortcut
   list (`sprayShortcutCommands`: keys, plus the titles the iPad's Cmd-hold
   overlay shows). iOS registers each one as a `UIKeyCommand` on a view that
   makes itself first responder. Android matches key presses on a view that
@@ -4532,7 +4535,14 @@ property rather than a catalogue:
 4. **Public snapshots.** `discoverLayoutPairs` in
    `packages/backend/src/scripts/export-board-snapshots.ts` skips `spray`. The
    nightly snapshots go to a public bucket under guessable keys; a spray
-   partition is one climber's wall.
+   partition is one climber's wall. The `v1-catalog` artifact
+   (`export-board-catalog.ts`) drops every `board_type = 'spray'` row from every
+   table it exports, by `CATALOG_SNAPSHOT_EXCLUDED_BOARD_TYPES` in
+   `packages/db/src/catalog-snapshot.ts`: a wall's layout and size rows carry
+   its name and its hole and placement rows carry its marked holds. The shared
+   spray product, set, roles and grades come from migration 0227 instead. The
+   dev-db loader applies the same filter to older artifacts and moves both
+   spray id sequences past any spray row it finds.
 5. **Sitemaps.** `isIndexableBoardType` in
    `packages/web/app/lib/seo/sitemap/indexable-boards.ts` keeps `spray` out of
    both the boards and the climbs shards. Per-wall visibility governs who may

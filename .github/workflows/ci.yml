@@ -460,6 +460,11 @@ jobs:
               - 'packages/db/scripts/serial-plan-default.test.ts'
               - 'packages/db/scripts/serial-plan-default.integration.test.ts'
               - 'packages/db/scripts/verify-serial-plan.ts'
+              # The dev-db snapshot loader's node:test file (#6499): its
+              # board_type filter keeps private spray rows from an older artifact
+              # out of a rebuilt image, and only this job runs it.
+              - 'packages/db/scripts/load-board-snapshots*'
+              - 'packages/db/src/catalog-snapshot.ts'
             staticAssets:
               - 'packages/web/public/images/**/*.webp'
               - 'packages/web/public/videos/**/*.mp4'
@@ -1105,6 +1110,13 @@ jobs:
           vp exec tsx --test
           scripts/serial-plan-default.test.ts
           scripts/serial-plan-default.integration.test.ts
+      # #6499: the first dev-db image built after the exporter stopped writing
+      # spray rows still loads an older artifact that carries them, so the
+      # loader's own board_type filter is what keeps private walls out. A
+      # node:test file outside Vitest's module graph; it needs no database.
+      - name: Dev-db snapshot loader skips private spray rows
+        working-directory: packages/db
+        run: vp exec tsx --test scripts/load-board-snapshots.test.ts
 
   # Same no-path-gate reasoning as the board-render-version step of `guards`,
   # and the same inputs: the tracer walks the whole board catalogue and every
