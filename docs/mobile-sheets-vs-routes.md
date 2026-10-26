@@ -772,7 +772,7 @@ After native removal has been requested, the departing route stops consuming
 targets. Its cleanup retires only the nonce it actually served, including that
 nonce's board override. The host retries an explicitly requested navigation once
 after unmount when a newer target is still pending. This retry preserves the
-nonce and checks privacy and credential generations; it excludes pane opens,
+nonce and checks the credential generation; it excludes pane opens,
 `navigate: false`, superseded targets, and targets another route already consumed.
 
 The iPad pane does not receive this route-owned animation. Keep the modal's
@@ -800,8 +800,7 @@ mode.
 navigation model, layout measurements, selection handlers, favorite actions, and sheet
 hosts live in separate modules. The sheet host stays mounted beneath the existing root
 View; visibility does not control its lifetime. Composer credential keys are distinct
-per sheet so an account change resets each draft, while privacy-only changes preserve
-drafts.
+per sheet so an account change resets each draft.
 
 ## Worked examples
 

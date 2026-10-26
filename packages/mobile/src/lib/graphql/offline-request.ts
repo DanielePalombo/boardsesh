@@ -1,4 +1,4 @@
-import { getPrivacyRevocationGeneration } from '../privacy/privacy-cache';
+import { getCredentialGeneration } from '../privacy/privacy-cache';
 import { onlineManager } from '@tanstack/react-query';
 import type { Variables } from 'graphql-request';
 import type { SQLiteDatabase } from 'expo-sqlite';
@@ -533,8 +533,8 @@ export async function offlineAwareRequest<TResponse>(
 ): Promise<TResponse> {
   const operation = OFFLINE_OPERATIONS.get(document);
   const signal = options?.signal;
-  const privacyGeneration = getPrivacyRevocationGeneration();
-  const localAllowed = () => getPrivacyRevocationGeneration() === privacyGeneration;
+  const credentialGeneration = getCredentialGeneration();
+  const localAllowed = () => getCredentialGeneration() === credentialGeneration;
   const assertNotCancelled = () => {
     if (signal?.aborted) throw createAbortError('Request cancelled');
   };
