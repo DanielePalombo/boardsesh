@@ -15,6 +15,7 @@ import {
   NativeTitleMaxWidthContext,
 } from './native-header-action-context';
 import { nativeTitleMaxWidth } from './native-title-bound';
+import { renderHiddenHeaderTitle } from './hidden-header-title';
 
 /** UIKit owns title collapse, edge effects, Dynamic Type and the status-bar tap. */
 export function NativeRootHeader({
@@ -25,6 +26,7 @@ export function NativeRootHeader({
   rightItems,
   centerContent,
   centerActionWidths,
+  titleHidden = false,
   children,
   opaqueControls = false,
   onHeightChange,
@@ -40,6 +42,11 @@ export function NativeRootHeader({
   centerContent?: ReactNode;
   /** Content widths of the native action groups flanking the custom title. */
   centerActionWidths?: { leading: number; trailing: number };
+  /**
+   * Draw no title, large or inline, for a screen whose tab already names it
+   * (Climbs). `centerContent` still shows when present.
+   */
+  titleHidden?: boolean;
   /** Supplementary controls pinned under the bar; see `HeaderControls`. */
   children?: ReactNode;
   /**
@@ -102,7 +109,7 @@ export function NativeRootHeader({
         options={{
           headerShown: true,
           // The current-climb pill replaces the root title while it is present.
-          headerLargeTitle: !hasCenterContent,
+          headerLargeTitle: !hasCenterContent && !titleHidden,
           headerTransparent: true,
           // iOS 26 owns the scroll-edge material; don't inherit the legacy blur.
           headerBlurEffect: glassCapability ? undefined : 'systemMaterial',
@@ -110,7 +117,7 @@ export function NativeRootHeader({
           headerLargeTitleShadowVisible: false,
           // Route layouts own the title even while a root modal is focused.
           ...(title === undefined ? {} : { title }),
-          headerTitle: hasCenterContent ? renderCenterContent : undefined,
+          headerTitle: hasCenterContent ? renderCenterContent : titleHidden ? renderHiddenHeaderTitle : undefined,
           headerTitleStyle: { color: systemColors.label },
           headerLargeTitleStyle: { color: systemColors.label },
           headerLeft:

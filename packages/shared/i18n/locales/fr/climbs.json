@@ -422,7 +422,7 @@
       "recovery": {
         "scope": "{{board}} · {{angle}}°",
         "filters": "Filtres actifs : {{filters}}",
-        "removeHint": "Retire un filtre pour réessayer. Ta recherche et la configuration restent sélectionnées.",
+        "removeHint": "Retire un filtre pour réessayer. Tout le reste est conservé.",
         "openFilters": "Ajuster les filtres"
       }
     },
@@ -606,7 +606,6 @@
     },
     "search": {
       "recentFilters": "Récents",
-      "clearRecent": "Effacer",
       "gradeRange": "{{min}}–{{max}}",
       "gradeMin": "{{grade}}+",
       "gradeMax": "≤{{grade}}",

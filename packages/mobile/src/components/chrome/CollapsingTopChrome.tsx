@@ -54,6 +54,9 @@ type CollapsingTopChromeProps = {
   /** Optional interactive element for the centre slot (Climbs "On the wall"
    *  capsule), taking precedence over `centerTitle`. */
   centerContent?: ReactNode;
+  /** iOS native header only: draw no title for a screen its tab already names
+   *  (Climbs). See `NativeRootHeader`. */
+  titleHidden?: boolean;
   /** Optional glass action(s) docked at the far right of the right toolbar (e.g. the
    *  Record tab's share/invite + End controls). Discover/Climbs pass none. */
   trailingAction?: ReactNode;
@@ -90,9 +93,9 @@ type CollapsingTopChromeProps = {
  * Composes the board-agnostic `CollapsingLargeTitleHeader`. The board control is
  * a single glass glyph (`BoardToolbarAction`) docked in the right toolbar beside
  * the lightbulb — there is no large centred board pill. Used by Discover
- * (`DiscoverTopChrome`), Climbs (`ClimbTopChrome`, which adds a search row via
- * `children` + the centre title), and Record (`RecordTopChrome`, which adds a
- * share `trailingAction`).
+ * (`DiscoverTopChrome`), Climbs (`ClimbTopChrome`, which adds its filter chips via
+ * `children` and hides the native title), and Record (`RecordTopChrome`, which adds
+ * a share `trailingAction`).
  */
 export function CollapsingTopChrome({
   canCreate,
@@ -105,6 +108,7 @@ export function CollapsingTopChrome({
   onHeightChange,
   centerTitle,
   centerContent,
+  titleHidden = false,
   trailingAction,
   trailingActionCount,
   leadingAction,
@@ -133,7 +137,7 @@ export function CollapsingTopChrome({
   // action is the screen's Material FAB (see `DiscoverLibrary`), not an app-bar
   // control, so `canCreate` / `onCreate` are intentionally unused here. The `children`
   // / `centerTitle` / leading / trailing props are liquid-glass-only affordances
-  // (Climbs' search row, Record's session controls) and never reach this branch.
+  // (Climbs' filter chips, Record's session controls) and never reach this branch.
   const isMaterial = selectByVariant(variant, { material: true, liquidGlass: false });
   if (isMaterial) {
     return (
@@ -261,6 +265,7 @@ export function CollapsingTopChrome({
         leftActions={leftActions}
         leftActionsStandalone={leftActionCount === 1}
         centerContent={centerContent}
+        titleHidden={titleHidden}
         centerActionWidths={{
           leading: leftActionCount * NATIVE_ACTION_SIZE,
           trailing: rightActionCount * NATIVE_ACTION_SIZE,

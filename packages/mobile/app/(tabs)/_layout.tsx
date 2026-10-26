@@ -150,6 +150,12 @@ export default function TabLayout() {
   // (deviceLayout.expanded is computed but intentionally unconsumed here — it's
   // reserved for the Phase-3 master+detail Climbs browser; see size-class.ts.)
   const deviceLayout = useDeviceLayout();
+  // iOS 27 lets any tab be prominent: it stays visible, at the trailing end, when the
+  // bar collapses on scroll (WWDC26 "Modernize your UIKit app"), like Apple Music's
+  // Search. The API is iOS 27-only and react-native-screens warns below it. iPhone
+  // only: that is where the bar collapses.
+  const prominentClimbsTab =
+    liquidGlassTabBar && !deviceLayout.isPad && Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) >= 27;
   const { width: windowWidth } = useWindowDimensions();
   // The focused tab drives the wall-redundancy rule below: when the "On the
   // Wall" destination is open, the ambient column is suppressed so the same feed
@@ -233,11 +239,6 @@ export default function TabLayout() {
       options={{ title: t('mobile.nav.home'), tabBarIcon: materialTabIcon('home', 'home-outline') }}
     />,
     <Tabs.Screen
-      key="climbs"
-      name="climbs"
-      options={{ title: t('mobile.nav.climbs'), tabBarIcon: materialTabIcon('magnify', 'magnify') }}
-    />,
-    <Tabs.Screen
       key="record"
       name="record"
       options={{
@@ -279,6 +280,12 @@ export default function TabLayout() {
         title: t('mobile.nav.profile'),
         tabBarIcon: materialTabIcon('account-circle', 'account-circle-outline'),
       }}
+    />,
+    // Last, so Climbs is the rightmost tab here too, matching the native bar.
+    <Tabs.Screen
+      key="climbs"
+      name="climbs"
+      options={{ title: t('mobile.nav.climbs'), tabBarIcon: materialTabIcon('magnify', 'magnify') }}
     />,
   ];
 
@@ -397,16 +404,6 @@ export default function TabLayout() {
         <NativeTabs.Trigger.Label>{t('mobile.nav.home')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      {/* An ordinary labelled tab in the bar, like Apple Music's Search tab: no
-          `role="search"`. Since SDK 58 that role makes a UISearchTab, which iOS 26
-          sets apart from the other tabs and which moves the search field into the
-          bottom bar. The field sits under the title instead (climbs/index.tsx), and
-          a second tap on the tab focuses it (`useTabReselect`). */}
-      <NativeTabs.Trigger name="climbs">
-        <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.climbs} md="search" />
-        <NativeTabs.Trigger.Label>{t('mobile.nav.climbs')}</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
       <NativeTabs.Trigger name="record">
         <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.record} md="radio_button_checked" />
         <NativeTabs.Trigger.Label>{tSession('mobile.session.recordTab')}</NativeTabs.Trigger.Label>
@@ -425,6 +422,18 @@ export default function TabLayout() {
       <NativeTabs.Trigger name="profile">
         <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.profile} md="account_circle" />
         <NativeTabs.Trigger.Label>{t('mobile.nav.profile')}</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      {/* Last, so it is the rightmost tab, like Apple Music's Search tab (HIG Tab
+          bars: the search tab sits "at the trailing end"). An ordinary labelled tab,
+          not `role="search"`: since SDK 58 that role makes a UISearchTab, which iOS 26
+          sets apart from the other tabs and which brings a search field into the bar.
+          Climbs has no search field; a second tap on the tab opens Filters instead
+          (`useTabReselect` in climbs/index.tsx). `prominent` keeps it on screen at the
+          right when the bar collapses on scroll, as Music's Search does. */}
+      <NativeTabs.Trigger name="climbs" prominent={prominentClimbsTab}>
+        <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.climbs} md="search" />
+        <NativeTabs.Trigger.Label>{t('mobile.nav.climbs')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );

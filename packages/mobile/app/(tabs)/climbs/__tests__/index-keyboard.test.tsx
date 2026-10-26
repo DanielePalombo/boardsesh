@@ -33,6 +33,7 @@ import type { BoardSearchConfig, ClimbBoardFilterState } from '@boardsesh/climb-
 import { hasActiveClimbFilters } from '@boardsesh/climb-filters';
 import type { FilterChipRowProps } from '../../../../src/components/search/FilterChipRow.types';
 import type { RecentFilter } from '../../../../src/lib/recent-filter-store';
+import type { FilterToken } from '../../../../src/lib/filter-tokens';
 
 type FilterSheetProps = Parameters<typeof ClimbFilterSheet>[0];
 
@@ -133,7 +134,6 @@ const mocks = vi.hoisted(() => ({
   ensureBackgroundsCached: vi.fn(),
   imagePrefetch: vi.fn(),
   nativeRootHeader: true,
-  nativeSearch: false,
   renderNativeChrome: false,
   // Render the chrome's filter rows (chips, grade rail, tokens) and hand the test
   // the Grade chip's open/close callbacks.
@@ -143,9 +143,10 @@ const mocks = vi.hoisted(() => ({
   deviceLayout: { isPad: false, isTablet: false, widthClass: 'compact' },
   openGrade: undefined as (() => void) | undefined,
   closeGrade: undefined as (() => void) | undefined,
-  // What the chrome calls when the screen loses focus or search takes focus.
+  // What the chrome calls when the screen loses focus.
   dismissGradePopover: undefined as (() => void) | undefined,
-  focusSearch: undefined as (() => void) | undefined,
+  // The tokens the token row under the chips shows.
+  tokenRowTokens: [] as readonly FilterToken[],
   openFilters: undefined as (() => void) | undefined,
   openFiltersFromChips: undefined as (() => void) | undefined,
   // Whether the chrome was told to draw its own (Material) grade rail.
@@ -365,6 +366,8 @@ vi.mock('@boardsesh/analytics', () => ({
     SearchResultSelected: 'Search Result Selected',
     GradeFilterChanged: 'Grade Filter Changed',
     GradeRowToggled: 'Grade Row Toggled',
+    ClimbFiltersOpened: 'Climb Filters Opened',
+    ClimbFiltersClosed: 'Climb Filters Closed',
   },
 }));
 
@@ -551,7 +554,6 @@ vi.mock('../../../../src/components/search/ClimbTopChrome', async () => {
       onOpenGrade,
       onCloseGrade,
       onDismissGradePopover,
-      onSearchFocus,
       onOpenFilters,
       gradeRailVisible,
       onGradeChange,
@@ -564,7 +566,6 @@ vi.mock('../../../../src/components/search/ClimbTopChrome', async () => {
       onOpenGrade?: () => void;
       onCloseGrade?: () => void;
       onDismissGradePopover?: () => void;
-      onSearchFocus?: () => void;
       onOpenFilters?: () => void;
       gradeRailVisible?: boolean;
       onGradeChange?: NonNullable<typeof mocks.changeGrade>;
@@ -573,7 +574,6 @@ vi.mock('../../../../src/components/search/ClimbTopChrome', async () => {
       mocks.openGrade = onOpenGrade;
       mocks.closeGrade = onCloseGrade;
       mocks.dismissGradePopover = onDismissGradePopover;
-      mocks.focusSearch = onSearchFocus;
       mocks.openFilters = onOpenFilters;
       mocks.chromeGradeRailVisible = gradeRailVisible;
       mocks.reportChromeHeight = onHeightChange;
@@ -620,8 +620,12 @@ vi.mock('../../../../src/components/search/FilterChipRow', () => ({
     );
   },
 }));
-vi.mock('../../../../src/components/RecentFilterPills', () => ({ RecentFilterPills: () => null }));
-vi.mock('../../../../src/components/search/FilterTokenRow', () => ({ FilterTokenRow: () => null }));
+vi.mock('../../../../src/components/search/FilterTokenRow', () => ({
+  FilterTokenRow: ({ tokens }: { tokens: readonly FilterToken[] }) => {
+    mocks.tokenRowTokens = tokens;
+    return null;
+  },
+}));
 vi.mock('../../../../src/lib/haptics', () => ({
   hapticSelection: () => {},
   hapticLight: () => {},
@@ -711,7 +715,7 @@ vi.mock('../../../../src/settings', async () => {
 
 vi.mock('../../../../src/hooks/use-bottom-accessory', () => ({
   useNativeAccessoryActive: () => false,
-  useLiquidGlassTabBar: () => mocks.nativeSearch,
+  useLiquidGlassTabBar: () => false,
 }));
 vi.mock('../../../../src/hooks/use-bottom-chrome-metrics', () => ({
   useBottomChromeMetrics: () => ({
@@ -858,13 +862,13 @@ vi.mock('../../../../src/lib/filter-summary', () => ({
 vi.mock('../../../../src/lib/filter-tokens', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../../../src/lib/filter-tokens')>();
   return {
+    buildNameFilterToken: original.buildNameFilterToken,
     getActiveFilterTokens: (...args: Parameters<typeof original.getActiveFilterTokens>) =>
       mocks.realFilterTokens ? original.getActiveFilterTokens(...args) : [],
   };
 });
 vi.mock('../../../../src/lib/search-name', () => ({
   normalizeSearchName: (text: string) => text.trim(),
-  visibleSearchTextNeedsSync: () => false,
 }));
 vi.mock('../../../../src/lib/analytics', () => ({ track: mocks.track }));
 vi.mock('../../../../src/theme/ios-colors', () => ({
@@ -878,6 +882,7 @@ vi.mock('../../../../src/theme/layout', () => ({ glassSize: { standard: 48 } }))
 vi.mock('../../../../src/theme/animations', () => ({ timing: { normal: 180 } }));
 
 import ClimbList from '../index';
+import { renderHiddenHeaderTitle } from '../../../../src/components/chrome/hidden-header-title';
 import { setPinnedChips } from '../../../../src/lib/pinned-chips-store';
 import { DEFAULT_PINNED_CHIPS } from '../../../../src/lib/pinnable-chips';
 import { resetClimbRowDisplayForTests, setClimbRowField } from '../../../../src/lib/climb-row-display-preference';
@@ -965,7 +970,6 @@ beforeEach(() => {
   mocks.isPlaceholderData = false;
   mocks.isRefetching = false;
   mocks.nativeRootHeader = true;
-  mocks.nativeSearch = false;
   mocks.renderNativeChrome = false;
   mocks.renderFilterChrome = false;
   mocks.filtersInTopChrome = false;
@@ -973,7 +977,7 @@ beforeEach(() => {
   mocks.openGrade = undefined;
   mocks.closeGrade = undefined;
   mocks.dismissGradePopover = undefined;
-  mocks.focusSearch = undefined;
+  mocks.tokenRowTokens = [];
   mocks.openFilters = undefined;
   mocks.openFiltersFromChips = undefined;
   mocks.chromeGradeRailVisible = undefined;
@@ -999,77 +1003,112 @@ beforeEach(() => {
   resetClimbRowDisplayForTests();
 });
 
-// Like Apple Music: a second tap on the Climbs tab, with the list open, focuses
-// the native search field.
+// The list has no search field: a second tap on the Climbs tab, with the list
+// showing, opens Filters, whose first row is the climb-name search. No keyboard.
 describe('ClimbList second tap on the Climbs tab', () => {
-  it('focuses the native search field', () => {
-    mocks.nativeSearch = true;
-    render(<ClimbList />);
-    const searchBar = { focus: vi.fn(), blur: vi.fn(), setText: vi.fn(), clearText: vi.fn(), cancelSearch: vi.fn() };
-    const searchOptions = mocks.stackOptions.find((options) => options.headerSearchBarOptions)?.headerSearchBarOptions;
-    expect(searchOptions?.ref).toBeDefined();
-    Object.assign(searchOptions!.ref!, { current: searchBar });
+  const trackedPayloads = (event: string) =>
+    mocks.track.mock.calls.filter(([eventName]) => eventName === event).map(([, payload]) => payload);
+
+  it('opens Filters and reports the second tap', async () => {
+    const { findByText, queryByTestId } = render(<ClimbList />);
+    await findByText('Moonage');
+    expect(queryByTestId('filter-sheet')).toBeNull();
 
     act(() => mocks.tabReselect?.());
 
-    expect(searchBar.focus).toHaveBeenCalledOnce();
+    expect(queryByTestId('filter-sheet')).not.toBeNull();
+    expect(trackedPayloads('Climb Filters Opened')).toEqual([
+      { source: 'tab_reselect', activeFilterCount: 0, hasName: false },
+    ]);
   });
 
-  it('does nothing on Android and iOS 18, which have no native search field', () => {
-    mocks.nativeSearch = false;
+  it("ignores the second tap until the board's saved search has landed", () => {
+    mocks.getLastSearch.mockReturnValue(new Promise<LastSearch | null>(() => undefined));
+    const { queryByTestId } = render(<ClimbList />);
+
+    act(() => mocks.tabReselect?.());
+
+    expect(queryByTestId('filter-sheet')).toBeNull();
+    expect(trackedPayloads('Climb Filters Opened')).toEqual([]);
+  });
+
+  it('reports one opening when the tab is tapped again with Filters open', async () => {
+    const { findByText } = render(<ClimbList />);
+    await findByText('Moonage');
+
+    act(() => mocks.tabReselect?.());
+    act(() => mocks.tabReselect?.());
+
+    expect(trackedPayloads('Climb Filters Opened')).toHaveLength(1);
+  });
+
+  it('reports the Filters chip as its own source, and the close with the source it opened from', async () => {
+    mocks.renderFilterChrome = true;
+    const { findByText } = render(<ClimbList />);
+    await findByText('Moonage');
+
+    act(() => mocks.openFiltersFromChips?.());
+    act(() => mocks.filterSheetProps?.onDismiss());
+
+    expect(trackedPayloads('Climb Filters Opened')).toEqual([
+      { source: 'filters_chip', activeFilterCount: 0, hasName: false },
+    ]);
+    expect(trackedPayloads('Climb Filters Closed')).toEqual([
+      { source: 'filters_chip', activeFilterCount: 0, hasName: false },
+    ]);
+  });
+});
+
+// The name search lives in the Filters sheet, so the list shows it as the first
+// token and counts it in the Filters badge, like the Logbook.
+describe('ClimbList name search token', () => {
+  it('leads the token row with the name and counts it in the Filters badge', () => {
+    mocks.renderFilterChrome = true;
+    mocks.searchState = { filters: {}, boardFilters: {}, name: 'crimp' };
     render(<ClimbList />);
 
-    expect(mocks.stackOptions.some((options) => options.headerSearchBarOptions)).toBe(false);
-    expect(mocks.tabReselect).toBeDefined();
-    expect(() => act(() => mocks.tabReselect?.())).not.toThrow();
+    expect(mocks.tokenRowTokens[0]?.key).toBe('name');
+    expect(mocks.chipRowProps?.activeFilterCount).toBe(1);
+
+    act(() => mocks.tokenRowTokens[0]?.clear());
+    expect(mocks.setName).toHaveBeenLastCalledWith('');
+  });
+
+  it('shows no name token and no badge without a name', () => {
+    mocks.renderFilterChrome = true;
+    render(<ClimbList />);
+
+    expect(mocks.tokenRowTokens.some((token) => token.key === 'name')).toBe(false);
+    expect(mocks.chipRowProps?.activeFilterCount).toBe(0);
   });
 });
 
 describe('ClimbList native header ownership', () => {
-  it.each([true, false])(
-    'keeps search setup from overriding the native title or pill (native search: %s)',
-    (nativeSearch) => {
-      mocks.nativeSearch = nativeSearch;
-      mocks.renderNativeChrome = true;
-      render(<ClimbList />);
-
-      const screenOptions = mocks.stackOptions[0];
-      expect(screenOptions).not.toHaveProperty('title');
-      expect(screenOptions).not.toHaveProperty('headerLargeTitle');
-      // Either setOptions registration order must preserve the real chrome's
-      // pill policy instead of letting the search host restore a large title.
-      for (const registrationOrder of [mocks.stackOptions, [...mocks.stackOptions].reverse()]) {
-        const effectiveOptions = Object.assign({ title: 'Climbs', headerLargeTitle: true }, ...registrationOrder);
-        expect(effectiveOptions).toMatchObject({ title: 'Climbs', headerLargeTitle: false });
-        expect(typeof effectiveOptions.headerTitle).toBe('function');
-      }
-      if (nativeSearch) {
-        // Under the title, like Apple Music: `automatic` lets iOS 26 move it into the bottom bar.
-        expect(screenOptions.headerSearchBarOptions).toMatchObject({
-          placeholder: 'search.placeholders.climbs',
-          placement: 'stacked',
-        });
-      } else {
-        expect(screenOptions.headerSearchBarOptions).toBeUndefined();
-      }
-    },
-  );
-
-  it.each([true, false])('preserves the legacy search host options (native search: %s)', (nativeSearch) => {
-    mocks.nativeRootHeader = false;
-    mocks.nativeSearch = nativeSearch;
+  it('installs no search field and leaves the native title and pill to the chrome', () => {
+    mocks.renderNativeChrome = true;
     render(<ClimbList />);
 
-    expect(mocks.stackOptions[0]).toMatchObject({
-      headerShown: nativeSearch,
-      headerLargeTitle: false,
-      title: nativeSearch ? '' : 'mobile.nav.climbs',
-    });
-    if (nativeSearch) expect(mocks.stackOptions[0].headerBlurEffect).toBe('none');
+    const screenOptions = mocks.stackOptions[0];
+    expect(screenOptions).not.toHaveProperty('title');
+    expect(screenOptions).not.toHaveProperty('headerLargeTitle');
+    expect(mocks.stackOptions.some((options) => options.headerSearchBarOptions)).toBe(false);
+    // Either setOptions registration order must preserve the real chrome's
+    // pill policy.
+    for (const registrationOrder of [mocks.stackOptions, [...mocks.stackOptions].reverse()]) {
+      const effectiveOptions = Object.assign({ title: 'Climbs', headerLargeTitle: true }, ...registrationOrder);
+      expect(effectiveOptions).toMatchObject({ title: 'Climbs', headerLargeTitle: false });
+      expect(typeof effectiveOptions.headerTitle).toBe('function');
+    }
   });
 
-  it.each(['no-board', 'restore-error'] as const)('restores the route title when chrome leaves for %s', (fallback) => {
-    mocks.nativeSearch = true;
+  it('hides the stack header for the Material app bar', () => {
+    mocks.nativeRootHeader = false;
+    render(<ClimbList />);
+
+    expect(mocks.stackOptions[0]).toEqual({ headerShown: false, headerLargeTitle: false, title: 'mobile.nav.climbs' });
+  });
+
+  it.each(['no-board', 'restore-error'] as const)('keeps the title hidden when chrome leaves for %s', (fallback) => {
     const { rerender } = render(<ClimbList />);
     const previousHeaderOptions: NativeStackNavigationOptions = {
       title: 'Climbs',
@@ -1082,8 +1121,10 @@ describe('ClimbList native header ownership', () => {
     rerender(<ClimbList />);
 
     const restoredOptions = Object.assign({}, previousHeaderOptions, ...mocks.stackOptions);
-    expect(restoredOptions).toMatchObject({ title: 'Climbs', headerShown: true, headerLargeTitle: true });
-    expect(restoredOptions.headerTitle).toBeUndefined();
+    // The tab names the screen: no large title and an empty title view, while the
+    // navigation item keeps "Climbs" for the back button's long-press menu.
+    expect(restoredOptions).toMatchObject({ title: 'Climbs', headerShown: true, headerLargeTitle: false });
+    expect(restoredOptions.headerTitle).toBe(renderHiddenHeaderTitle);
     expect(mocks.stackOptions.every((options) => !Object.hasOwn(options, 'title'))).toBe(true);
   });
 });
@@ -1566,6 +1607,11 @@ describe('ClimbList empty-search recovery', () => {
     expect(mocks.searchState.name).toBe('Moonage');
     expect(mocks.patchFilters).not.toHaveBeenCalled();
     expect(mocks.patchBoardFilters).not.toHaveBeenCalled();
+    expect(mocks.track).toHaveBeenCalledWith('Climb Filters Opened', {
+      source: 'empty_recovery',
+      activeFilterCount: 0,
+      hasName: true,
+    });
   });
 
   it.each(['loading', 'placeholder', 'error', 'offline-filter', 'catalog-missing', 'catalog-queued'] as const)(
@@ -1736,12 +1782,11 @@ describe('ClimbList keyboard handling', () => {
     expect(mocks.tickBatch).toHaveBeenCalledWith(['climb-1', 'climb-2', 'climb-3']);
     expect(mocks.openPlayDrawer).not.toHaveBeenCalled();
   });
-  it('dismisses the climb-name keyboard before activating a pressed climb', async () => {
+  it('activates a pressed climb', async () => {
     const { findByText } = render(<ClimbList />);
 
     fireEvent.click(await findByText('Moonage'));
 
-    expect(mocks.dismissKeyboard).toHaveBeenCalledTimes(1);
     expect(mocks.activateClimb).toHaveBeenCalledWith({ uuid: 'climb-1' }, undefined);
     // Logbook is fetched for every visible row, not just the pressed one — the
     // default fixture now has two climbs (added for the rank-tracking tests).
@@ -2523,7 +2568,6 @@ describe('ClimbList grade row', () => {
   // The grade row stays open over the list: only the Grade chip hides it.
   it.each([
     ['the screen loses focus', () => mocks.dismissGradePopover?.()],
-    ['search takes focus', () => mocks.focusSearch?.()],
     ['Filters opens', () => mocks.openFilters?.()],
   ])('stays open when %s', (_cause, trigger) => {
     mocks.renderFilterChrome = true;
@@ -2540,7 +2584,6 @@ describe('ClimbList grade row', () => {
 
   it.each([
     ['the screen loses focus', () => mocks.dismissGradePopover?.()],
-    ['search takes focus', () => mocks.focusSearch?.()],
     ['Filters opens', () => mocks.openFilters?.()],
   ])('stays hidden when %s', (_cause, trigger) => {
     mocks.renderFilterChrome = true;
@@ -2632,13 +2675,12 @@ describe('ClimbList grade row', () => {
       expect(mocks.gradeRow.set).toHaveBeenCalledExactlyOnceWith(true);
     });
 
-    it('keeps the open chrome rail through blur, search and Filters, and hides it from the Grade chip', () => {
+    it('keeps the open chrome rail through blur and Filters, and hides it from the Grade chip', () => {
       mocks.gradeRow.shown = true;
       render(<ClimbList />);
 
       act(() => {
         mocks.dismissGradePopover?.();
-        mocks.focusSearch?.();
         mocks.openFilters?.();
       });
       expect(mocks.chromeGradeRailVisible).toBe(true);
@@ -2677,7 +2719,6 @@ describe('ClimbList grade row', () => {
     it.each([
       ['the chip is tapped again', () => mocks.closeGrade?.()],
       ['the screen loses focus', () => mocks.dismissGradePopover?.()],
-      ['search takes focus', () => mocks.focusSearch?.()],
       ['Filters opens', () => mocks.openFilters?.()],
     ])('closes the popover when %s', async (_cause, trigger) => {
       const { findByText, getByTestId, queryByTestId } = render(<ClimbList />);
@@ -3052,6 +3093,8 @@ describe('ClimbList live filter session integration', () => {
       expect(mocks.replaceSearch).not.toHaveBeenCalled();
       expect(mocks.searchState).toEqual({ filters: {}, boardFilters: {}, name: 'new scope' });
       expect(mocks.addRecentFilter).not.toHaveBeenCalled();
+      // The app cancelled the sheet; the climber did not close it.
+      expect(mocks.track.mock.calls.some(([eventName]) => eventName === 'Climb Filters Closed')).toBe(false);
     },
   );
 

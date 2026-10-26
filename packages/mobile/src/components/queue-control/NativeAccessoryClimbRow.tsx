@@ -1,5 +1,8 @@
 import { StyleSheet, View, type ColorValue } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { Climb } from '@boardsesh/queue';
+import type { BoardName } from '@boardsesh/shared-schema';
+import { useEffectiveClimbStats } from '@boardsesh/board-react';
 import { useDisplayGrade } from '../../hooks/use-display-grade';
 import { useTheme } from '../../providers/theme-provider';
 import { useDrawerHost, type BoardConfig } from '../../providers/drawer-host-provider';
@@ -16,72 +19,104 @@ import { LargeContentViewer } from '../LargeContentViewer';
 import { largeContentTitle } from './accessory-large-content-title';
 import { LogAscentToolbarButton } from './LogAscentToolbarButton';
 import { BoardControlIndicator } from './BoardControlIndicator';
+import { formatQuality, formatSends } from '../../lib/format-climb-stats';
 
 type AccessoryPlacement = 'regular' | 'inline';
 
 type NativeAccessoryClimbRowProps = {
   climb: Climb;
   placement: AccessoryPlacement;
-  width: number;
   testID?: string;
 };
 
-const ACCESSORY_LEADING_INSET = spacing[1];
-// Pull the tick ~20pt off the platter's right edge so it doesn't sit flush.
-const ACCESSORY_TRAILING_INSET = spacing[8];
-// Leading space the climb content reserves for the (absolutely-positioned)
-// lightbulb. A touch less than the 44pt slot so the thumbnail tucks ~12pt closer
-// to the bulb than a full slot + gap would, matching the look we want without a
-// negative margin overlapping the control's tap target.
-const THUMBNAIL_LEADING_INSET = glassSize.inline - spacing[3];
+// Measured against Apple Music's platter (iOS 27): the artwork starts 16pt in, and
+// the last control's centre sits ~30pt from the right edge (8pt + half its 44pt slot).
+const ACCESSORY_LEADING_INSET = spacing[4];
+const ACCESSORY_TRAILING_INSET = spacing[2];
+// One artwork size in both placements, as Music uses (~30pt).
+const ACCESSORY_PLATTER_THUMBNAIL_SIZE = 32;
 
 type ClimbLabelProps = {
   climb: Climb;
   labelColor: ColorValue;
-  formattedGrade: string | null;
-  showThumbnail: boolean;
+  bylineColor: ColorValue;
+  byline: string | null;
+  thumbnailSize: number | null;
   boardConfig: BoardConfig | null;
 };
 
-function ClimbLabel({ climb, labelColor, formattedGrade, showThumbnail, boardConfig }: ClimbLabelProps) {
+/**
+ * Thumbnail, then the name over a byline, like a song over its artist in Apple
+ * Music's platter: "V4 · 7.7k sends", or the rating when nobody has sent it.
+ */
+function ClimbLabel({ climb, labelColor, bylineColor, byline, thumbnailSize, boardConfig }: ClimbLabelProps) {
   return (
     <View style={styles.labelInner}>
-      {showThumbnail ? <AccessoryClimbThumbnail climb={climb} boardConfig={boardConfig} /> : null}
-      {/* Scrolls a long name when it overflows (Reduce-Motion-gated); the grade
-          stays pinned. Falls back to tail-ellipsis when it fits or motion is off. */}
-      <MarqueeText
-        active
-        variant="subheadline"
-        color={labelColor}
-        maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-        style={styles.name}
-        textStyle={styles.nameText}
-      >
-        {climb.name}
-      </MarqueeText>
-      {/* A draft is missing from the Climbs list; the bar says why (#5954). The
-          row's `gap` spaces it, and the name beside it absorbs the truncation. */}
-      {climb.is_draft === true ? (
-        <DraftChip maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE} testID="accessory-climb-draft" />
+      {thumbnailSize !== null ? (
+        <AccessoryClimbThumbnail climb={climb} boardConfig={boardConfig} size={thumbnailSize} />
       ) : null}
-      {formattedGrade ? (
-        <Text
-          variant="subheadline"
-          color={labelColor}
-          numberOfLines={1}
-          maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
-          style={styles.gradeText}
-        >
-          {formattedGrade}
-        </Text>
-      ) : null}
+      <View style={styles.titleBlock}>
+        <View style={styles.titleLine}>
+          {/* Scrolls a long name when it overflows (Reduce-Motion-gated). Falls
+              back to tail-ellipsis when it fits or motion is off. */}
+          <MarqueeText
+            active
+            variant="subheadline"
+            color={labelColor}
+            maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
+            style={styles.name}
+            textStyle={styles.nameText}
+          >
+            {climb.name}
+          </MarqueeText>
+          {/* A draft is missing from the Climbs list; the bar says why (#5954).
+              The name beside it absorbs the truncation. */}
+          {climb.is_draft === true ? (
+            <DraftChip maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE} testID="accessory-climb-draft" />
+          ) : null}
+        </View>
+        {byline ? (
+          <Text
+            variant="footnote"
+            color={bylineColor}
+            numberOfLines={1}
+            maxFontSizeMultiplier={CHROME_LABEL_MAX_FONT_SCALE}
+            style={styles.bylineText}
+          >
+            {byline}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
 
+/** Grade · sends, or grade · rating when there are no sends; the grade alone otherwise. */
+function useAccessoryByline(climb: Climb, boardConfig: BoardConfig | null, grade: string | null): string | null {
+  const { t } = useTranslation('climbs');
+  // The same live counts the list rows read, keyed on the climb's own board.
+  const stats = useEffectiveClimbStats(
+    (climb.boardType ?? boardConfig?.boardName ?? '') as BoardName,
+    climb.layoutId ?? boardConfig?.layoutId ?? 0,
+    climb.uuid,
+    climb.angle,
+    { ascensionistCount: climb.ascensionist_count, qualityAverage: climb.quality_average },
+    { enabled: boardConfig !== null },
+  );
+  const isDraft = climb.is_draft === true;
+  const sends = !isDraft && stats.ascensionistCount > 0 ? formatSends(stats.ascensionistCount, t) : null;
+  const rating =
+    stats.qualityAverage != null && parseFloat(stats.qualityAverage) > 0
+      ? `${formatQuality(stats.qualityAverage)}★`
+      : null;
+  const parts = [grade, sends ?? rating].filter((part): part is string => !!part);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 /**
  * Content for the iOS 26 tab-bar bottom accessory (Liquid Glass variant only).
- * UIKit supplies the glass platter, so this stays bare: current climb + tick. The
+ * UIKit supplies the glass platter, so this stays bare: the current climb, then
+ * the lightbulb (open platter only) and the tick at the trailing edge. The
  * displayed climb is resolved once by {@link QueueBottomAccessory} and passed in,
  * so this component never re-gates (a second gate could blank the live platter for
  * a frame, which UIKit snapshotted as doubled text). Tap-to-open is shared with
@@ -89,24 +124,30 @@ function ClimbLabel({ climb, labelColor, formattedGrade, showThumbnail, boardCon
  * are tuned for the platter, so they intentionally differ from the floating
  * capsule's colorized grade.
  */
-export function NativeAccessoryClimbRow({ climb, placement, width, testID }: NativeAccessoryClimbRowProps) {
+export function NativeAccessoryClimbRow({ climb, placement, testID }: NativeAccessoryClimbRowProps) {
   const { boardConfig } = useDrawerHost();
   const { systemColors } = useTheme();
   const { resolveGrade } = useDisplayGrade();
   const { openPlay, preparePlay } = useAccessoryClimbTap();
 
-  const showThumbnail = placement === 'regular' && boardConfig !== null;
-  const rowHeight = placement === 'inline' ? glassSize.inline : glassSize.standard;
+  const isInline = placement === 'inline';
+  const rowHeight = isInline ? glassSize.inline : glassSize.standard;
+  const thumbnailSize = boardConfig === null ? null : ACCESSORY_PLATTER_THUMBNAIL_SIZE;
   // The platter shows a plain (non-colorized) grade; only the label swaps to the
   // Boardsesh grade when the toggle is on and a trusted one exists.
   const currentFormattedGrade = resolveGrade(climb, boardConfig?.boardName).label;
+  const byline = useAccessoryByline(climb, boardConfig, currentFormattedGrade);
 
   // UIKit can omit the central zoom-source subtree from its accessory AX tree.
   // CPP metadata belongs to this existing visible row; ordinary captures and
   // normal use leave each control's accessibility unchanged.
   return (
     <View
-      style={[styles.row, { width, height: rowHeight }]}
+      // Both placements fill the frame UIKit gives them (react-native-screens sizes
+      // the accessory root natively). A width worked out from the screen overshot
+      // the real platter: open, by ~10pt, cramming the tick into the edge; collapsed,
+      // where the bar also holds the selected and prominent tabs, by far more.
+      style={[styles.row, { height: rowHeight }]}
       testID={testID}
       accessible={testID ? true : undefined}
       accessibilityLabel={testID ? climb.name : undefined}
@@ -118,8 +159,6 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
         onPrepare={preparePlay}
         zoomSourceRetained
       >
-        {/* tapClip reserves the leading slot via paddingStart (not a real child),
-            so the climb thumbnail tucks in close to the lightbulb. */}
         <LargeContentViewer
           style={styles.labelSlot}
           title={largeContentTitle(climb.name, currentFormattedGrade)}
@@ -128,25 +167,25 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
           <ClimbLabel
             climb={climb}
             labelColor={systemColors.label}
-            formattedGrade={currentFormattedGrade}
-            showThumbnail={showThumbnail}
+            bylineColor={systemColors.secondaryLabel}
+            byline={byline}
+            thumbnailSize={thumbnailSize}
             boardConfig={boardConfig}
           />
         </LargeContentViewer>
       </AccessoryPlayLink>
-      <View style={[styles.tickSlot, { width: glassSize.inline, height: rowHeight }]}>
+      {/* The trailing controls sit beside the climb gesture, never inside it, so
+          their 44pt tap targets are never stolen by the row's tap. The lightbulb
+          is the open platter's only: the collapsed one keeps the tick alone.
+          Long-press on the bulb opens the controls sheet, as on the other
+          lightbulbs now that a short press disconnects. */}
+      {isInline ? null : (
+        <View style={[styles.controlSlot, { width: glassSize.inline, height: rowHeight }]}>
+          <BoardControlIndicator size={glassSize.inline} iconSize={22} enableLongPress solidGlyphs />
+        </View>
+      )}
+      <View style={[styles.controlSlot, { width: glassSize.inline, height: rowHeight }]}>
         <LogAscentToolbarButton climb={climb} size={glassSize.inline} iconSize={24} />
-      </View>
-      {/* Leading board control as a content-layer element (the platter is
-          UIKit-owned, so the glow lives here, not on the glass). Static state
-          swap; no long-press recognizer — it would fight UIKit's own gestures.
-          Positioned ABSOLUTELY on top of the climb gesture (rendered last) so its
-          full 44pt tap target is never stolen by the climb-row tap — the same
-          leading-control treatment the Android ClimbCapsule uses. */}
-      <View style={styles.controlSlot} pointerEvents="box-none">
-        {/* Long-press → controls sheet, so this platter matches the other
-            lightbulbs now that a short press disconnects. */}
-        <BoardControlIndicator size={glassSize.inline} iconSize={22} enableLongPress />
       </View>
     </View>
   );
@@ -159,25 +198,12 @@ const styles = StyleSheet.create({
     paddingStart: ACCESSORY_LEADING_INSET,
     paddingEnd: ACCESSORY_TRAILING_INSET,
   },
-  // The lightbulb sits in this absolute slot on TOP of the climb gesture, so its
-  // Pressable keeps a full, unobscured 44pt tap target. left matches the row's
-  // leading inset; box-none lets taps outside the bulb fall through to the climb
-  // gesture underneath.
-  controlSlot: {
-    position: 'absolute',
-    left: ACCESSORY_LEADING_INSET,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
-  },
   tapClip: {
     flex: 1,
     minWidth: 0,
     height: '100%',
     overflow: 'hidden',
     justifyContent: 'center',
-    // Reserve the leading slot so the thumbnail starts just past the lightbulb.
-    paddingStart: THUMBNAIL_LEADING_INSET,
   },
   labelSlot: {
     justifyContent: 'center',
@@ -188,8 +214,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minWidth: 0,
     gap: spacing[2],
-    paddingStart: spacing[2],
     paddingEnd: spacing[1],
+  },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  titleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    gap: spacing[2],
   },
   name: {
     flex: 1,
@@ -198,13 +234,10 @@ const styles = StyleSheet.create({
   nameText: {
     fontWeight: '500',
   },
-  gradeText: {
+  bylineText: {
     fontVariant: ['tabular-nums'],
-    fontWeight: '600',
-    minWidth: spacing[10],
-    textAlign: 'right',
   },
-  tickSlot: {
+  controlSlot: {
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,

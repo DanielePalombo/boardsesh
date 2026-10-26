@@ -206,10 +206,10 @@ export type ClimbFilterSheetProps = {
   lastUsedGradeId?: number;
   /** Commits a selection immediately without closing the sheet. */
   onSelectionChange: (filters: ClimbFilters, boardFilters: ClimbBoardFilterState) => void;
-  /** Fired per keystroke as the in-sheet name field changes (mirrors into the
-   *  parent's live search, same as the top-bar search field). Required: the sheet
-   *  only owns the field's display state, so an unwired caller would render a name field that
-   *  looks like it filters and doesn't. */
+  /** Fired per keystroke as the in-sheet name field changes; the parent commits it
+   *  to its live search. Required: the sheet only owns the field's display state, so
+   *  an unwired caller would render a name field that looks like it filters and
+   *  doesn't. */
   onNameChange: (text: string) => void;
   /** Fired by Reset and the field's inline × — the ONE clearing path for name,
    *  shared so there is exactly one code path to reason about (#3606). Required
@@ -371,14 +371,13 @@ export function ClimbFilterSheet({
   const normalizationRef = useRef({ isAuthenticated, lockedDimensions });
   normalizationRef.current = { isAuthenticated, lockedDimensions };
 
-  // Only the name field keeps a display draft, matching the parent search bar's
-  // debounce and preserving a trailing space while the climber types.
+  // Only the name field keeps a display draft, so the parent's debounce does not
+  // strip a trailing space while the climber types.
   const [nameDraft, setNameDraft] = useState(searchName ?? '');
   const nameDraftRef = useRef(nameDraft);
   nameDraftRef.current = nameDraft;
   // Resync the field from an external `searchName` change (board switch, recent
-  // pill, cancel) — but ignore a trim-only difference, exactly like the parent's
-  // own top-bar sync effect (packages/mobile/app/(tabs)/climbs/index.tsx), so a
+  // search, the list's name token) — but ignore a trim-only difference, so a
   // mid-typing space isn't yanked out from under the cursor.
   useEffect(() => {
     if (!visibleSearchTextNeedsSync(nameDraftRef.current, searchName ?? '')) return;
@@ -609,7 +608,7 @@ export function ClimbFilterSheet({
 
   // The ONE clearing path for name, shared by the inline × and Reset (#3606) —
   // clears the field's own display state and asks the parent to clear the
-  // committed name + the top-bar/native-search-bar mirror.
+  // committed name.
   const handleClearNameField = useCallback(() => {
     if (!isCurrentPresentation() || closingRef.current) return;
     nameDraftRef.current = '';
@@ -1089,9 +1088,9 @@ export function ClimbFilterSheet({
           {/* Flat, labeled sections — no accordions. The scroll body is one column
               child (filterSheetStyles.body) so the native sheet scrolls. */}
           <View style={filterSheetStyles.body}>
-            {/* 1 · NAME — climb-name search term, first row so Reset has something
-                visible to reset (#3606). Committed live via onNameChange/onClearName,
-                same as the top-bar search field. */}
+            {/* 1 · NAME — the climb-name search: no list has a search field of its
+                own, so this first row is where it lives (#3606). Committed live via
+                onNameChange/onClearName. */}
             <FilterSheetSection title={t('mobile.filter.section.name')} first>
               <FilterNameField
                 value={nameDraft}

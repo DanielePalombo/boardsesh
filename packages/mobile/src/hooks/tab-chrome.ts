@@ -31,9 +31,8 @@ export type TabChrome = {
    */
   nativeTabBar: boolean;
   /**
-   * The iOS 26 Liquid Glass version of that bar: minimize-on-scroll and the
-   * native search field on Climbs. Both are iOS 26 UIKit features, so an iOS 18
-   * iPhone keeps the classic bar and the in-screen search field.
+   * The iOS 26 Liquid Glass version of that bar, with minimize-on-scroll, an iOS
+   * 26 UIKit feature: an iOS 18 iPhone keeps the classic bar.
    */
   liquidGlassTabBar: boolean;
   /**
@@ -46,8 +45,8 @@ export type TabChrome = {
 
 /**
  * Pure tab-chrome arbitration. One function answers all three questions so the
- * tab layout, the bottom-chrome metrics, the toast offset and the climbs search
- * mode can never disagree about what is on screen.
+ * tab layout, the bottom-chrome metrics and the toast offset can never disagree
+ * about what is on screen.
  *
  * iPad uses the same navigator at every width. Its permanent Wall destination
  * remains registered when UIKit adapts the sidebar to a tab bar, so resizing

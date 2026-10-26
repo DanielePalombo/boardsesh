@@ -550,6 +550,19 @@ export const SHARED_EVENTS = {
   // Props: shown (boolean, the state after the tap). The row is hidden until
   // the chip opens it, and the choice is kept across launches.
   GradeRowToggled: 'Grade Row Toggled',
+  // Mobile-only: the climbs list's Filters sheet opened. The list has no search
+  // field; the climb-name search is the sheet's first row, so this is also how
+  // name search starts. Props: source ('tab_reselect' = a second tap on the
+  // Climbs tab with the list showing | 'filters_chip' = the Filters chip or
+  // button | 'empty_recovery' = the "Open filters" button on an empty search),
+  // activeFilterCount and hasName (a name search was already set). Only fired
+  // when the sheet actually opens.
+  ClimbFiltersOpened: 'Climb Filters Opened',
+  // Mobile-only: the climber closed that sheet (close button or swipe down).
+  // Props: source (as on Climb Filters Opened), activeFilterCount and hasName,
+  // both as left on close. Not fired when the app cancels the sheet itself
+  // (switching board or account). No free text.
+  ClimbFiltersClosed: 'Climb Filters Closed',
   SearchHoldFilterChanged: 'Search Hold Filter Changed',
   SearchHoldFilterCleared: 'Search Hold Filter Cleared',
   SearchZoneEnabled: 'Search Zone Enabled',
