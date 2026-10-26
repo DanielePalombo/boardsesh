@@ -51,6 +51,12 @@ import { favoritesStore } from '@boardsesh/climb-actions';
 import { favoriteToggleOrder, ownsFavoriteWrite } from './favorite-toggle-order';
 import { addFavoriteLocal, removeFavoriteLocal } from '../../../hooks/use-offline-mutations';
 import type { GraphQLFetch } from '@boardsesh/offline-sync';
+import {
+  LIKED_LIST_QUERY_KEY_PREFIX,
+  SMART_PLAYLIST_COUNTS_QUERY_KEY,
+  removeClimbFromLikedList,
+  restoreClimbToLikedList,
+} from '@boardsesh/playlists-react';
 import { drainMutationQueue } from '../../../offline/offline-sync-adapter';
 import {
   DELETE_DRAFT_CLIMB_MUTATION,
@@ -1155,12 +1161,37 @@ export function useToggleFavorite() {
       if (typeof variables.currentlyFavorited === 'boolean') {
         favoritesStore.setIsFavorited(variables.input.climbUuid, !variables.currentlyFavorited);
       }
+      // Un-liking drops the climb from the cached Liked list now, on both the
+      // queued and the online path (#5304). Liking it again puts back the row an
+      // earlier un-like took out, so a re-like from the play drawer shows on the
+      // Liked list underneath without a refetch (or a signal).
+      if (variables.currentlyFavorited === true) {
+        removeClimbFromLikedList(queryClient, variables.input.climbUuid);
+      } else if (variables.currentlyFavorited === false) {
+        restoreClimbToLikedList(queryClient, variables.input.climbUuid);
+      }
       return { token, contextEpoch };
     },
     onError: (_error, variables, context) => {
       if (typeof variables.currentlyFavorited !== 'boolean') return;
-      if (!context || !ownsFavoriteWrite(variables.input.climbUuid, context)) return;
-      favoritesStore.setIsFavorited(variables.input.climbUuid, variables.currentlyFavorited);
+      // A newer toggle for this climb owns both the heart and the Liked rows.
+      if (!context || !favoriteToggleOrder.isLatest(variables.input.climbUuid, context.token)) return;
+      // The heart store is scoped to one board+angle+user, so only roll it back
+      // while it is still scoped to where this toggle started.
+      if (ownsFavoriteWrite(variables.input.climbUuid, context)) {
+        favoritesStore.setIsFavorited(variables.input.climbUuid, variables.currentlyFavorited);
+      }
+      // Undo onMutate's Liked-list edit from the cache, since a refetch can fail
+      // for the same lost connection that failed the toggle (#5304). A failed
+      // un-like puts the row back; a failed like takes out the row onMutate put
+      // back, and keeps it so a later like can restore it again. This runs even
+      // after a board or angle change: onMutate edited every cached Liked view,
+      // the board-independent one included, so the heart's scope doesn't decide it.
+      if (variables.currentlyFavorited) {
+        restoreClimbToLikedList(queryClient, variables.input.climbUuid);
+      } else {
+        removeClimbFromLikedList(queryClient, variables.input.climbUuid);
+      }
     },
     onSettled: (_data, _error, variables, context) => {
       if (context) favoriteToggleOrder.settle(variables.input.climbUuid, context.token);
@@ -1185,6 +1216,19 @@ export function useToggleFavorite() {
         void queryClient.invalidateQueries({
           queryKey: ['favoriteStatus', variables.input.boardName, variables.input.climbUuid, variables.input.angle],
         });
+        // The Liked smart list (and its library count) would otherwise keep an
+        // un-liked climb on screen for its 5-minute staleTime (#5304).
+        // When the server confirms an un-like, the cached pages already lost the
+        // climb in onMutate, so the list only needs marking stale (no refetch of
+        // every loaded page, which would eat the shared smartPlaylist rate limit
+        // Play's drain uses). A like adds a climb the cache may never have held,
+        // so an on-screen Liked list refetches to show it.
+        const unlikeConfirmed = variables.currentlyFavorited === true && !data.toggleFavorite.favorited;
+        void queryClient.invalidateQueries({
+          queryKey: LIKED_LIST_QUERY_KEY_PREFIX,
+          refetchType: unlikeConfirmed ? 'none' : 'active',
+        });
+        void queryClient.invalidateQueries({ queryKey: [SMART_PLAYLIST_COUNTS_QUERY_KEY] });
       }
     },
   });
@@ -1469,7 +1513,7 @@ export function useBoardseshGradesForAngles(
 ) {
   return useQuery({
     // Local-first via offlineAwareRequest (reads all synced angles from
-    // board_climb_grades when the board type is downloaded).
+    // board_climb_grades when the climb's own layout is downloaded).
     queryKey: ['boardseshGradesForAngles', boardName, climbUuid],
     queryFn: () =>
       offlineAwareRequest<BoardseshGradesForAnglesResponse>(BOARDSESH_GRADES_FOR_ANGLES, {
