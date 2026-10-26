@@ -1,6 +1,168 @@
 {
-  "generatedAt": "2026-10-25T20:52:20.518Z",
+  "generatedAt": "2026-10-26T06:08:02.541Z",
   "entries": [
+    {
+      "prNumber": 6878,
+      "category": "fixed",
+      "title": "Your climb's logbook updates as soon as you edit or delete an ascent.",
+      "mergedAt": "2026-10-26T05:55:13Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6878"
+    },
+    {
+      "prNumber": 6879,
+      "category": "fixed",
+      "title": "Your pinned playlists stay with the account and board you're using.",
+      "mergedAt": "2026-10-26T05:54:59Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6879"
+    },
+    {
+      "prNumber": 6869,
+      "category": "fixed",
+      "title": "Playlists recover after a brief connection drop followed by a short server wait.",
+      "mergedAt": "2026-10-26T05:47:44Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6869"
+    },
+    {
+      "prNumber": 6829,
+      "category": "new",
+      "title": "A crew 4x4 stays on one climb through your reps and moves the wall once when the set rest ends.",
+      "mergedAt": "2026-10-26T05:24:35Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6829"
+    },
+    {
+      "prNumber": 6835,
+      "category": "new",
+      "title": "Rests now show over the board: see what's next and skip the wait. Finish a workout and get a recap of your sends, tries and skips.",
+      "mergedAt": "2026-10-26T04:40:07Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6835"
+    },
+    {
+      "prNumber": 6839,
+      "category": "fixed",
+      "title": "The grade-by-angle chart now fills in for climbs from older saved queues on boards you've downloaded.",
+      "mergedAt": "2026-10-26T04:35:31Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6839"
+    },
+    {
+      "prNumber": 6842,
+      "category": "fixed",
+      "title": "Dragging a climb in your crew's queue now moves the climb you dragged, even if a crewmate changed the queue a moment before",
+      "mergedAt": "2026-10-26T04:35:15Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6842"
+    },
+    {
+      "prNumber": 6843,
+      "category": "fixed",
+      "title": "Google sign-in on Android now tells you when Boardsesh is slow to answer, instead of blaming your connection.",
+      "mergedAt": "2026-10-26T04:33:35Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6843"
+    },
+    {
+      "prNumber": 6845,
+      "category": "fixed",
+      "title": "MoonBoard and Woods climb lists on boardsesh.com now show new climbs and grade changes usually within 15 minutes (at most about 30 on quiet pages) instead of up to a day.",
+      "mergedAt": "2026-10-26T04:32:48Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6845"
+    },
+    {
+      "prNumber": 6844,
+      "category": "fixed",
+      "title": "The Bluetooth picker's signal bars now follow you as you walk toward a board, so you can tell two boards with the same name apart.",
+      "mergedAt": "2026-10-26T04:32:31Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6844"
+    },
+    {
+      "prNumber": 6846,
+      "category": "fixed",
+      "title": "Climbs you logged under an older copy of a climb now count in Five Stars, Most Repeated and Projects.",
+      "mergedAt": "2026-10-26T04:31:19Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6846",
+      "body": "Your logbook cards now show the same number as the list when you open it."
+    },
+    {
+      "prNumber": 6847,
+      "category": "fixed",
+      "title": "Older climbs load their holds sooner after the app trims its saved board images.",
+      "mergedAt": "2026-10-26T04:30:59Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6847"
+    },
+    {
+      "prNumber": 6849,
+      "category": "fixed",
+      "title": "If the app hits an unexpected error, the \"Something went wrong\" screen is now readable instead of showing blank text on a black background.",
+      "mergedAt": "2026-10-26T04:29:38Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6849"
+    },
+    {
+      "prNumber": 6850,
+      "category": "fixed",
+      "title": "Segmented pickers in sheets no longer get squashed when the keyboard is open.",
+      "mergedAt": "2026-10-26T04:28:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6850"
+    },
+    {
+      "prNumber": 6851,
+      "category": "fixed",
+      "title": "Report climb now says how many more characters you need before Send turns on.",
+      "mergedAt": "2026-10-26T04:25:35Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6851"
+    },
+    {
+      "prNumber": 6853,
+      "category": "fixed",
+      "title": "Setter pages keep loading, with their climbs listed, even when board links can't be looked up.",
+      "mergedAt": "2026-10-26T04:24:21Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6853"
+    },
+    {
+      "prNumber": 6854,
+      "category": "fixed",
+      "title": "Un-liking a climb now takes it off your Liked list, so playing the list no longer starts a one-climb queue.",
+      "mergedAt": "2026-10-26T04:23:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6854"
+    },
+    {
+      "prNumber": 6855,
+      "category": "fixed",
+      "title": "Text fields now show a violet cursor and selection instead of the stock teal (Android) and blue (iPhone).",
+      "mergedAt": "2026-10-26T04:23:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6855"
+    },
+    {
+      "prNumber": 6856,
+      "category": "fixed",
+      "title": "The browser app keeps your settings when you come back to Safari.",
+      "mergedAt": "2026-10-26T04:23:29Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6856"
+    },
+    {
+      "prNumber": 6838,
+      "category": "fixed",
+      "title": "Opening a day's sends on the web no longer shows like and comment buttons that don't work. Like and comment from the feed card instead.",
+      "mergedAt": "2026-10-26T04:22:31Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6838"
+    },
+    {
+      "prNumber": 6840,
+      "category": "fixed",
+      "title": "Playlists on Android now show the top bar at the top of the screen, with the back arrow where you expect it.",
+      "mergedAt": "2026-10-26T04:22:08Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6840"
+    },
+    {
+      "prNumber": 6863,
+      "category": "fixed",
+      "title": "VoiceOver and TalkBack stay on the climb's title when you swipe to the next climb",
+      "mergedAt": "2026-10-26T04:19:43Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6863"
+    },
+    {
+      "prNumber": 6861,
+      "category": "fixed",
+      "title": "On Android, the hold editor shows its bottom bar and hold count again, so you can add holds by hand",
+      "mergedAt": "2026-10-26T04:19:18Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6861"
+    },
     {
       "prNumber": 6769,
       "category": "new",
@@ -38,13 +200,6 @@
       "title": "Print a poster for your Spraywall or board from Share link. Climbers scan it and land straight on your wall.",
       "mergedAt": "2026-10-25T18:03:12Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/6805"
-    },
-    {
-      "prNumber": 6819,
-      "category": "fixed",
-      "title": "Production runs the notification worker, which already makes this check; only a backend started without Redis took the inline path, so climbers see no change.",
-      "mergedAt": "2026-10-25T18:02:51Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6819"
     },
     {
       "prNumber": 6821,
@@ -1312,13 +1467,6 @@
       "body": "Scrolling down right after launch keeps loading climbs."
     },
     {
-      "prNumber": 6312,
-      "category": "fixed",
-      "title": "The crash only ever shipped to TestFlight.",
-      "mergedAt": "2026-10-10T23:52:19Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6312"
-    },
-    {
       "prNumber": 6300,
       "category": "fixed",
       "title": "Opening Boardsesh no longer throws you into a blank Safari tab",
@@ -1570,14 +1718,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/6220"
     },
     {
-      "prNumber": 6222,
-      "category": "new",
-      "title": "Your own spray walls are always on your phone: photo, holds and climbs, so they work in the garage with no signal",
-      "mergedAt": "2026-10-08T05:38:03Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6222",
-      "body": "Zooming in on your holds is instant the second time"
-    },
-    {
       "prNumber": 4586,
       "category": "fixed",
       "title": "An old claim can’t take over a merged gym after ownership changes.",
@@ -1686,13 +1826,6 @@
       "mergedAt": "2026-10-07T01:03:31Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/6187",
       "body": "Logs from the 25° board keep their angle, and your comments come along too"
-    },
-    {
-      "prNumber": 6178,
-      "category": "new",
-      "title": "Server half only: the picker ships in the app with #6179, so nobody sees this until then. The climber-facing note lives on #6179.",
-      "mergedAt": "2026-10-06T20:47:57Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6178"
     },
     {
       "prNumber": 6176,
@@ -1904,13 +2037,6 @@
       "mergedAt": "2026-10-05T23:35:28Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/6132",
       "body": "A spray climb's sends and stars start again when its holds change"
-    },
-    {
-      "prNumber": 6126,
-      "category": "new",
-      "title": "The climber-facing note ships with the app PR for #6023, which is where the sent mark and the version tag appear.",
-      "mergedAt": "2026-10-05T23:34:42Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6126"
     },
     {
       "prNumber": 6122,
@@ -2694,20 +2820,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5689"
     },
     {
-      "prNumber": 5651,
-      "category": "new",
-      "title": "Infrastructure monitoring for the DR standby's trust path. No user-facing change.",
-      "mergedAt": "2026-09-23T06:28:53Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5651"
-    },
-    {
-      "prNumber": 5648,
-      "category": "new",
-      "title": "Internal infrastructure: a DR backup sidecar image. No user-facing change.",
-      "mergedAt": "2026-09-23T06:28:22Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5648"
-    },
-    {
       "prNumber": 5684,
       "category": "fixed",
       "title": "Choose whether PR previews open when Boardsesh starts.",
@@ -2729,32 +2841,11 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5354"
     },
     {
-      "prNumber": 5650,
-      "category": "new",
-      "title": "Infrastructure: lets the database image serve a real certificate. Nothing deployed here.",
-      "mergedAt": "2026-09-22T08:13:15Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5650"
-    },
-    {
       "prNumber": 5231,
       "category": "fixed",
       "title": "Link your board account with clearer instructions and correctly spelled board names.",
       "mergedAt": "2026-09-22T08:07:40Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5231"
-    },
-    {
-      "prNumber": 5649,
-      "category": "new",
-      "title": "Infrastructure DNS for the disaster-recovery standby. No user-facing change.",
-      "mergedAt": "2026-09-22T07:36:15Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5649"
-    },
-    {
-      "prNumber": 3466,
-      "category": "new",
-      "title": "This separate Garmin app is not shipped through the mobile app's release notes and still requires Connect IQ Store preparation.",
-      "mergedAt": "2026-09-22T07:33:40Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3466"
     },
     {
       "prNumber": 5634,
@@ -3164,13 +3255,6 @@
       "body": "including angles beyond the board's usual 25°/40°.\nFiltering by grade range now works at angles nobody's climbed yet, instead\nof coming back empty."
     },
     {
-      "prNumber": 5524,
-      "category": "new",
-      "title": "No user-facing surface; the only code path near the limit is a tester-only screen.",
-      "mergedAt": "2026-09-16T11:37:16Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5524"
-    },
-    {
       "prNumber": 5507,
       "category": "fixed",
       "title": "A few dozen Kilter climbs that had gone missing from search are back, including eight that Kilter had filed under the wrong board layout.",
@@ -3186,25 +3270,11 @@
       "body": "The board sheet shows sessions happening on that wall, ready to join.\nKeep a session to yourself: turn off \"Show this session live\" when you start."
     },
     {
-      "prNumber": 5519,
-      "category": "fixed",
-      "title": "Tester-only screen behind Development; never reaches a climber.",
-      "mergedAt": "2026-09-16T10:07:14Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5519"
-    },
-    {
       "prNumber": 5502,
       "category": "fixed",
       "title": "Board art on the web now fills in once a slow load finishes, instead of leaving you with rings.",
       "mergedAt": "2026-09-16T09:13:27Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5502"
-    },
-    {
-      "prNumber": 5517,
-      "category": "fixed",
-      "title": "Tester-only screen behind Development; never reaches a climber.",
-      "mergedAt": "2026-09-16T09:13:13Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5517"
     },
     {
       "prNumber": 5499,
@@ -3213,13 +3283,6 @@
       "mergedAt": "2026-09-16T09:03:41Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5499",
       "body": "Shared links unfurl with a picture of the wall in chats and feeds, for walls you have made public.\nPrivate walls stay private. A link to one just doesn't open, for anyone."
-    },
-    {
-      "prNumber": 5483,
-      "category": "new",
-      "title": "There is no way into a spray wall until SW-09 ships the add-a-wall flow, so nothing here is reachable by a user yet.",
-      "mergedAt": "2026-09-16T08:44:29Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5483"
     },
     {
       "prNumber": 5498,
@@ -3242,13 +3305,6 @@
       "title": "Photograph your spray wall, let the app find the holds, fix what it missed, and start setting. Name the wall, mark its corners if you shot it off-square, and it lands in your boards ready for the first climb. Behind a flag while we roll it out.",
       "mergedAt": "2026-09-16T02:48:07Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5484"
-    },
-    {
-      "prNumber": 5479,
-      "category": "new",
-      "title": "No user can reach a spray wall until SW-09 ships the front door.",
-      "mergedAt": "2026-09-16T02:43:39Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5479"
     },
     {
       "prNumber": 5391,
@@ -3438,13 +3494,6 @@
       "title": "Downloading a board for offline no longer crashes the app on iPhone or iPad. A transfer that used to die at the finish line — taking the whole 100 MB with it — now lands, and the board is ready to browse.",
       "mergedAt": "2026-09-09T08:52:35Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5356"
-    },
-    {
-      "prNumber": 5362,
-      "category": "fixed",
-      "title": "The wall-state pill's tap explainer no longer crashes the app in a browser — screen-reader focus now lands on the explainer sentence there too. This ships fixing a crash-only path (browser had a 100% failure rate on tap), so there's no meaningful behavior change to describe to native app users.",
-      "mergedAt": "2026-09-09T03:59:52Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5362"
     },
     {
       "prNumber": 5355,
@@ -3989,13 +4038,6 @@
       "body": "the same glow you see in the play view, so what you paint is what you get — and the\nwall behind them stays unwashed, so the next hold you want is still easy to find."
     },
     {
-      "prNumber": 5137,
-      "category": "fixed",
-      "title": "(Bug only affects Android — reads as a fix a user would notice, but \"section titles are readable\" isn't really changelog-worthy copy; happy to add a line if preferred.)",
-      "mergedAt": "2026-09-05T10:40:25Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5137"
-    },
-    {
       "prNumber": 5140,
       "category": "fixed",
       "title": "Clearer hold outlines on Woods and Tension Board 2.",
@@ -4033,13 +4075,6 @@
       "mergedAt": "2026-09-05T01:53:53Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/5126",
       "body": "The preview list now tells you why it's empty instead of showing nothing at all"
-    },
-    {
-      "prNumber": 5119,
-      "category": "fixed",
-      "title": "Admin-only tool behind the `__DEV__ || isAdmin` gate — nothing user-facing.",
-      "mergedAt": "2026-09-03T02:35:35Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/5119"
     },
     {
       "prNumber": 4706,
@@ -4184,13 +4219,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4888"
     },
     {
-      "prNumber": 4958,
-      "category": "improved",
-      "title": "Store listing copy, not an app change — the in-app What's New screen is not affected.",
-      "mergedAt": "2026-08-31T01:58:04Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4958"
-    },
-    {
       "prNumber": 4638,
       "category": "new",
       "title": "See estimated grades at unclimbed wall angles, clearly marked with `≈` and hollow chart diamonds.",
@@ -4240,13 +4268,6 @@
       "mergedAt": "2026-08-30T04:23:17Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4869",
       "body": "with the glow radiating off the rim — the hold itself stays readable inside."
-    },
-    {
-      "prNumber": 4871,
-      "category": "new",
-      "title": "The user-facing note rides the renderer PR #4869 — the data and the renderer ship together on the train, and a shard table nothing reads yet changes nothing anyone can see.",
-      "mergedAt": "2026-08-30T04:23:02Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4871"
     },
     {
       "prNumber": 4770,
@@ -4465,13 +4486,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4686"
     },
     {
-      "prNumber": 4676,
-      "category": "new",
-      "title": "The user-visible half of #4583 — tier-2 climbs actually reaching Google — shipped in #4661 and was verified in production there. What is left here is observability: nothing a climber sees, and a \"What's New\" line about a sitemap response header would be noise.",
-      "mergedAt": "2026-08-22T11:36:49Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4676"
-    },
-    {
       "prNumber": 4666,
       "category": "new",
       "title": "The play view now shows at a glance whether the climb on your screen is the one lit on the wall — a pill in the header reads \"On the wall\", \"Live\", or \"Browsing\".",
@@ -4493,13 +4507,6 @@
       "mergedAt": "2026-08-22T01:31:25Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4576",
       "body": "MoonBoard links now light exactly the hold sets named in the URL. Masters 2017 and Masters 2019 links were quietly dropping Screw-on Feet, and a single-hold-set link lit the whole layout."
-    },
-    {
-      "prNumber": 4592,
-      "category": "fixed",
-      "title": "Only affects a climb view URL that was already broken (an infinite-redirect 500-adjacent error page); nothing a climber would describe as a feature getting better.",
-      "mergedAt": "2026-08-22T01:29:59Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4592"
     },
     {
       "prNumber": 4640,
@@ -4593,13 +4600,6 @@
       "body": "Sign in from there and you land straight back on the climb you came for."
     },
     {
-      "prNumber": 4604,
-      "category": "new",
-      "title": "Nothing is reachable yet — the user-facing note ships with the stacked routing PR.",
-      "mergedAt": "2026-08-20T22:06:29Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4604"
-    },
-    {
       "prNumber": 4540,
       "category": "new",
       "title": "Setter's notes now show up on a climb — the description whoever set it wrote in the create form, right under your logbook in the play drawer and on the climb's web page.",
@@ -4687,20 +4687,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4534"
     },
     {
-      "prNumber": 4526,
-      "category": "fixed",
-      "title": "Analytics identity wiring; no user-visible change.",
-      "mergedAt": "2026-08-16T12:19:11Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4526"
-    },
-    {
-      "prNumber": 4520,
-      "category": "new",
-      "title": "Admin-only tooling; no user-facing surface.",
-      "mergedAt": "2026-08-16T11:43:08Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4520"
-    },
-    {
       "prNumber": 4482,
       "category": "new",
       "title": "Your Progress tab now shows how this period's sends stack up against the last one — flip between \"vs. last period\" and \"vs. same time last year\" to see your trend.",
@@ -4708,25 +4694,11 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4482"
     },
     {
-      "prNumber": 4522,
-      "category": "fixed",
-      "title": "Sitemap caching and post-deploy smoke; no user-facing change.",
-      "mergedAt": "2026-08-16T11:29:02Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4522"
-    },
-    {
       "prNumber": 4516,
       "category": "new",
       "title": "Print a QR poster for your gym straight from the manage console — one page, A4 or Letter, in English, Spanish, French or German.",
       "mergedAt": "2026-08-16T09:56:44Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4516"
-    },
-    {
-      "prNumber": 4521,
-      "category": "fixed",
-      "title": "CI and test-fixture typing only.",
-      "mergedAt": "2026-08-16T09:20:47Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4521"
     },
     {
       "prNumber": 4517,
@@ -4741,13 +4713,6 @@
       "title": "Claimed a gym? Your page now says it's under review, and we email you either way once we've looked at it — approved or not.",
       "mergedAt": "2026-08-16T07:53:11Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4515"
-    },
-    {
-      "prNumber": 4512,
-      "category": "new",
-      "title": "Flag-gated and noindex; Tier 2 launches it publicly.",
-      "mergedAt": "2026-08-16T05:03:29Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4512"
     },
     {
       "prNumber": 4510,
@@ -4771,32 +4736,11 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4506"
     },
     {
-      "prNumber": 4505,
-      "category": "new",
-      "title": "Backend fields only; the directory that consumes them ships flag-gated and noindex in a later PR.",
-      "mergedAt": "2026-08-16T02:21:38Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4505"
-    },
-    {
-      "prNumber": 4503,
-      "category": "new",
-      "title": "Pure instrumentation: no UI, copy, or behaviour changes.",
-      "mergedAt": "2026-08-16T00:33:57Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4503"
-    },
-    {
       "prNumber": 4502,
       "category": "new",
       "title": "Gyms can post their opening hours, and the page shows the date the owner last confirmed them — so you know the hours are current before you drive over.",
       "mergedAt": "2026-08-16T00:22:12Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4502"
-    },
-    {
-      "prNumber": 4501,
-      "category": "new",
-      "title": "No user-visible change: this ships the contract module only, and nothing calls it until the wiring PR lands.",
-      "mergedAt": "2026-08-15T23:46:03Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4501"
     },
     {
       "prNumber": 4500,
@@ -4834,13 +4778,6 @@
       "mergedAt": "2026-08-15T21:04:07Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4481",
       "body": "MoonBoard board pages load from cache instead of running a fresh search every time."
-    },
-    {
-      "prNumber": 4489,
-      "category": "improved",
-      "title": "These endpoints have had no in-repo caller since the GraphQL migration and nothing climber-visible changes. If the new counter shows real third-party traffic, W-25b writes the climber-voice note instead.",
-      "mergedAt": "2026-08-15T21:03:50Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4489"
     },
     {
       "prNumber": 4479,
@@ -4937,14 +4874,6 @@
       "title": "Offline board downloads recover automatically and keep bulk catalog updates on the fast CDN download instead of crawling through hundreds of 500-climb batches.",
       "mergedAt": "2026-08-15T01:47:46Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4456"
-    },
-    {
-      "prNumber": 4284,
-      "category": "fixed",
-      "title": "Internal-only fix to a connection-scoped in-memory flag with no shipped",
-      "mergedAt": "2026-08-14T23:35:09Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4284",
-      "body": "user-visible consumer (mobile only reads it for a drift-telemetry signature)."
     },
     {
       "prNumber": 4269,
@@ -5058,13 +4987,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4419"
     },
     {
-      "prNumber": 4418,
-      "category": "new",
-      "title": "No user-visible native change. The gate relaxation and the `?next=` return are web-fork-only, asserted inert on native by the two suites above. What does reach the store fleet is one additive analytics capture per board-route open — no navigation, no copy, nothing on screen — so there is nothing for the \"What's New\" screen. The user-visible copy for this flow ships with the www front door in #4369.",
-      "mergedAt": "2026-08-14T01:29:47Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4418"
-    },
-    {
       "prNumber": 4417,
       "category": "fixed",
       "title": "Feed thumbnails now open the board the send actually happened on.",
@@ -5128,13 +5050,6 @@
       "title": "Finish a session at a board you haven't downloaded yet and Boardsesh now offers to keep the whole catalog on your phone — one tap, and every climb is there next time the gym wifi isn't.",
       "mergedAt": "2026-08-12T12:03:05Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4342"
-    },
-    {
-      "prNumber": 4341,
-      "category": "fixed",
-      "title": "The freshness fix is real but not observable on any surface that ships today; the surfaces that make it visible are PRs 2-4 in this stack.",
-      "mergedAt": "2026-08-12T11:57:22Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4341"
     },
     {
       "prNumber": 4339,
@@ -5301,13 +5216,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4268"
     },
     {
-      "prNumber": 4258,
-      "category": "fixed",
-      "title": "Purely a crash-reporting/observability fix — no user-visible behavior change. The subscription callback bodies (`next`/`error`/`complete`) are unchanged; only the transport wrapper they're routed through changed.",
-      "mergedAt": "2026-08-11T20:50:00Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4258"
-    },
-    {
       "prNumber": 4243,
       "category": "fixed",
       "title": "MoonBoard problems keep their grade in the new-climbs feed and in setter notifications, even when the problem isn't pinned to one wall angle.",
@@ -5350,13 +5258,6 @@
       "mergedAt": "2026-08-11T02:55:56Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4245",
       "body": "Signed out? You can still read the thread; sign in to join it."
-    },
-    {
-      "prNumber": 4254,
-      "category": "fixed",
-      "title": "Analytics correctness only — no user-visible behaviour change.",
-      "mergedAt": "2026-08-11T02:55:28Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4254"
     },
     {
       "prNumber": 4250,
@@ -5499,20 +5400,6 @@
       "title": "Browser board connections now retry one brief GATT failure without making you choose the board again.",
       "mergedAt": "2026-08-07T22:00:14Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4155"
-    },
-    {
-      "prNumber": 4124,
-      "category": "fixed",
-      "title": "Closes #4105",
-      "mergedAt": "2026-08-07T21:57:12Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4124"
-    },
-    {
-      "prNumber": 4118,
-      "category": "fixed",
-      "title": "This only changes what reaches Sentry's `extra.cause` field for a developer-only telemetry event — no user-visible behavior, copy, or UI changes. The whole feature is also still gated behind `offline-board-downloads` at 0% rollout.",
-      "mergedAt": "2026-08-07T21:55:44Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4118"
     },
     {
       "prNumber": 4204,
@@ -5673,13 +5560,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4147"
     },
     {
-      "prNumber": 4168,
-      "category": "improved",
-      "title": "This PR *is* the store release notes — it ships no app code, so there's nothing for the in-app \"What's New\" screen to show.",
-      "mergedAt": "2026-08-02T03:35:52Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4168"
-    },
-    {
       "prNumber": 4152,
       "category": "fixed",
       "title": "Reconnecting to the same board on iPhone no longer lets a late disconnect from the old connection knock the new link offline.",
@@ -5750,14 +5630,6 @@
       "mergedAt": "2026-08-01T00:43:35Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/4090",
       "body": "Fixes #3778\nFixes #3050"
-    },
-    {
-      "prNumber": 4082,
-      "category": "improved",
-      "title": "Dev-only instrumentation behind `__DEV__` — nothing reaches users, so there is",
-      "mergedAt": "2026-08-01T00:22:34Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/4082",
-      "body": "nothing for the \"What's New\" screen to show."
     },
     {
       "prNumber": 4086,
@@ -6053,13 +5925,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3974"
     },
     {
-      "prNumber": 3976,
-      "category": "fixed",
-      "title": "This is an internal hardening fix. Today's \"All\" climb-type filter behavior on web is unchanged; this closes a dormant footgun that could have silently regressed it in a future refactor.",
-      "mergedAt": "2026-07-30T08:53:30Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3976"
-    },
-    {
       "prNumber": 3986,
       "category": "fixed",
       "title": "Animated climbs play back the way their setter drew them — routes and circuits were leaving holds lit long after the move was done, and one 19-frame Kilter problem lit 157 holds at its peak instead of 27.",
@@ -6073,20 +5938,6 @@
       "title": "Sign up with Apple or Google now stays in the sign-up flow when your device switches to browser sign-in.",
       "mergedAt": "2026-07-30T08:47:52Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3984"
-    },
-    {
-      "prNumber": 3953,
-      "category": "fixed",
-      "title": "Deliberately none. A release note would have to promise climbers that re-importing fixes their mirrored sends, and that promise is only true if Aurora's export carries the field — which is exactly what hasn't been verified. The key-name logging will tell us; a note can ship in the follow-up once it does.",
-      "mergedAt": "2026-07-27T23:40:50Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3953"
-    },
-    {
-      "prNumber": 3959,
-      "category": "fixed",
-      "title": "Invisible to users: the phantom rows were never rendered on any surface.",
-      "mergedAt": "2026-07-27T23:39:22Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3959"
     },
     {
       "prNumber": 3935,
@@ -6483,13 +6334,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3755"
     },
     {
-      "prNumber": 3864,
-      "category": "fixed",
-      "title": "The recurring MoonBoard location sync isn't live in prod (see #3863), so this change is user-invisible today.",
-      "mergedAt": "2026-07-24T13:09:30Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3864"
-    },
-    {
       "prNumber": 3826,
       "category": "fixed",
       "title": "Bug reports in the admin panel are now readable in dark mode",
@@ -6635,13 +6479,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3806"
     },
     {
-      "prNumber": 3790,
-      "category": "fixed",
-      "title": "`none` — internal CI/tooling fix, nothing user-facing.",
-      "mergedAt": "2026-07-20T00:43:14Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3790"
-    },
-    {
       "prNumber": 3775,
       "category": "new",
       "title": "Boardsesh now runs in your browser: the same app you use on your phone — queue, play view, board LEDs over Web Bluetooth, offline thumbnails — at boardsesh.com/app, rolling out gradually. If anything feels off, add `?classic=1` to any link to hop back to the classic site.",
@@ -6655,13 +6492,6 @@
       "mergedAt": "2026-07-18T10:05:01Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3769",
       "body": "Filter for your projects, sends, or untried climbs right at the top under Progress"
-    },
-    {
-      "prNumber": 3724,
-      "category": "new",
-      "title": "Admin-only internal tooling — not climber-facing.",
-      "mergedAt": "2026-07-17T20:54:50Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3724"
     },
     {
       "prNumber": 3759,
@@ -6716,13 +6546,6 @@
       "body": "Logging an ascent now tells you when something goes wrong instead of failing silently."
     },
     {
-      "prNumber": 3733,
-      "category": "fixed",
-      "title": "Internal telemetry hygiene. The one behavior change with user impact (a queued offline tick surviving a mid-drain timeout instead of being dead-lettered) sits behind the `offline-board-downloads` flag at 0% rollout, so nothing visible ships.",
-      "mergedAt": "2026-07-17T02:29:31Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3733"
-    },
-    {
       "prNumber": 3746,
       "category": "fixed",
       "title": "Beta videos and similar climbs now swipe sideways in the climb drawer on Android — flick through the whole strip, not just the first couple.",
@@ -6766,13 +6589,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3731"
     },
     {
-      "prNumber": 3738,
-      "category": "fixed",
-      "title": "Defensive correctness guard for a path users can't currently reach (see decision note above). No user-visible behavior change to describe today. If we later make create track the live session angle, that becomes user-facing and warrants a real note.",
-      "mergedAt": "2026-07-17T01:32:15Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3738"
-    },
-    {
       "prNumber": 3728,
       "category": "fixed",
       "title": "The climb list holds still while it loads — no more rows jumping around as thumbnails and grades settle in.",
@@ -6792,13 +6608,6 @@
       "title": "Tapping \"Turn off all lights\" now tells you when the board dropped mid-clear instead of going quiet.",
       "mergedAt": "2026-07-17T01:31:57Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3737"
-    },
-    {
-      "prNumber": 3739,
-      "category": "fixed",
-      "title": "Backend log-diagnostic correctness only; no user-facing behavior change.",
-      "mergedAt": "2026-07-17T01:31:53Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3739"
     },
     {
       "prNumber": 3727,
@@ -7208,13 +7017,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3589"
     },
     {
-      "prNumber": 3579,
-      "category": "fixed",
-      "title": "_(User-facing benefit ships via #3577's note in the same 2.2.2 build; this is a robustness hardening of that fix.)_",
-      "mergedAt": "2026-07-09T07:35:10Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3579"
-    },
-    {
       "prNumber": 3586,
       "category": "fixed",
       "title": "Kilter boards that show up as just \"Kilter Board\" now light up on the first tap instead of taking a couple of tries.",
@@ -7585,13 +7387,6 @@
       "title": "French version now speaks climber French: log an « Enchaîné », count your « croix » — no more « envoyer » a climb",
       "mergedAt": "2026-07-03T23:42:58Z",
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3438"
-    },
-    {
-      "prNumber": 3321,
-      "category": "new",
-      "title": "Dev/tester OTA-tooling screens; RN → native rendering with no behaviour change.",
-      "mergedAt": "2026-07-03T22:03:23Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3321"
     },
     {
       "prNumber": 3425,
@@ -8011,13 +7806,6 @@
       "body": "Home-wall boards get Tall/Wide chips; long-press to lock one so the right climbs always show."
     },
     {
-      "prNumber": 3246,
-      "category": "improved",
-      "title": "App Store metadata copy + version bump only; no in-app behaviour changes.",
-      "mergedAt": "2026-06-27T12:39:46Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3246"
-    },
-    {
       "prNumber": 3241,
       "category": "fixed",
       "title": "Internal preview-tester tooling hardening — removes a write-capable EAS token from preview builds; the in-app branch switcher now repoints the build at a branch device-locally. No public, user-facing change.",
@@ -8290,13 +8078,6 @@
       "prUrl": "https://github.com/boardsesh/boardsesh/pull/3115"
     },
     {
-      "prNumber": 3116,
-      "category": "fixed",
-      "title": "Tester-only dev tooling + backend security/integrity hardening; nothing climber-facing.",
-      "mergedAt": "2026-06-21T01:04:50Z",
-      "prUrl": "https://github.com/boardsesh/boardsesh/pull/3116"
-    },
-    {
       "prNumber": 3118,
       "category": "fixed",
       "title": "Find a gym on a full-screen map you can drag to resize, pan to explore new areas, and search by city — board picking right from the map.",
@@ -8406,6 +8187,28 @@
     }
   ],
   "nativeReleases": [
+    {
+      "kind": "native-release",
+      "date": "2026-10-26T05:56:50+01:00",
+      "sha": "648b0adcabb973dedb6f060b533c738cfe9421db",
+      "platforms": [
+        "ios"
+      ],
+      "fingerprints": {
+        "ios": "984a295fbffa93d787d45a765700ed52a173cfa8"
+      }
+    },
+    {
+      "kind": "native-release",
+      "date": "2026-10-26T04:19:41Z",
+      "sha": "3e25a298a7c7efb7670b885fd8522f7a561518cc",
+      "platforms": [
+        "android"
+      ],
+      "fingerprints": {
+        "android": "40810ddecdb911fc005aa8270f18f874f2b8e24f"
+      }
+    },
     {
       "kind": "native-release",
       "date": "2026-10-25T14:05:55Z",
