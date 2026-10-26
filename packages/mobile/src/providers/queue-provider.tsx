@@ -1833,8 +1833,10 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       const reorderedQueue = [...previousQueue];
       const [movedItem] = reorderedQueue.splice(oldIndex, 1);
       reorderedQueue.splice(targetIndex, 0, movedItem);
-      // Optimistic local reorder; the server's QueueReordered echo is a safe
-      // no-op thanks to the same uuid-at-oldIndex check.
+      // Optimistic local reorder. While this phone is in step with the server,
+      // the QueueReordered echo is a no-op thanks to the same uuid-at-oldIndex
+      // check. When its indexes were stale, the server sends a FullSync of its
+      // own order instead (#6792).
       dispatch({ type: 'DELTA_REORDER_QUEUE_ITEM', payload: { uuid, oldIndex, newIndex: targetIndex } });
       track(SHARED_EVENTS.QueueReordered, {
         boardName: activeBoardRef.current?.boardType,
@@ -1845,12 +1847,13 @@ export function QueueProvider({ children }: { children: ReactNode }) {
         reorderedBy: 'self',
         source: options?.source ?? 'drag',
       });
-      // The wire move carries indexes, and the server splices by index without
-      // checking the uuid, so the indexes must describe the server's queue, not
-      // this phone's. They differ while the lane drains: a whole-list Play next
-      // puts every climb here at once but on the server one send at a time. So
-      // the move waits its turn on the lane and reads both indexes at send time
-      // (`serverIndexIn`), when every earlier send from this phone has landed.
+      // The wire move carries indexes. The server finds the climb by uuid
+      // (#6792), but it still places it at `newIndex` (clamped to the tail),
+      // so the indexes must describe the server's queue, not this phone's. They differ while the
+      // lane drains: a whole-list Play next puts every climb here at once but
+      // on the server one send at a time. So the move waits its turn on the
+      // lane and reads both indexes at send time (`serverIndexIn`), when every
+      // earlier send from this phone has landed.
       void enqueueQueueMutation(async () => {
         if (!isQueueMutationOriginCurrent(origin)) return;
         // Gone, or never reached the server: there is nothing there to move.

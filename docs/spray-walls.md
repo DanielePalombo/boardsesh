@@ -4045,9 +4045,12 @@ aliases, revisions and lineage (as the child) cascade from the climb row.
 The climb's tombstone stays unscoped, as `log_deletion_board_climbs` writes it.
 Everybody who could open the wall could read the climb, and gym members or
 public-wall viewers may have it on their phone. A tombstone scoped to the
-setter would leave them a climb they could tick and then lose. A draft deleted
-here writes the same unscoped tombstone as `deleteDraftClimb`, which is the leak
-#6150 tracks; its fix has to cover both callers.
+setter would leave them a climb they could tick and then lose. A draft is the
+exception: only its setter can read one, so since migration 0280 (#6150) the
+triggers scope a draft's tombstones (the climb's and its `board_climb_stats`
+rows') to the setter, whichever caller deletes it (this mutation,
+`deleteDraftClimb` or account deletion). A draft with no Boardsesh owner keeps
+unscoped tombstones: a phone that downloaded it before #6432 still holds it.
 
 **The race with a tick.** Both sides lock the climb row. The delete takes the
 wall lock, then `SELECT … FOR UPDATE` on the climb, then counts ticks. `saveTick`

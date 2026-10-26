@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { GlassSurface } from './GlassSurface';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../providers/theme-provider';
+import { useBrandInputColors } from '../hooks/use-accessible-input-style';
 import { textStyles } from '../theme/typography';
 import { selectByVariant } from '../theme/variants';
 
@@ -51,6 +52,7 @@ export const SearchHeader = forwardRef<SearchHeaderHandle, SearchHeaderProps>(fu
   const styles = useTypographyStyles(createStyles);
   const inputRef = useRef<NativeTextInput>(null);
   const { systemColors, variant: uiVariant, textStyles: themeTextStyles } = useTheme();
+  const brandInputColors = useBrandInputColors();
   const { fontScale } = useWindowDimensions();
   const isMaterial = selectByVariant(uiVariant, { material: true, liquidGlass: false });
   const typography = themeTextStyles ?? textStyles;
@@ -115,6 +117,8 @@ export const SearchHeader = forwardRef<SearchHeaderHandle, SearchHeaderProps>(fu
           iconColor={systemColors.secondaryLabel as string}
           rippleColor={systemColors.fill}
           inputStyle={styles.materialInput}
+          // Paper sets one opaque selectionColor (primaryFill); ours wins via {...rest}.
+          {...brandInputColors}
           // Pin the full footprint on first mount. Paper's Searchbar contains a
           // Surface + TextInput stack; on Android it can draw only the tonal
           // surface for one frame if its parent hands it an unconstrained flex

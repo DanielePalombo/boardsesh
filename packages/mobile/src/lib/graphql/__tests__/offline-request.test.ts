@@ -822,7 +822,7 @@ describe('offlineAwareRequest — BOARDSESH_GRADE', () => {
 });
 
 describe('offlineAwareRequest — BOARDSESH_GRADES_FOR_ANGLES', () => {
-  it('reads all angles locally when the board type is downloaded (online)', async () => {
+  it("reads all angles locally when the climb's layout is downloaded (online)", async () => {
     setOnline(true);
     const result = await offlineAwareRequest<BoardseshGradesForAnglesResponse>(
       BOARDSESH_GRADES_FOR_ANGLES,
@@ -830,20 +830,19 @@ describe('offlineAwareRequest — BOARDSESH_GRADES_FOR_ANGLES', () => {
     );
     expect(result.boardseshGradesForAngles).toHaveLength(1);
     expect(result.boardseshGradesForAngles[0].angle).toBe(40);
+    expect(isClimbLayoutDownloadedLocally).toHaveBeenCalledWith(
+      fakeDb,
+      gradesForAnglesVars.boardName,
+      gradesForAnglesVars.climbUuid,
+      'board_climb_grades',
+    );
     expect(getBoardseshGradesForAnglesLocal).toHaveBeenCalledWith(fakeDb, { ...gradesForAnglesVars, viewerId: null });
     expect(request).not.toHaveBeenCalled();
   });
 
-  // Deliberate divergence from BOARDSESH_GRADE (see the "retries a local miss"
-  // test above and the registration comment in offline-request.ts): a null single
-  // grade IS retried over the network, but an empty by-angle list is NOT. An empty
-  // list is often correct (MoonBoard / too-few-ascents climbs are never graded),
-  // and neither grade op carries layout/size to distinguish "genuinely ungraded"
-  // from "this scope hasn't synced to this device" — so retrying here would add a
-  // network round trip on every chart open for the common ungraded case. Accepted
-  // consequence: a climb whose grades never synced to this device (cross-scope via
-  // party queue / deep link / similar climbs) can show a grade in the collapsed
-  // view but an empty expanded by-angle chart, until the board's next sync.
+  // Unlike BOARDSESH_GRADE, a null single grade is retried but an empty by-angle
+  // list is not: empty is often correct (too-few-ascents climbs).
+  // The layout gate is what sends unknown uuids to the server.
   it('does not retry an empty local list over the network — an empty result is an answer (no grades)', async () => {
     setOnline(true);
     getBoardseshGradesForAnglesLocal.mockResolvedValue([]);
@@ -857,7 +856,7 @@ describe('offlineAwareRequest — BOARDSESH_GRADES_FOR_ANGLES', () => {
 
   it('returns the empty list when offline with no local data', async () => {
     setOnline(false);
-    isBoardTypeDownloadedLocally.mockResolvedValue(false);
+    isClimbLayoutDownloadedLocally.mockResolvedValue(false);
     const result = await offlineAwareRequest<BoardseshGradesForAnglesResponse>(
       BOARDSESH_GRADES_FOR_ANGLES,
       gradesForAnglesVars,
@@ -866,9 +865,9 @@ describe('offlineAwareRequest — BOARDSESH_GRADES_FOR_ANGLES', () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it('falls back to the network when the board type is not downloaded (online)', async () => {
+  it("falls back to the network when the climb's layout is not downloaded (online)", async () => {
     setOnline(true);
-    isBoardTypeDownloadedLocally.mockResolvedValue(false);
+    isClimbLayoutDownloadedLocally.mockResolvedValue(false);
     const result = await offlineAwareRequest<BoardseshGradesForAnglesResponse>(
       BOARDSESH_GRADES_FOR_ANGLES,
       gradesForAnglesVars,
@@ -884,7 +883,7 @@ describe('offlineAwareRequest — CLIMB_STATS_HISTORY', () => {
     setOnline(true);
     const result = await offlineAwareRequest<ClimbStatsHistoryResponse>(CLIMB_STATS_HISTORY, statsHistoryVars);
     expect(result).toEqual({ climbStatsHistory: [localStatsEntry] });
-    expect(isClimbLayoutDownloadedLocally).toHaveBeenCalledWith(fakeDb, 'kilter', 'c1');
+    expect(isClimbLayoutDownloadedLocally).toHaveBeenCalledWith(fakeDb, 'kilter', 'c1', 'board_climb_stats');
     expect(getClimbStatsHistoryLocal).toHaveBeenCalledWith(fakeDb, { ...statsHistoryVars, viewerId: null });
     expect(request).not.toHaveBeenCalled();
   });
