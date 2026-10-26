@@ -1122,7 +1122,7 @@ describe('ClimbList native header ownership', () => {
 
     const restoredOptions = Object.assign({}, previousHeaderOptions, ...mocks.stackOptions);
     // The tab names the screen: no large title and an empty title view, while the
-    // navigation item keeps "Climbs" for VoiceOver and the back menu.
+    // navigation item keeps "Climbs" for the back button's long-press menu.
     expect(restoredOptions).toMatchObject({ title: 'Climbs', headerShown: true, headerLargeTitle: false });
     expect(restoredOptions.headerTitle).toBe(renderHiddenHeaderTitle);
     expect(mocks.stackOptions.every((options) => !Object.hasOwn(options, 'title'))).toBe(true);
@@ -1607,6 +1607,11 @@ describe('ClimbList empty-search recovery', () => {
     expect(mocks.searchState.name).toBe('Moonage');
     expect(mocks.patchFilters).not.toHaveBeenCalled();
     expect(mocks.patchBoardFilters).not.toHaveBeenCalled();
+    expect(mocks.track).toHaveBeenCalledWith('Climb Filters Opened', {
+      source: 'empty_recovery',
+      activeFilterCount: 0,
+      hasName: true,
+    });
   });
 
   it.each(['loading', 'placeholder', 'error', 'offline-filter', 'catalog-missing', 'catalog-queued'] as const)(
@@ -3088,6 +3093,8 @@ describe('ClimbList live filter session integration', () => {
       expect(mocks.replaceSearch).not.toHaveBeenCalled();
       expect(mocks.searchState).toEqual({ filters: {}, boardFilters: {}, name: 'new scope' });
       expect(mocks.addRecentFilter).not.toHaveBeenCalled();
+      // The app cancelled the sheet; the climber did not close it.
+      expect(mocks.track.mock.calls.some(([eventName]) => eventName === 'Climb Filters Closed')).toBe(false);
     },
   );
 

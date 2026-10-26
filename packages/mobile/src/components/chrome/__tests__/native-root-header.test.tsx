@@ -288,13 +288,15 @@ describe('NativeRootHeader', () => {
   });
 
   // Climbs: the tab names the screen, so the header draws no title in any state,
-  // while the navigation item keeps the route title for VoiceOver and the back menu.
+  // while the navigation item keeps the route title for the back button's menu.
   it('draws no title, large or inline, when the title is hidden', () => {
     const routeOptions: NativeStackNavigationOptions = { title: 'Climbs' };
     const { rerender } = render(<NativeRootHeader titleHidden onHeightChange={vi.fn()} />);
 
     expect(lastOptions().headerLargeTitle).toBe(false);
     expect(lastOptions().headerTitle).toBe(renderHiddenHeaderTitle);
+    // A view, never null: with no title view the native stack draws `title` again.
+    expect(renderHiddenHeaderTitle()).not.toBeNull();
     expect(lastOptions()).not.toHaveProperty('title');
     expect({ ...routeOptions, ...lastOptions() }.title).toBe('Climbs');
 

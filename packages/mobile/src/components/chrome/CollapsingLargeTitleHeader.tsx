@@ -44,9 +44,9 @@ type CollapsingLargeTitleHeaderProps = {
  * The board-agnostic floating glass chrome shared across tabs: an always-on
  * progressive blur and a left/right glass-island row. The screen renders its own
  * large in-body title at the top of its scroll content; it simply scrolls away
- * under the blur. Climbs additionally passes `centerTitle` (its filter summary),
- * which sits as a persistent plain title in the centre of the islands row — the
- * one surface that keeps a header title.
+ * under the blur. A screen can pass `centerTitle` (Climbs: an optional filter
+ * summary), which sits as a persistent plain title in the centre of the islands
+ * row.
  */
 export function CollapsingLargeTitleHeader({
   centerTitle,

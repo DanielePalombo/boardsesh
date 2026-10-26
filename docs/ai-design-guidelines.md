@@ -434,8 +434,8 @@ The Profile Logbook puts the quick filter capsule row (see "Quick filter capsule
 profile tabs: Filters · N, then the climber's pinned capsules, then at most one inline Grade or Angle
 rail and the removable tokens. There is no search field on the page: the climb-name search is the
 first row of the filter sheet, and a typed name shows as a token ("“crimp”") so a filtered list
-always says why. The Climbs list works the same way on every platform, with no title in its header
-either: a second tap on the Climbs tab opens Filters, without the keyboard. In the composed profile header the selected Logbook tab already names the page, so
+always says why. The Climbs list works the same way on every platform, with no title in its
+header either: a second tap on the Climbs tab opens Filters, without the keyboard. In the composed profile header the selected Logbook tab already names the page, so
 the row has no heading of its own. A public profile keeps its "Logbook" heading in the page's
 normal flow; its scope line says "All boards" until a board is picked, then names that board.
 
@@ -1147,9 +1147,9 @@ on-wall climb capsule stays in the navigation bar's centre slot. Each tab's layo
 owns its localized title; opening a transparent drawer must not rewrite that
 title from the globally focused route. While the climb capsule is present, the
 native bar stays compact without an additional large title. Removing the capsule
-restores the route's collapsing large title. Search setup only configures the
-search controller; root chrome owns the title mode and header actions, including
-empty-board fallbacks.
+restores the route's collapsing large title, except on Climbs, which draws no title
+at all (`NativeRootHeader` `titleHidden`). Root chrome owns the title mode and header
+actions, including empty-board fallbacks.
 
 The create-climb header uses the same measured flank balancing as `SheetTopBar`.
 Its editable name centres when room permits, while the ellipsis and Save share a

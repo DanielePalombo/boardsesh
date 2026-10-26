@@ -49,8 +49,9 @@ There are **5 tabs** (the web has a 6th "Create" tab but it is between Discover 
 
 The mobile tabs are **Home, Session, Discover, You, Climbs**, in that order:
 Climbs is the rightmost tab, like Apple Music's Search tab (HIG Tab bars: the
-search tab sits "at the trailing end"). The tablet rails list it last among the
-primary rows, with You still pinned at the bottom. Session keeps the `/record`
+search tab sits "at the trailing end"). The native iPad bar and its sidebar follow
+the same order; the JS tablet rails list Climbs last among the primary rows, with
+You pinned at the bottom. Session keeps the `/record`
 route; only its visible navigation label changes.
 An ordinary launch and untargeted post-login entry select **Climbs**, using the
 stored active board, unless the climber chose **Home** under Settings › Home ›
@@ -88,8 +89,10 @@ The bar itself depends on the device:
   its header draws no "Climbs" title (`NativeRootHeader` `titleHidden`; the tab
   names the screen). The climb-name search is the first row of the Filters
   sheet, as in the Logbook. A second tap on the Climbs tab with the list showing
-  opens Filters without the keyboard (`useTabReselect`); a typed name shows as
-  the first token under the chips and counts in the Filters badge.
+  opens Filters without the keyboard (`useTabReselect`, which listens for the tab
+  bar's re-press; the JS tablet rails navigate without one, so there the Filters
+  chip is the way in). A typed name shows as the first token under the chips and
+  counts in the Filters badge.
 - **Other phones:** Material, and Liquid Glass forced on Android, use JS `Tabs`
   with `MaterialTabBar`.
 - **Tablets:** one JS `Tabs` navigator at every width (sidebar at regular width,

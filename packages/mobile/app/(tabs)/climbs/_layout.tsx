@@ -27,8 +27,8 @@ export default function ClimbsLayout() {
             options={{
               // The tab already names the screen, so the header draws no title, large or
               // inline, in any state (NativeRootHeader `titleHidden`). `title` stays for
-              // VoiceOver and the back button's long-press menu. Set here too so nothing
-              // flashes before the chrome mounts. Material keeps its own app bar.
+              // the back button's long-press menu. Set here too so nothing flashes
+              // before the chrome mounts. Material keeps its own app bar.
               title: t('mobile.nav.climbs'),
               headerShown: nativeRootHeader,
               headerLargeTitle: false,

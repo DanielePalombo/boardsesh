@@ -784,7 +784,7 @@ Two events from `packages/mobile/app/(tabs)/climbs/index.tsx`. Neither carries t
 | Event | Properties | When |
 | --- | --- | --- |
 | `Climb Filters Opened` | `source` (`tab_reselect` = second tap on the Climbs tab / `filters_chip` = the Filters chip or Material filter button / `empty_recovery` = "Open filters" on an empty search), `activeFilterCount`, `hasName` | The sheet actually opened; a tap while it is open fires nothing |
-| `Climb Filters Closed` | `source` (as opened), `activeFilterCount`, `hasName` (as left on close) | The climber closed the sheet; not when the app cancels it (leaving the screen, switching board) |
+| `Climb Filters Closed` | `source` (as opened), `activeFilterCount`, `hasName` (as left on close) | The sheet closed: close button, swipe, or a navigation that dismissed it. Not when the app cancels it (switching board or account) |
 
 `activeFilterCount` leaves the name out, like `Climb Search Performed`; `hasName` covers it. Expect
 the `hasQuery` share of `Climb Search Performed` to move from this build on: name search now starts

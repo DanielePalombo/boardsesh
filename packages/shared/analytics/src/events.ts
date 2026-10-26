@@ -561,7 +561,7 @@ export const SHARED_EVENTS = {
   // Mobile-only: the climber closed that sheet (close button or swipe down).
   // Props: source (as on Climb Filters Opened), activeFilterCount and hasName,
   // both as left on close. Not fired when the app cancels the sheet itself
-  // (leaving the screen, switching board). No free text.
+  // (switching board or account). No free text.
   ClimbFiltersClosed: 'Climb Filters Closed',
   SearchHoldFilterChanged: 'Search Hold Filter Changed',
   SearchHoldFilterCleared: 'Search Hold Filter Cleared',

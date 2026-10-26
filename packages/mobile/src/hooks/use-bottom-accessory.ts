@@ -19,7 +19,7 @@ export function isBottomAccessoryAvailable(): boolean {
 /**
  * Which tab chrome is on screen, resolved once from the variant, the device and
  * the iOS version. Every consumer (the tab layout, bottom-chrome metrics, toasts,
- * the climbs search mode, onboarding tips) reads this one answer, so a native
+ * onboarding tips) reads this one answer, so a native
  * accessory is never assumed where it does not mount. See `resolveTabChrome`.
  */
 export function useTabChrome(): TabChrome {

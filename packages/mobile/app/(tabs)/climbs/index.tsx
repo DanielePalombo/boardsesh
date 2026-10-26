@@ -704,11 +704,12 @@ function ClimbListInner() {
       filtersOpenSourceRef.current = source;
       track(SHARED_EVENTS.ClimbFiltersOpened, {
         source,
-        activeFilterCount: countActiveFilters(filters, boardFilters),
+        // The normalized selection, as `Climb Filters Closed` reports it.
+        activeFilterCount: countActiveFilters(normalizedFilters, boardFilters),
         hasName: committedSearchNameRef.current.length > 0,
       });
     },
-    [openFilters, filters, boardFilters],
+    [openFilters, normalizedFilters, boardFilters],
   );
   const handleOpenFilters = useCallback(() => openFiltersFrom('filters_chip'), [openFiltersFrom]);
   const handleOpenFiltersFromEmpty = useCallback(() => openFiltersFrom('empty_recovery'), [openFiltersFrom]);

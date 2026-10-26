@@ -45,8 +45,8 @@ export type TabChrome = {
 
 /**
  * Pure tab-chrome arbitration. One function answers all three questions so the
- * tab layout, the bottom-chrome metrics, the toast offset and the climbs search
- * mode can never disagree about what is on screen.
+ * tab layout, the bottom-chrome metrics and the toast offset can never disagree
+ * about what is on screen.
  *
  * iPad uses the same navigator at every width. Its permanent Wall destination
  * remains registered when UIKit adapts the sidebar to a tab bar, so resizing
