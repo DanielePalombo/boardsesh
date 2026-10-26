@@ -514,7 +514,19 @@ belong to `main` also reserve their runtimes for public release; the train canno
 publish onto those while approval is pending, even if `main` has since advanced
 to a newer runtime. Main and train tips are checked again before publication
 attempts, so a delayed retry cannot reuse authorization after either branch moves.
-A superseded train push publishes nothing.
+A superseded train push publishes nothing. It checks the train tip right after
+checkout, before setup and install, so a backlog of queued pushes costs about a
+minute each instead of a full publish each.
+The store evidence comes from a separate job that runs before `publish` queues
+for the OTA lane, so `publish` refuses evidence older than two hours
+(`TRAIN_LIVE_STORE_MAX_AGE_MS`) in its own step, "Refuse stale public store
+evidence". Store runtimes change only when a store release goes public, days
+apart, so two hours trades a little staleness for not failing a run that waited
+behind a long publish. That job is not folded into `publish` because it holds
+the store credentials and runs only main's code with no install. A refusal
+fails the run; re-run all its jobs or dispatch a new one. For a native build's
+republish or the train tip, production-deploy-watchdog.yml does that once by
+itself.
 Train cuts, publications and failures report to the deployments Discord channel.
 Because
 runtimeVersion is a fingerprint, this is safe to run on every push: a native change publishes an
@@ -639,6 +651,122 @@ roll back a platform that already published. A single eoas invocation can still 
 before its server-row write fails; making that internal PUT/database operation atomic requires an
 upstream expo-open-ota change.
 
+### Metro transform cache
+
+Before this cache, every OTA export started cold. The iOS export alone logged `Bundled 141682ms`
+for 6,545 modules, about 142 s of a 3 min 15 s publish step, and Android paid the same again.
+`mobile-ota-production.yml` now hands the two publish steps a warm Metro transform store and saves
+it afterwards, like `ci.yml`'s `mobile-bundle` job does (178 s cold, 90 s warm there). The restore
+runs in a separate job, `metro-cache-fetch`, for the reason in the threat model below. Expect each publish step to lose roughly half its bundle time once warm; the first warm
+staging run is the measurement to check.
+
+- **Where it lives.** `@expo/metro-config` hard-codes the store to `os.tmpdir()/metro-cache`, so
+  both publish steps set `TMPDIR` to `$RUNNER_TEMP/metro-ota`. Only the `metro-cache` folder
+  inside it is cached. It sits outside the workspace because `metro.config.js` watches the whole
+  monorepo. `TMPDIR` is set on the steps, never at the workflow level, which
+  `scripts/mobile-ci-env-parity.test.ts` keeps byte-identical to the native builds.
+- **Why the key hashes `EXPO_PUBLIC_*`.** `babel-preset-expo`'s `inline-env-vars` plugin writes
+  every `process.env.EXPO_PUBLIC_*` value into the transformed code. Metro's own cache key hashes
+  the babel config files and never these values. Without them in our key, changing the backend URL,
+  Sentry DSN or PostHog key would reuse transforms built with the old value and ship it to every
+  user. The key step hashes all `EXPO_PUBLIC_*` variables (sorted, NUL-separated) plus the written
+  `packages/mobile/.env`, on top of the lockfile, workspace, Metro config, babel config,
+  `app.config.ts` and `patches/**`. The publish steps must not set an `EXPO_PUBLIC_*` of their own,
+  because the key step would not see it.
+- **Key shape.** `metro-ota-<os>-<inputs hash>-<inlined env hash>-<sha>`, with the same string
+  minus the sha as the only restore key. It never restores `ci.yml`'s `metro-native-*` entries,
+  which are built under a different env. A dependency bump starts cold.
+- **Who reads it.** `metro-cache-fetch` restores the entry and uploads the store as a one-day
+  artifact. `publish` downloads it, checks every tar member, unpacks it and verifies the seal. The
+  fetch job computes the key with steps byte-identical to publish's (the `.env` writer and the key
+  step; tested), but it resolves `vars.*` without the Production environment. If an
+  environment-level variable ever differs from the repository one, the fetch picks the wrong entry
+  and publish logs a notice: always a cold build, never a wrong one, because publish verifies
+  against its own key.
+- **Who writes it.** Only runs on `main` (the staging call from `production-deploy.yml`, or a
+  dispatch) and `release/next` (the train push, or a dispatch) save, and only after at least one
+  platform published from a verified store. The train restores main's entries, because a branch
+  can read the default branch's caches.
+- **Never blocks a publish.** Every cache step is `continue-on-error`, the publish steps don't
+  depend on any of them, and `publish` runs whatever `metro-cache-fetch` did. eoas 3.2.6 runs `expo export` without `--clear`, so a restored store is
+  reused. Bundle bytes are unchanged: Metro keys each entry on the file's content hash, and the
+  staged receipt hashes the exported bundle itself. A download or extract error does not need
+  handling of its own: `@actions/cache` logs it and reports a miss, and Metro's binary file store
+  deletes any entry it cannot decode.
+
+#### Threat model: why the store is sealed
+
+The cache key is not a trust boundary. GitHub lets any workflow run whose ref is `main` write
+main-scope cache entries, and two of ours run code we did not review under that ref:
+`mobile-ota-preview.yml` on an `/ota-preview` comment for a fork PR (it checks out the fork head and
+runs the install and `app.config.ts`), and `db-migration-renumber.yml` (it runs same-repo PR code).
+That code can read the runner's cache token and save an entry named
+`metro-ota-Linux-<inputs hash>-<env hash>-anything`. Both hashes are computable from public files
+and the workflow's public env. The exact key (`prefix` + sha) always misses on a new commit, so
+`restore-keys` would hand the planted store to the production export, Metro would trust every
+transform in it, and the attacker's JS would ship, signed, to every user.
+
+There is a second, worse problem: `@actions/cache` extracts with `tar -xf … -P -C
+$GITHUB_WORKSPACE` (`lib/internal/tar.js`), and `-P` turns off GNU tar's refusal of absolute and
+`..` member names. A planted entry can therefore write any path the runner user can, during the
+restore itself: `scripts/ci/metro-cache-seal.sh`, `scripts/mobile-publish.ts`,
+`packages/mobile/src/**`, `node_modules/**`, `.git/config`, or a binary in `~/.local/bin`, which is
+early on `PATH`. A check that runs after the restore is too late, because it runs code the restore
+may have replaced.
+
+So **a restore never happens in a job that holds a secret**:
+
+- `metro-cache-fetch` has no environment, no secrets and a read-only token (`contents: read`,
+  credentials not persisted). It checks out only the files the key hashes, and runs nothing from
+  the repo: every step is inline shell. It restores the entry, repacks only `metro-cache/` (regular
+  files and directories, no `-P`), and uploads that tar as an artifact. Everything it produces is
+  treated as hostile, since after the restore it may be running planted code.
+- `publish` never calls `actions/cache/restore`. It downloads the artifact (download-artifact
+  rejects path traversal inside the zip) into a fresh directory, lists the tar first, and refuses it
+  unless every member is a regular file or directory named `metro-cache/`, `metro-cache/<2 hex>/`,
+  `metro-cache/<2 hex>/<hex>.mp` or `metro-cache/.metro-ota-seal`. Only then does it extract, with
+  GNU tar without `-P` and with `--no-same-owner --no-same-permissions --no-overwrite-dir`. The
+  outputs of the fetch job are never interpolated into a script.
+- Saving is safe and stays in `publish`.
+
+Then the store is checked with an HMAC that only the Production environment can compute
+(`scripts/ci/metro-cache-seal.sh`):
+
+1. **Secret.** `METRO_CACHE_HMAC_KEY` is a secret on the `Production` environment only, which the
+   `publish` job already runs under. Neither the preview nor the renumber workflow can read it. A
+   maintainer sets it once with `gh secret set METRO_CACHE_HMAC_KEY --env Production` (any long
+   random value, for example `openssl rand -hex 32`). Rotating it simply makes the next run cold.
+2. **Seal, before saving.** The manifest is every regular file in the store, as sorted relative
+   paths with each file's sha256 (`LC_ALL=C`). Its HMAC-SHA256 covers a version tag, the cache key
+   prefix and the manifest, and is written to `.metro-ota-seal` inside the saved directory. Node
+   computes it with the key read from its environment, so the key never reaches a command line or
+   a log. The prefix is in the MAC so that a genuine store sealed under old `EXPO_PUBLIC_*` values
+   cannot be replanted under the current prefix.
+3. **Verify, after unpacking and before either export.** The store must have exactly the layout
+   Metro's binary FileStore writes: two-hex-digit shard directories at depth 1 holding `<hex>.mp`
+   files, plus the seal. The script then recomputes the manifest from the files on disk (the stored
+   manifest is never read) and compares the MAC. A missing or malformed seal, any changed, added
+   or removed file, a wrong key, a different prefix, or anything outside that layout (symlinks,
+   deeper paths, other names) empties the store, with a `::warning::` and a step summary line, and
+   the export runs cold. Directories are made writable before deleting, and after a pass too: a
+   read-only shard in a genuine store would otherwise make Metro's `set()` throw mid-export. Before
+   sealing, the seal step deletes the `.tmp<pid>_` files an unfinished Metro write leaves behind.
+4. **The exports only read a store the check passed.** The publish steps set
+   `TMPDIR` to `$RUNNER_TEMP/metro-ota` only when the verify step wrote `store_ready=true`. If the
+   check itself crashes, they fall back to `$RUNNER_TEMP`, a fresh store that is never saved.
+5. **No key, no cache.** With the secret unset, nothing is downloaded, nothing is sealed or saved,
+   and the step summary says the exports ran cold. The job never fails over it.
+
+#### Size budget
+
+The budget is 1 GiB of store on disk (`METRO_CACHE_MAX_BYTES`, default 1073741824). For scale,
+`ci.yml`'s `metro-native` entry holds the same two production exports and is 85.6 MiB compressed
+(`gh cache list --key metro-native`, October 2026). The store only grows because restore-keys carry
+every earlier transform forward until the lockfile changes. Past the budget, the verify step
+drops the store and that run starts fresh, so the next save is one export's worth again. The seal
+step also refuses to save a store over the budget. The size check runs before hashing, so an
+oversized planted store costs no hashing time.
+
 ### OTA source maps and Sentry
 
 Production and approved-release backport workflows publish and upload in this order: iOS OTA → iOS
@@ -684,8 +812,9 @@ further publishing on that branch, so a forgotten one turns the next auto-publis
 
 `mobile-ota-production.yml` runs under `concurrency: mobile-ota-production` with
 `cancel-in-progress: false` and `queue: max`, and every job a direct run executes
-(`live-store-runtimes / resolve`, `publish`, `notify-train-deployment`) declares
-`environment: Production`. A job parked in `waiting` at that gate holds the lane
+(`live-store-runtimes / resolve`, `publish`) declares `environment: Production`;
+`notify-train-deployment` no longer does, and since the group moved onto
+`publish` the jobs around it cannot hold the lane at all. A job parked in `waiting` at that gate holds the lane
 for up to 30 days, and `timeout-minutes` does not help because a parked job's
 clock never starts. On 2026-10-24 run 40105607795 finished `publish`, then parked
 `notify-train-deployment` for 27 hours; 40 runs queued behind it, the daily stable
@@ -697,10 +826,13 @@ and nothing alerted.
 run only when a listed job is `waiting` at a gate, nothing is `in_progress`, and
 no job has started or completed for 45 minutes. It never cancels an executing
 publish, however old the run: a publish killed part-way can leave one platform
-published and the other not. It never re-dispatches, since `queue: max` keeps
-every pending run. A cancelled run's unfinished jobs are not retried, so the
-Discord report says for each stopped run whether `publish` had already succeeded.
-If it had not, dispatch the workflow again for that branch unless a later run
+published and the other not. It does not re-dispatch the run it cancels, since
+`queue: max` keeps every pending run, except the work nothing queued would
+redo: a native republish that was cancelled or refused stale store evidence,
+and the `release/next` tip (older pushes skip as superseded). Those get one
+dispatch each, or the exact command in Discord when the retry is spent or
+`OTA_LANE_REDISPATCH` is `off`. For any other stopped run whose `publish` had
+not succeeded, dispatch the workflow again for that branch unless a later run
 there publishes the same platforms (`gh workflow run mobile-ota-production.yml
 --ref <branch>`, adding `-f platform=…` for a per-platform republish). If it
 cannot read a held run's job list it goes red and names the run rather than
@@ -1775,7 +1907,13 @@ Two details that make it hold:
 - The shared `mobile-ota-production` lane uses `queue: max`. `cancel-in-progress: false` protects
   only the *running* run — GitHub still cancels a *pending* one when a new run queues, and the
   republishes are per-platform, so a superseded pending run would strand that platform. The cost is
-  that pushes during a long publish queue instead of coalescing.
+  that pushes during a long publish queue instead of coalescing; a superseded train push skips its
+  publish as soon as it gets the lane.
+- The lane is declared on the `publish` job, not the workflow, so the jobs around it
+  (`live-store-runtimes`, `notify-train-deployment`) can never hold it. On 2026-10-24 a workflow-level
+  lane let a notify job that never got a runner block every OTA for 27 hours.
+  `production-deploy-watchdog.yml` cancels a parked lane holder and dispatches a stranded republish
+  or train tip again once — see [The OTA lane](production-deploy.md#the-ota-lane).
 
 After a successful republish the workflow probes the manifest endpoint the way the app does and
 fails unless the served update is for that fingerprint and was created after the run started. "The
