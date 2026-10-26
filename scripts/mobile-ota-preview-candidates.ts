@@ -1,10 +1,11 @@
 /// <reference types="node" />
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { parsePreviewPlatform, type PreviewPlatformReceipt } from './lib/ota-preview-boot-receipt.ts';
 import { isReleaseTrainActive } from './lib/mobile-release-policy.ts';
 
@@ -195,30 +196,52 @@ export function collectCandidateReceipt(
   };
 }
 
+export type RuntimeRunner = (
+  file: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    encoding: 'utf8';
+    timeout: number;
+    maxBuffer: number;
+  },
+) => Promise<{ stdout: string }>;
+const execFileAsync: RuntimeRunner = (file, args, options) => {
+  const pending = promisify(execFile)(file, args, options);
+  pending.child.stdin?.end();
+  return pending;
+};
+
 /** Compare full stable hashes under the actual publisher environment, not display hashes. */
-export function resolvePreviewRuntime(
+export async function resolvePreviewRuntime(
   directory: string,
   platform: 'ios' | 'android',
   env: NodeJS.ProcessEnv,
-  runner = execFileSync,
-): string | null {
+  runner: RuntimeRunner = execFileAsync,
+): Promise<string | null> {
   const runtimeEnv = { ...env };
   delete runtimeEnv.EOO_TOKEN;
   delete runtimeEnv.EXPO_UPDATES_FINGERPRINT_OVERRIDE;
   delete runtimeEnv.OTA_EXPECT_RUNTIME_VERSION;
   if (platform === 'ios') delete runtimeEnv.GOOGLE_MAPS_API_KEY;
   try {
-    const hashes = [0, 1].map(() => {
-      const output = runner('vp', ['exec', 'expo-updates', 'runtimeversion:resolve', '--platform', platform], {
-        cwd: join(directory, 'packages/mobile'),
-        env: runtimeEnv,
-        encoding: 'utf8',
-        timeout: 60_000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 32 * 1024 * 1024,
-      });
-      return /\b[0-9a-f]{40}\b/.exec(String(output))?.[0] ?? null;
-    });
+    const hashes: Array<string | null> = [];
+    // Two sequential resolutions of the same tree must agree; concurrency lives across trees.
+    for (const _attempt of [0, 1]) {
+      const { stdout } = await runner(
+        'vp',
+        ['exec', 'expo-updates', 'runtimeversion:resolve', '--platform', platform],
+        {
+          cwd: join(directory, 'packages/mobile'),
+          env: runtimeEnv,
+          encoding: 'utf8',
+          timeout: 180_000,
+          maxBuffer: 32 * 1024 * 1024,
+        },
+      );
+      hashes.push(/\b[0-9a-f]{40}\b/.exec(String(stdout))?.[0] ?? null);
+    }
     return hashes[0] && hashes[0] === hashes[1] ? hashes[0] : null;
   } catch {
     return null;
@@ -241,14 +264,18 @@ function outputs(path: string): Record<string, string> {
   );
 }
 
-export function runPreviewCandidates(
+export async function runPreviewCandidates(
   repository: string,
   source: PreviewSource,
   scratch: string,
   out: string,
   phase: string,
   runCommand = command,
-  runtimeResolver = resolvePreviewRuntime,
+  runtimeResolver: (
+    directory: string,
+    platform: 'ios' | 'android',
+    env: NodeJS.ProcessEnv,
+  ) => Promise<string | null> = resolvePreviewRuntime,
 ) {
   const tooling = resolve(import.meta.dirname, '..');
   const planPath = join(scratch, 'candidates.json');
@@ -333,19 +360,41 @@ export function runPreviewCandidates(
     return;
   }
   failed = candidates.some((candidate) => candidate.status === 'failed');
-  for (const candidate of candidates) {
-    if (candidate.status !== 'ready' || !candidate.directory || !candidate.baselineDirectory) continue;
-    for (const platform of ['ios', 'android'] as const) {
+  type RuntimeCheck = {
+    result: { status: string; runtimeVersion?: string };
+    trees: [string, string];
+    platform: 'ios' | 'android';
+  };
+  const verdict = ({ result }: RuntimeCheck, runtime: string | null, baseline: string | null) => {
+    if (!runtime || !baseline) {
+      result.status = 'runtime-unresolved';
+      failed = true;
+    } else if (runtime !== baseline) result.status = 'native-change-required';
+    else result.runtimeVersion = runtime;
+  };
+  const checks: RuntimeCheck[] = candidates.flatMap((candidate) => {
+    const { directory, baselineDirectory } = candidate;
+    if (candidate.status !== 'ready' || !directory || !baselineDirectory) return [];
+    return (['ios', 'android'] as const).flatMap((platform) => {
       const result = candidate.platforms[platform];
-      if (result?.status !== 'ota-compatible') continue;
-      const runtime = runtimeResolver(candidate.directory, platform, process.env);
-      const baseline = runtimeResolver(candidate.baselineDirectory, platform, process.env);
-      if (!runtime || !baseline) {
-        result.status = 'runtime-unresolved';
-        failed = true;
-      } else if (runtime !== baseline) result.status = 'native-change-required';
-      else result.runtimeVersion = runtime;
+      return result?.status === 'ota-compatible' ? [{ result, trees: [directory, baselineDirectory], platform }] : [];
+    });
+  });
+  // Every candidate/baseline tree resolves at once; publishes below stay ordered.
+  const resolved = await Promise.all(
+    checks.map((check) => Promise.all(check.trees.map((tree) => runtimeResolver(tree, check.platform, process.env)))),
+  );
+  for (const [index, check] of checks.entries()) {
+    const [runtime, baseline] = resolved[index]!;
+    if (!runtime || !baseline || runtime === baseline) {
+      verdict(check, runtime, baseline);
+      continue;
     }
+    // @expo/fingerprint drops a source it fails to read instead of throwing, so
+    // a mismatch under contention is confirmed one tree at a time before skipping.
+    const serialRuntime = await runtimeResolver(check.trees[0], check.platform, process.env);
+    const serialBaseline = await runtimeResolver(check.trees[1], check.platform, process.env);
+    verdict(check, serialRuntime, serialBaseline);
   }
   const { selections } = choosePreviewCandidates(candidates, source.baseRef);
   for (const { candidate, platform } of selections) {
@@ -402,5 +451,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     trainSha: process.env.TRAIN_SHA || undefined,
   };
   if (existsSync(join(out, 'receipt.json'))) throw new Error('Refusing to reuse a previous preview receipt.');
-  runPreviewCandidates(repository, source, scratch, out, phase);
+  await runPreviewCandidates(repository, source, scratch, out, phase);
 }
