@@ -1,7 +1,7 @@
 import { BottomSheetTextInput } from '@expo/ui/community/bottom-sheet';
 import { useCallback, useEffect, useRef, type ComponentPropsWithRef, type RefObject } from 'react';
 import type { TextInput } from 'react-native';
-import { useAccessibleInputStyle } from '../hooks/use-accessible-input-style';
+import { useAccessibleInputStyle, useBrandInputColors } from '../hooks/use-accessible-input-style';
 import { useSheetScrollIntoView, type SheetRevealTarget } from './sheet-scroll-into-view';
 
 type AccessibleBottomSheetTextInputProps = ComponentPropsWithRef<typeof BottomSheetTextInput> & {
@@ -20,6 +20,7 @@ export function AccessibleBottomSheetTextInput({
   ...props
 }: AccessibleBottomSheetTextInputProps) {
   const inputStyle = useAccessibleInputStyle(style);
+  const brandInputColors = useBrandInputColors();
   const inputRef = useRef<TextInput | null>(null);
   const activeTargetRef = useRef<SheetRevealTarget | null>(null);
   const scrollIntoView = useSheetScrollIntoView();
@@ -42,6 +43,7 @@ export function AccessibleBottomSheetTextInput({
     <BottomSheetTextInput
       allowFontScaling
       maxFontSizeMultiplier={0}
+      {...brandInputColors}
       {...props}
       ref={setInputRef}
       onFocus={(event) => {
