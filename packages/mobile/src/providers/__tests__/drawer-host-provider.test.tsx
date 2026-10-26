@@ -138,6 +138,11 @@ vi.mock('../../hooks/use-device-layout', () => ({
 vi.mock('../../hooks/native-tablet-pane-width', () => ({
   useTabletPaneWidth: () => ({ width: 1024, sidebarWidth: 96 }),
 }));
+// The phone split (iPhone Duo in landscape). Off except in its own describe.
+const splitCfg = vi.hoisted(() => ({ phoneSplit: false }));
+vi.mock('../../hooks/use-phone-split', () => ({
+  usePhoneSplit: () => splitCfg.phoneSplit,
+}));
 
 vi.mock('expo-crypto', () => ({
   randomUUID: () => 'test-uuid',
@@ -245,17 +250,25 @@ vi.mock('../../components/board-discovery/BoardShareSheet', () => ({
 const nativeNavigation = vi.hoisted(() => ({
   ready: false,
   routeNames: ['(tabs)', 'play'],
+  // The root stack's routes, top last (the phone-split close reads the top one).
+  stack: ['(tabs)'] as string[],
+  segments: ['(tabs)', 'climbs'] as string[],
   dispatch: vi.fn(),
 }));
 const nativeNavigationRef = {
   isReady: () => nativeNavigation.ready,
-  getRootState: () => ({ key: 'root-stack', routeNames: nativeNavigation.routeNames }),
+  getRootState: () => ({
+    key: 'root-stack',
+    routeNames: nativeNavigation.routeNames,
+    routes: nativeNavigation.stack.map((name) => ({ name })),
+    index: nativeNavigation.stack.length - 1,
+  }),
   dispatch: nativeNavigation.dispatch,
 };
 vi.mock('expo-router', () => ({
   router: { push: vi.fn(), navigate: vi.fn(), dismiss: vi.fn() },
   useNavigationContainerRef: () => nativeNavigationRef,
-  useSegments: () => ['(tabs)', 'climbs'],
+  useSegments: () => nativeNavigation.segments,
 }));
 
 vi.mock('@boardsesh/board-presence-react', () => ({
@@ -378,6 +391,12 @@ import type { BoardSheetClimbAction } from '../../components/board-presence/Boar
 import { clearSprayWallRegistry, registerSprayWall } from '../../lib/spray/spray-wall-registry';
 import { invalidateCredentialSnapshots } from '../../lib/privacy/privacy-cache';
 import { setSetting } from '../../settings/hooks';
+import {
+  publishRoutePlayerBusy,
+  registerRoutePlayer,
+  resetRoutePlayerHandoffForTests,
+  takePlayerScrollHandoff,
+} from '../../components/play-drawer/route-player-handoff';
 
 const routerPush = router.push as unknown as ReturnType<typeof vi.fn>;
 const routerNavigate = router.navigate as unknown as ReturnType<typeof vi.fn>;
@@ -478,6 +497,10 @@ describe('drawer copied content withdrawal', () => {
 beforeEach(() => {
   nativeNavigation.ready = false;
   nativeNavigation.routeNames = ['(tabs)', 'play'];
+  nativeNavigation.stack = ['(tabs)'];
+  nativeNavigation.segments = ['(tabs)', 'climbs'];
+  splitCfg.phoneSplit = false;
+  resetRoutePlayerHandoffForTests();
   nativeNavigation.dispatch.mockClear();
   activeBoard.stored = { ...activeBoard.defaultStored };
   boardShareSheet.props = null;
@@ -2166,5 +2189,206 @@ describe('DrawerHostProvider iPad pane open (regular width)', () => {
     await waitFor(() => {
       expect(hosts.at(-1)?.playDrawerPaneProps?.openTarget).toBeNull();
     });
+  });
+});
+
+describe('DrawerHostProvider phone split (iPhone Duo open in landscape)', () => {
+  const POP_PLAYER = { type: 'POP', target: 'root-stack', payload: { count: 1 } };
+
+  function renderSplitHost() {
+    const hosts: Array<HostValue> = [];
+    const onHost = (host: HostValue) => hosts.push(host);
+    const view = renderHost(onHost);
+    const rerenderHost = () =>
+      view.rerender(createElement(DrawerHostProvider, null, createElement(Probe, { onHost, onRoute: () => {} })));
+    return { hosts, rerenderHost };
+  }
+
+  it('drives the pane on a tap while the tabs are on screen', async () => {
+    splitCfg.phoneSplit = true;
+    const { hosts } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)?.usesDetailPane).toBe(true));
+
+    act(() => hosts.at(-1)?.openPlayDrawer(makeQueueItem('queue-split', 'split-tap').climb as unknown as Climb));
+
+    await waitFor(() => expect(hosts.at(-1)?.playDrawerPaneProps?.openTarget?.climb.uuid).toBe('split-tap'));
+    expect(routerNavigate).not.toHaveBeenCalled();
+  });
+
+  it('opens /play from a page pushed over the tabs, where the pane is hidden', async () => {
+    splitCfg.phoneSplit = true;
+    nativeNavigation.segments = ['users', '[userId]'];
+    const { hosts } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)?.usesDetailPane).toBe(false));
+
+    act(() => hosts.at(-1)?.openPlayDrawer(makeQueueItem('queue-covered', 'covered-tap').climb as unknown as Climb));
+
+    expect(routerNavigate).toHaveBeenCalledWith('/play');
+    expect(hosts.at(-1)?.playDrawerPaneProps?.openTarget).toBeNull();
+  });
+
+  it('closes an idle /play when the split appears and carries its live preview and scroll', async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'play'];
+    nativeNavigation.segments = ['play'];
+    // The route swiped from the climb it was opened with onto this preview.
+    const livePreview = makeQueueItem('queue-swiped', 'swiped-preview');
+    registerRoutePlayer(() => ({
+      climbUuid: 'swiped-preview',
+      offsetY: 320,
+      preview: { item: livePreview, suggestionSource: null, isWallClimb: false },
+    }));
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    splitCfg.phoneSplit = true;
+    rerenderHost();
+
+    await waitFor(() => expect(nativeNavigation.dispatch).toHaveBeenCalledWith(POP_PLAYER));
+    const carried = hosts.at(-1)?.playDrawerPaneProps?.openTarget;
+    expect(carried?.climb.uuid).toBe('swiped-preview');
+    expect(carried?.options?.previewQueueItem).toBe(livePreview);
+    // A look, never a fresh pick: nothing lights or commits on the carry.
+    expect(carried?.claimFirstApply?.()).toBe(false);
+    expect(takePlayerScrollHandoff('swiped-preview')).toBe(320);
+  });
+
+  it('waits for a busy /play (a tick being typed) and closes it once the climber is done', async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'play'];
+    nativeNavigation.segments = ['play'];
+    registerRoutePlayer(() => ({ climbUuid: 'busy-climb', offsetY: 0, preview: null }));
+    act(() => publishRoutePlayerBusy('player', true));
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    splitCfg.phoneSplit = true;
+    rerenderHost();
+    await act(async () => {});
+    expect(nativeNavigation.dispatch).not.toHaveBeenCalledWith(POP_PLAYER);
+
+    act(() => publishRoutePlayerBusy('player', false));
+    await waitFor(() => expect(nativeNavigation.dispatch).toHaveBeenCalledWith(POP_PLAYER));
+    // The route showed the queue's current climb: the pane shows it by itself.
+    expect(hosts.at(-1)?.playDrawerPaneProps?.openTarget).toBeNull();
+  });
+
+  it("waits while the route's own queue sheet or device picker is up, even with the player idle", async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'play'];
+    nativeNavigation.segments = ['play'];
+    registerRoutePlayer(() => ({ climbUuid: 'queue-open', offsetY: 0, preview: null }));
+    act(() => publishRoutePlayerBusy('route', true));
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    splitCfg.phoneSplit = true;
+    rerenderHost();
+    act(() => publishRoutePlayerBusy('player', false));
+    await act(async () => {});
+    expect(nativeNavigation.dispatch).not.toHaveBeenCalledWith(POP_PLAYER);
+
+    act(() => publishRoutePlayerBusy('route', false));
+    await waitFor(() => expect(nativeNavigation.dispatch).toHaveBeenCalledWith(POP_PLAYER));
+  });
+
+  it('leaves /play up when it sits on a page pushed over the tabs', async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'users/[userId]', 'play'];
+    nativeNavigation.segments = ['play'];
+    registerRoutePlayer(() => ({
+      climbUuid: 'from-profile',
+      offsetY: 120,
+      preview: { item: makeQueueItem('queue-profile', 'from-profile'), suggestionSource: null, isWallClimb: false },
+    }));
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    splitCfg.phoneSplit = true;
+    rerenderHost();
+    await act(async () => {});
+
+    expect(nativeNavigation.dispatch).not.toHaveBeenCalledWith(POP_PLAYER);
+    expect(hosts.at(-1)?.playDrawerPaneProps?.openTarget).toBeNull();
+  });
+
+  it("clears a foreign board on /play close when the open came from a page over the tabs, not the pane's", async () => {
+    splitCfg.phoneSplit = true;
+    nativeNavigation.segments = ['users', '[userId]'];
+    const hosts: Array<HostValue> = [];
+    const routes: Array<RouteValue> = [];
+    renderHost(
+      (host) => hosts.push(host),
+      (route) => routes.push(route),
+    );
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+    const foreignBoard: BoardConfig = { boardName: 'tension', layoutId: 8, sizeId: 7, setIds: '5,6', angle: 35 };
+
+    act(() =>
+      hosts.at(-1)?.openPlayDrawer(makeQueueItem('queue-foreign', 'foreign').climb as unknown as Climb, {
+        boardConfig: foreignBoard,
+      }),
+    );
+    await waitFor(() => expect(routes.at(-1)?.activeBoardConfig).toMatchObject(foreignBoard));
+    expect(routerNavigate).toHaveBeenCalledWith('/play');
+
+    act(() => routes.at(-1)?.onPlayDrawerClosed(routes.at(-1)?.playTarget?.nonce ?? null));
+    await waitFor(() => expect(routes.at(-1)?.activeBoardConfig).not.toMatchObject(foreignBoard));
+    expect(hosts.at(-1)?.playDrawerPaneProps?.boardConfig).not.toMatchObject(foreignBoard);
+  });
+
+  it('keeps a foreign board the pane opened with when a later /play closes', async () => {
+    splitCfg.phoneSplit = true;
+    const hosts: Array<HostValue> = [];
+    const routes: Array<RouteValue> = [];
+    renderHost(
+      (host) => hosts.push(host),
+      (route) => routes.push(route),
+    );
+    await waitFor(() => expect(hosts.at(-1)?.usesDetailPane).toBe(true));
+    const foreignBoard: BoardConfig = { boardName: 'tension', layoutId: 8, sizeId: 7, setIds: '5,6', angle: 35 };
+
+    act(() =>
+      hosts.at(-1)?.openPlayDrawer(makeQueueItem('queue-pane-foreign', 'pane-foreign').climb as unknown as Climb, {
+        boardConfig: foreignBoard,
+      }),
+    );
+    await waitFor(() => expect(hosts.at(-1)?.playDrawerPaneProps?.boardConfig).toMatchObject(foreignBoard));
+
+    act(() => routes.at(-1)?.onPlayDrawerClosed(null));
+    await act(async () => {});
+    expect(hosts.at(-1)?.playDrawerPaneProps?.boardConfig).toMatchObject(foreignBoard);
+  });
+
+  it('drops a waiting close when the Duo is folded back before the route is idle', async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'play'];
+    nativeNavigation.segments = ['play'];
+    registerRoutePlayer(() => ({ climbUuid: 'busy-climb', offsetY: 0, preview: null }));
+    act(() => publishRoutePlayerBusy('player', true));
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    splitCfg.phoneSplit = true;
+    rerenderHost();
+    splitCfg.phoneSplit = false;
+    rerenderHost();
+    act(() => publishRoutePlayerBusy('player', false));
+    await act(async () => {});
+
+    expect(nativeNavigation.dispatch).not.toHaveBeenCalledWith(POP_PLAYER);
+  });
+
+  it('leaves /play alone on an iPad crossing into its pane', async () => {
+    nativeNavigation.ready = true;
+    nativeNavigation.stack = ['(tabs)', 'play'];
+    const { hosts, rerenderHost } = renderSplitHost();
+    await waitFor(() => expect(hosts.at(-1)).toBeDefined());
+
+    layoutCfg.widthClass = 'regular';
+    rerenderHost();
+    await act(async () => {});
+
+    expect(nativeNavigation.dispatch).not.toHaveBeenCalledWith(POP_PLAYER);
   });
 });

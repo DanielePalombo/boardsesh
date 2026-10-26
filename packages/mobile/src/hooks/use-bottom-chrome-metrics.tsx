@@ -10,6 +10,7 @@ import { getRestTimerState, subscribeRestTimer } from '../lib/rest-timer-store';
 import { useStickyAccessoryPresence } from './use-sticky-accessory-presence';
 import { useTabChrome } from './use-bottom-accessory';
 import { useDeviceLayout } from './use-device-layout';
+import { useVerticalTabBar } from './use-vertical-tab-bar';
 import { computeBottomChromeMetrics, type BottomChromeMetrics } from './bottom-chrome-metrics';
 import { shouldThrowOnMissingProvider } from './bottom-chrome-provider-gate';
 import { resolveDetailPaneSurface } from '../theme/size-class';
@@ -81,6 +82,10 @@ function useComputedBottomChromeMetrics(): BottomChromeMetrics {
   const usesSidebar = insideTabs && widthClass === 'regular';
   const detailPaneOwnsQueue =
     usesSidebar && resolveDetailPaneSurface({ width: windowWidth, widthClass, sidebarWidth: SIDEBAR_WIDTH }) === 'pane';
+  // iPhone Duo (closed, or open in landscape with the split) keeps the phone
+  // path: the accessory stays presented along the bottom and the in-tab inset
+  // carries it. Only the tab bar leaves the bottom: it is a vertical rail.
+  const verticalTabBar = useVerticalTabBar();
   // This provider samples the ROOT safe-area inset (window / home indicator
   // only). The in-tab inset — the one UIKit extends with the native tab bar +
   // accessory — is published by NativeTabContentInsetProbe from inside the
@@ -114,8 +119,10 @@ function useComputedBottomChromeMetrics(): BottomChromeMetrics {
         measuredTabContentInsetBottom,
         connectivityBannerHeight,
         restTimerArmed,
+        tabBarAtBottom: !verticalTabBar,
       }),
     [
+      verticalTabBar,
       variant,
       usesNativeTabBar,
       insets.bottom,
