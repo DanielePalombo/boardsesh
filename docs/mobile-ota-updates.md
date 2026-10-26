@@ -2697,8 +2697,9 @@ be requested.
 A checked "No release note needed" checkbox or the `skip-changelog` label excludes the whole PR,
 even if its Release Notes section explains an internal change. An unchecked template checkbox does
 not hide real release notes. Each regeneration applies this rule to historical entries too, so
-previously leaked internal notes disappear on the next successful production OTA. Leave the generated
-JSON and `CHANGELOG.md` to that workflow rather than editing them in a fix PR.
+previously leaked internal notes disappear on the next successful changelog regeneration during a
+production OTA. Leave the generated JSON and `CHANGELOG.md` to that workflow rather than editing them
+in a fix PR.
 
 `packages/mobile/src/data/changelog.generated.json` is owned **solely** by the OTA pipeline. On
 every OTA, `mobile-ota-production.yml` regenerates the file from merged-PR `## Release Notes`
