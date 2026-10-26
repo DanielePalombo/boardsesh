@@ -3,7 +3,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import type { Climb } from '@boardsesh/queue';
 import { useQueue } from '../../providers/queue-provider';
 import { NativeAccessoryClimbRow } from './NativeAccessoryClimbRow';
-import { getPrivacyRevocationGeneration, subscribeToPrivacyRevocations } from '../../lib/privacy/privacy-cache';
+import { getCredentialGeneration, subscribeToCredentialChanges } from '../../lib/privacy/privacy-cache';
 
 /**
  * Hold the last shown climb while this component stays mounted. The mount itself
@@ -18,9 +18,9 @@ import { getPrivacyRevocationGeneration, subscribeToPrivacyRevocations } from '.
  */
 function useRetainedAccessoryClimb(currentClimb: Climb | null): Climb | null {
   const generation = useSyncExternalStore(
-    subscribeToPrivacyRevocations,
-    getPrivacyRevocationGeneration,
-    getPrivacyRevocationGeneration,
+    subscribeToCredentialChanges,
+    getCredentialGeneration,
+    getCredentialGeneration,
   );
   const retained = useRef({ generation, climb: currentClimb, withdrawn: null as Climb | null });
   if (retained.current.generation !== generation) {
