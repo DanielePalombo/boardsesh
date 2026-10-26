@@ -935,24 +935,35 @@ per sheet so an account change resets each draft.
   of their own, and are the one case where a route is _not_ a destination. Don't hang new UI off
   them — put it on the surface they hand off to.
 
-## iPad-only tab destinations (sidebar rail, never a phone tab)
+## Full-screen tablet modes (not a tab)
 
-To add a `(tabs)` destination that appears only on the iPad sidebar rail and NEVER as a phone
-bottom tab (e.g. `/wall`, the "On the Wall" tab — `app/(tabs)/wall/`):
+The iPad used to carry a sixth, iPad-only "On the Wall" tab. It overflowed the portrait top tab
+bar, and the HIG asks for five tabs or fewer, so it became the **Wall display**: a full-screen
+mode, not a destination. Follow its shape for any surface that should take over the whole screen
+on a tablet (`app/wall-display/`):
 
-- Register it as a keyed `<Tabs.Screen name="wall" options={{ href: null }} />` in the shared
-  `tabScreens` array (`app/(tabs)/_layout.tsx`). It **must** be a `(tabs)` route so it renders in
-  the tablet shell's content column (keeping the sidebar); a root route would cover it.
-- `href: null` is meant to hide it from the bar — but expo-router turns it into
-  `tabBarItemStyle: { display: 'none' }` and **strips the `href` key**, so a _custom_ tab bar still
-  renders it unless it filters. `MaterialTabBar` skips
-  `StyleSheet.flatten(options.tabBarItemStyle)?.display === 'none'`.
-- Add `<NativeTabs.Trigger name="wall" hidden />` (the `hidden` prop) so the iOS-26 glass bar
-  declares the route but shows no 6th tab (a 6th would spill into "More" and clash with the
-  `role="search"` slot).
-- Add a `SidebarDestination` in `IpadSidebar.tsx`; `tabsActiveSegment` (route-segments.ts) already
-  highlights it. Suppress any ambient duplicate of the same content (e.g. the wall column) while
-  the destination is the focused segment.
+- A **root route** registered in `app/_layout.tsx` with `presentation: 'transparentModal'` and an
+  opaque background of its own, the same as `/play`. Never `fullScreenModal` (rule 2): it covers
+  the sidebar, the tab bar and the bottom accessory while they stay live behind it.
+- Add its segment to `isTabsChromeRoute` (`src/lib/route-segments.ts`) so the accessory host
+  stays mounted under it (#5055), and keep it out of `isAccessorySurfaceRoute` so the JS queue
+  bar does not draw over it.
+- Give it its own `Stack` and register it in `scoped-navigation.ts` if it can open Settings or a
+  profile, with a mirror of `app/settings/` (guarded by `route-mirrors.test.ts`). Its stack paints
+  an opaque `contentStyle`, or the tabs show through every pushed page.
+- Host anything that presents a native sheet from inside the route: the Wall display mounts
+  `<DevicePickerSheetHost registerExternal />`, as `/play` does, or Connect would present the
+  app-root picker underneath the modal.
+- Tell the shell the mode is up from its layout (`markWallDisplayMounted`), not from the focused
+  segments: with a page pushed over it the segments name that page, and the shell would remount
+  its pane behind the kiosk. Leave it out of the bottom-chrome reserve (`insideTabs`).
+- No `BoardArtVisibilityProvider`: the route is not a tab. The tabs behind it report hidden and
+  release their board art while it is up.
+- Entry points are actions, not tabs: a row in a menu or a sheet, gated on `isTablet`, so the
+  phone keeps its UI. Any controls over the content hide after a few seconds and come back on a
+  touch (`useAutoHidingChrome`). They stay in the accessibility tree while hidden, stay up while
+  an assistive technology the app can detect runs, and a hardware keyboard gets Esc / ⌘W.
+- Redirect any link to the old tab in `app/+native-intent.ts`.
 
 ## Bumping `react-native-screens` (the bottom-accessory patch)
 
