@@ -89,6 +89,15 @@ describe('mobile-e2e-gate.yml triggers', () => {
     expect(resolveStep.id).toBe('sha');
   });
 
+  it("refuses a person's dispatch on main or release/* for a commit outside the run's history", () => {
+    const [, , historyGuard] = workflow.jobs.resolve.steps ?? [];
+    expect(historyGuard.if).toBe(
+      "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) && !inputs.called",
+    );
+    expect(historyGuard.run).toContain('gh api "repos/$GITHUB_REPOSITORY/compare/$SHA...$RUN_SHA" --jq .status');
+    expect(historyGuard.run).toContain('ahead|identical) ;;');
+  });
+
   it('exposes the verdict as the workflow_call output', () => {
     expect(workflow.on.workflow_call.outputs.passed.value).toBe('${{ jobs.verdict.outputs.passed }}');
     expect(workflow.on.workflow_call.outputs.sha.value).toBe('${{ jobs.resolve.outputs.sha }}');
