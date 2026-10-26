@@ -364,6 +364,17 @@ function expectNumericAttribute(element: HTMLElement, attributeName: string, exp
 }
 
 describe('NativeAccessoryClimbRow', () => {
+  // The collapsed bar gives the inline platter less room than the open one; a row
+  // pinned to the open width clipped its trailing grade there.
+  it('pins the open platter to its width and lets the collapsed one fill its frame', () => {
+    const regular = renderRow('regular', 344);
+    expect((regular.container.firstElementChild as HTMLElement).getAttribute('data-width')).toBe('344');
+    regular.unmount();
+
+    const inline = renderRow('inline', 344);
+    expect((inline.container.firstElementChild as HTMLElement).getAttribute('data-width')).toBe('');
+  });
+
   it.each(['regular', 'inline'] as const)('exposes the existing %s row as the CPP accessibility host', (placement) => {
     const { container } = render(
       <NativeAccessoryClimbRow

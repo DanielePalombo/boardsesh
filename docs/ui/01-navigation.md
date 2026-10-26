@@ -83,7 +83,9 @@ The bar itself depends on the device:
   Music's Search tab, not `role="search"`: since SDK 58 that role is a
   UISearchTab, which iOS 26 sets apart from the other tabs and which brings a
   search field into the bar. The queue accessory and scroll minimization ride
-  the iOS 26 bar. On iOS 18 the bar has neither, and the current climb rides
+  the iOS 26 bar. On an iOS 27 iPhone Climbs is also the bar's prominent tab, so
+  it stays on screen at the right when the bar collapses, as Music's Search does;
+  the collapsed accessory fills the room left between it and the selected tab. On iOS 18 the bar has neither, and the current climb rides
   the floating JS queue bar just above the native bar.
 - **Climbs search, every platform:** the Climbs screen has no search field and
   its header draws no "Climbs" title (`NativeRootHeader` `titleHidden`; the tab

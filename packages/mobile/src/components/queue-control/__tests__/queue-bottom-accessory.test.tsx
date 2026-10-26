@@ -102,8 +102,9 @@ describe('QueueBottomAccessory', () => {
     expect((container.firstChild as HTMLElement).getAttribute('data-native-row')).toBe('true');
   });
 
-  it('passes the inline placement through at the same width as regular', () => {
-    // max(56*2=112, min(420, 402-32=370)) = 370, independent of placement.
+  it('passes the inline placement through with the open width', () => {
+    // max(56*2=112, min(420, 402-32=370)) = 370, independent of placement. The row
+    // itself applies it only to the open platter; the collapsed one fills its frame.
     const regular = render(<QueueBottomAccessory />);
     const regularRowWidth = regular.container.querySelector('[data-native-row]')?.getAttribute('data-row-width');
     regular.unmount();

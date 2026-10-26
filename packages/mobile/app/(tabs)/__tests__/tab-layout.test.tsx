@@ -18,6 +18,9 @@ const cfg = vi.hoisted(() => ({
   // the iOS 26 extras (accessory, search role, minimize). false models iOS 18.
   glassCapable: true,
   platformOS: 'ios' as 'ios' | 'android' | 'web',
+  // iOS reports a dotted string. `prominent` (Climbs kept on screen when the bar
+  // collapses) is iOS 27+.
+  platformVersion: '27.0',
   // 'regular' takes the tablet sidebar shell; 'compact' keeps the phone tab bars.
   widthClass: 'compact' as 'compact' | 'regular',
   // Tablet in a narrow split: compact width but still a tablet, which the shell keeps on
@@ -47,6 +50,9 @@ vi.mock('react-native', () => ({
   Platform: {
     get OS() {
       return cfg.platformOS;
+    },
+    get Version() {
+      return cfg.platformVersion;
     },
   },
   // _layout.tsx wraps the iPad shell in Views + calls StyleSheet.create at module
@@ -220,9 +226,27 @@ vi.mock('expo-keep-awake', () => ({
 
 vi.mock('expo-router/unstable-native-tabs', () => {
   const Trigger = Object.assign(
-    ({ name, hidden, role, children }: { name: string; hidden?: boolean; role?: string; children?: ReactNode }) =>
+    ({
+      name,
+      hidden,
+      role,
+      prominent,
+      children,
+    }: {
+      name: string;
+      hidden?: boolean;
+      role?: string;
+      prominent?: boolean;
+      children?: ReactNode;
+    }) =>
       // Model NativeTabs: a `hidden` trigger declares the route but is not a tab.
-      hidden ? null : createElement('section', { 'data-trigger': name, 'data-tab-role': role }, children),
+      hidden
+        ? null
+        : createElement(
+            'section',
+            { 'data-trigger': name, 'data-tab-role': role, 'data-prominent': String(prominent ?? false) },
+            children,
+          ),
     {
       Icon: ({ sf }: { sf?: unknown }) => createElement('span', { 'data-icon': 'true', 'data-sf': JSON.stringify(sf) }),
       Label: ({ children }: { children?: ReactNode }) => createElement('span', null, children),
@@ -301,6 +325,7 @@ describe('TabLayout', () => {
     cfg.variant = 'liquidGlass';
     cfg.glassCapable = true;
     cfg.platformOS = 'ios';
+    cfg.platformVersion = '27.0';
     cfg.widthClass = 'compact';
     cfg.isTablet = false;
     cfg.windowWidth = 1024;
@@ -380,6 +405,26 @@ describe('TabLayout', () => {
     expect(container.querySelector('[data-tab-role]')).toBeNull();
     expect(climbs?.textContent).toContain('mobile.nav.climbs');
   });
+
+  // Apple Music keeps Search on screen at the right when the bar collapses. iOS 27
+  // does that for a prominent tab; the API does not exist below 27.
+  it.each([
+    ['iOS 27 iPhone', '27.0', true, false, true],
+    ['iOS 26 iPhone', '26.1', true, false, false],
+    ['iOS 18 iPhone', '18.6', false, false, false],
+    ['iOS 27 iPad', '27.0', true, true, false],
+  ] as const)(
+    'keeps Climbs prominent only where the bar collapses and the API exists (%s)',
+    (_label, platformVersion, glassCapable, isTablet, expected) => {
+      cfg.platformVersion = platformVersion;
+      cfg.glassCapable = glassCapable;
+      cfg.isTablet = isTablet;
+      const { container } = render(<TabLayout />);
+
+      expect(container.querySelector('[data-trigger="climbs"]')?.getAttribute('data-prominent')).toBe(String(expected));
+      expect(container.querySelectorAll('[data-prominent="true"]')).toHaveLength(expected ? 1 : 0);
+    },
+  );
 
   it('registers Home as the leftmost material tab and Climbs as the rightmost', () => {
     cfg.variant = 'material';

@@ -22,6 +22,7 @@ type AccessoryPlacement = 'regular' | 'inline';
 type NativeAccessoryClimbRowProps = {
   climb: Climb;
   placement: AccessoryPlacement;
+  /** Width of the open (regular) platter. The collapsed (inline) one fills its frame. */
   width: number;
   testID?: string;
 };
@@ -106,7 +107,11 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
   // normal use leave each control's accessibility unchanged.
   return (
     <View
-      style={[styles.row, { width, height: rowHeight }]}
+      // The collapsed (inline) platter is narrower than the open one: it shares the
+      // collapsed bar with the selected tab (and, on iOS 27, the prominent Climbs tab).
+      // Pinning it to the open width clipped its trailing grade, so inline fills the
+      // frame UIKit gives it (react-native-screens sizes that root natively).
+      style={[styles.row, { width: placement === 'regular' ? width : undefined, height: rowHeight }]}
       testID={testID}
       accessible={testID ? true : undefined}
       accessibilityLabel={testID ? climb.name : undefined}
