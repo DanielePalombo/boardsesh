@@ -30,6 +30,9 @@ import { useActiveBoard } from '../../lib/graphql/use-active-board';
 import { GradeRangeRail, type GradeRailChange } from '../grade';
 import { UserAvatarToolbarAction } from '../user-drawer/UserAvatarToolbarAction';
 import { WallStatusCapsule } from '../queue-control/WallStatusCapsule';
+import { BoardHeldCapsule } from '../queue-control/BoardHeldCapsule';
+import { useBoardConnectionState } from '../ble/use-board-connection-state';
+import { useTabChrome } from '../../hooks/use-bottom-accessory';
 import { useWallClimbIfDistinct } from '../queue-control/use-wall-or-queue-climb';
 import { useActiveClimbUuid } from '../../providers/queue-provider';
 import { addErrorBreadcrumb } from '../../lib/error-reporting';
@@ -136,10 +139,22 @@ function ClimbTopChromeComponent({
   const currentClimbUuid = useActiveClimbUuid();
   const liveWallClimb = useWallClimbIfDistinct(currentClimbUuid);
   const wallClimb = useSettledHeaderValue(liveWallClimb);
-  const wallCapsule = useMemo(
-    () => (wallClimb ? <WallStatusCapsule climb={wallClimb} boardName={boardName} /> : undefined),
-    [wallClimb, boardName],
-  );
+  // "You have the board" takes the same slot while this climber holds the board
+  // and the wall shows their own climb. Only where the iOS 26 accessory platter
+  // mounts: that platter collapses on scroll and drops its bulb, while the
+  // Material bar and the iOS 18 floating bar keep theirs on screen. Every input is
+  // settled, like the wall capsule, so nothing in the title view changes while
+  // the player covers the list (#6619).
+  const { nativeAccessory } = useTabChrome();
+  const { inAppBoardConnection, ledless: liveLedless, localConnected } = useBoardConnectionState();
+  const boardHeld = useSettledHeaderValue(nativeAccessory && inAppBoardConnection === 'connectedByMe');
+  const ledless = useSettledHeaderValue(liveLedless);
+  const canOpenControls = useSettledHeaderValue(localConnected);
+  const wallCapsule = useMemo(() => {
+    if (wallClimb) return <WallStatusCapsule climb={wallClimb} boardName={boardName} />;
+    if (boardHeld) return <BoardHeldCapsule ledless={ledless} canOpenControls={canOpenControls} />;
+    return undefined;
+  }, [wallClimb, boardName, boardHeld, ledless, canOpenControls]);
   const hasWallCapsule = wallClimb !== null;
   const loggedWallCapsuleRef = useRef(false);
   useEffect(() => {

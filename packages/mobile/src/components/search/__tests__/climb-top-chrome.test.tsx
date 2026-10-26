@@ -90,6 +90,7 @@ type BluetoothCtx = {
   connect: () => Promise<boolean>;
   disconnect: () => Promise<void>;
   armUndoWallChangeToast: () => void;
+  ledless?: boolean;
 } | null;
 
 // The UIKit header path (iOS on Liquid Glass), off unless a test turns it on, and
@@ -110,6 +111,8 @@ const ctrl = vi.hoisted(() => ({
   bluetooth: null as BluetoothCtx,
   setBoardAngle: vi.fn(),
   variant: 'liquidGlass' as 'liquidGlass' | 'material',
+  // The iOS 26 tab-bar accessory platter mounts (false on iOS 18 and Material).
+  nativeAccessory: true,
   wallClimb: null as { climbUuid: string; name: string } | null,
   // The chrome's focus effects, kept so a test can run one and its cleanup: the
   // cleanup is what the screen losing focus does.
@@ -316,6 +319,9 @@ vi.mock('../../../providers/queue-provider', () => ({
   useActiveClimbUuid: () => null,
 }));
 // No distinct wall climb in these layout tests, so the centre capsule never mounts.
+vi.mock('../../../hooks/use-bottom-accessory', () => ({
+  useTabChrome: () => ({ nativeAccessory: ctrl.nativeAccessory && ctrl.variant === 'liquidGlass' }),
+}));
 vi.mock('../../queue-control/use-wall-or-queue-climb', () => ({ useWallClimbIfDistinct: () => ctrl.wallClimb }));
 vi.mock('../../../lib/analytics', () => ({ track: vi.fn() }));
 
@@ -467,6 +473,14 @@ vi.mock('../../queue-control/WallStatusCapsule', () => ({
   WallStatusCapsule: ({ climb }: { climb: { climbUuid: string } }) =>
     createElement('div', { 'data-wall-capsule': climb.climbUuid }),
 }));
+// Same for "You have the board": board-held-capsule.test.tsx covers its body.
+vi.mock('../../queue-control/BoardHeldCapsule', () => ({
+  BoardHeldCapsule: ({ ledless, canOpenControls }: { ledless: boolean; canOpenControls: boolean }) =>
+    createElement('div', {
+      'data-board-held-capsule': ledless ? 'ledless' : 'lit',
+      'data-can-open-controls': String(canOpenControls),
+    }),
+}));
 
 import { ClimbTopChrome } from '../ClimbTopChrome';
 import { createScrollEdgeBackdrop } from '../../../hooks/use-scroll-edge-backdrop';
@@ -518,6 +532,7 @@ describe('ClimbTopChrome', () => {
     ctrl.board = null;
     ctrl.bluetooth = null;
     ctrl.variant = 'liquidGlass';
+    ctrl.nativeAccessory = true;
     ctrl.wallClimb = null;
     ctrl.focusEffects.length = 0;
     ctrl.setBoardAngle.mockClear();
@@ -647,6 +662,66 @@ describe('ClimbTopChrome', () => {
     ctrl.wallClimb = null;
     const { container } = render(<ClimbTopChrome {...makeProps()} />);
     expect(container.querySelector('[data-wall-capsule]')).toBeNull();
+  });
+
+  describe('"You have the board" capsule', () => {
+    const connectedBoard = (over: Partial<NonNullable<BluetoothCtx>> = {}): BluetoothCtx => ({
+      isConnected: true,
+      connect: vi.fn(),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      armUndoWallChangeToast: vi.fn(),
+      ...over,
+    });
+
+    it('takes the centre slot while this climber holds the board and the wall shows their climb', () => {
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard();
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      const capsule = container.querySelector('[data-board-held-capsule]');
+      expect(capsule?.getAttribute('data-board-held-capsule')).toBe('lit');
+      expect(capsule?.getAttribute('data-can-open-controls')).toBe('true');
+    });
+
+    it('stays out while the board is free', () => {
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard({ isConnected: false });
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      expect(container.querySelector('[data-board-held-capsule]')).toBeNull();
+    });
+
+    it('gives way to "On the wall" when the wall lights a different climb', () => {
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard();
+      ctrl.wallClimb = { climbUuid: 'wall-9', name: 'Angel Eyes' };
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      expect(container.querySelector('[data-wall-capsule="wall-9"]')).not.toBeNull();
+      expect(container.querySelector('[data-board-held-capsule]')).toBeNull();
+    });
+
+    it('is Liquid Glass only: the Material bar keeps its bulb on screen', () => {
+      ctrl.variant = 'material';
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard();
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      expect(container.querySelector('[data-board-held-capsule]')).toBeNull();
+    });
+
+    it('stays out on iOS 18, where the floating bar keeps its bulb on screen', () => {
+      ctrl.nativeAccessory = false;
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard();
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      expect(container.querySelector('[data-board-held-capsule]')).toBeNull();
+    });
+
+    it('passes the no-lights flag so the capsule never claims lit LEDs', () => {
+      ctrl.board = typedBoard;
+      ctrl.bluetooth = connectedBoard({ ledless: true });
+      const { container } = render(<ClimbTopChrome {...makeProps()} />);
+      expect(container.querySelector('[data-board-held-capsule]')?.getAttribute('data-board-held-capsule')).toBe(
+        'ledless',
+      );
+    });
   });
 
   it('mounts the "On the wall" capsule under the Material app bar when a wall climb is live', () => {
