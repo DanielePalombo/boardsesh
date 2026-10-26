@@ -1,6 +1,13 @@
 {
-  "generatedAt": "2026-10-26T14:42:01.824Z",
+  "generatedAt": "2026-10-26T15:27:14.797Z",
   "entries": [
+    {
+      "prNumber": 6894,
+      "category": "fixed",
+      "title": "Keep Bluetooth reconnects on the saved board you selected after reopening.",
+      "mergedAt": "2026-10-26T15:14:04Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6894"
+    },
     {
       "prNumber": 6892,
       "category": "fixed",

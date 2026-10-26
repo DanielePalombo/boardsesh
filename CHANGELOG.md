@@ -17,6 +17,7 @@ A new version shipped to the App Store and Play Store.
 
 ### Fixed
 
+- Keep Bluetooth reconnects on the saved board you selected after reopening. ([#6894](https://github.com/boardsesh/boardsesh/pull/6894))
 - Old climb links now land on the current climb URL. ([#6892](https://github.com/boardsesh/boardsesh/pull/6892))
 - Lit holds stay visible when you open or edit a climb. ([#6899](https://github.com/boardsesh/boardsesh/pull/6899))
 - Choose another saved board's controller and confirm which wall you're connecting to. ([#6883](https://github.com/boardsesh/boardsesh/pull/6883))
