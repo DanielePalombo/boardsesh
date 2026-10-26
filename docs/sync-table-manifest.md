@@ -283,7 +283,9 @@ composite-keyed sync table must keep this true (or version the encoding).
   Boardsesh owner (imported from a Kilter or Tension account) goes to nobody. Unlisted climbs ship; the device's lists
   hide them. Seq: **`sync_seq`**. Hook: no.
 - Local PK: **`uuid`**. table-config: `['uuid']` ✓.
-- Del: trigger emits `record_id = OLD.uuid` (1 seg), `user_id = NULL` (reference data).
+- Del: trigger emits `record_id = OLD.uuid` (1 seg), `user_id = NULL` (reference data), except a draft with an owner
+  (`is_draft IS TRUE`), which gets `user_id = OLD.user_id`: only the setter can read a draft, so only the setter's
+  devices are told it is gone (0280, #6150).
 - Columns: `uuid` (PK), `board_type`, `layout_id`, `setter_id`, `setter_username`, `name`, `description`, `hsm`,
   `edge_left`, `edge_right`, `edge_bottom`, `edge_top`, `angle`, `frames_count`, `frames_pace`, `frames`,
   `is_draft`, `is_listed`, `is_hidden` (schema v5, community-hidden flag), `created_at`, `published_at`, `user_id`, `required_set_ids` (JSON text),
@@ -339,7 +341,9 @@ AND bc.compatible_size_ids @> ARRAY[$sizeId])` when scoped — the stats table h
   draft rule, so a draft's stats go only to its owner. Seq: **`sync_seq`**. Hook: no.
 - Local PK: **`(board_type, climb_uuid, angle)`** (B9). table-config: change `['climb_uuid','angle']` →
   **`['board_type','climb_uuid','angle']`**.
-- Del: trigger emits `record_id = OLD.board_type:OLD.climb_uuid:OLD.angle` (3 segs) — matches the doc. `user_id = NULL`.
+- Del: trigger emits `record_id = OLD.board_type:OLD.climb_uuid:OLD.angle` (3 segs) — matches the doc. `user_id = NULL`,
+  except when the climb is a draft with an owner: the trigger looks the climb up (it still exists, since
+  `deleteClimbDependentRows` runs first) and sets `user_id` to the setter, as `board_climbs` does (0280, #6150).
 - Columns: `board_type`, `climb_uuid`, `angle`, `display_difficulty`, `benchmark_difficulty`, `ascensionist_count`,
   `difficulty_average`, `quality_average`, `fa_username`, `fa_at`, `updated_at`, `sync_seq`.
 - Server-only (NOT pulled to devices): the provenance columns `upstream_synced_at` and `tick_graded_at` (#4798),
