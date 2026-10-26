@@ -84,9 +84,10 @@ export type BottomChromeInputs = {
    */
   nativeAccessoryPresented: boolean;
   /**
-   * Whether the regular-width iPad shell is on screen: a left sidebar replaces
-   * the bottom tab bar. Optional and defaults to `false` — every existing
-   * (phone / compact-iPad) call site keeps its current behavior unchanged.
+   * Whether the regular-width JS tablet shell is on screen (Android tablet, Expo
+   * web, a Material-variant iPad): a left rail replaces the bottom tab bar. The
+   * native iPad is not this shell; it takes the native-tab path with
+   * `tabBarAtBottom: false`. Optional and defaults to `false`.
    */
   usesSidebar?: boolean;
   /**
@@ -141,8 +142,9 @@ export type BottomChromeInputs = {
   /**
    * Whether the native tab bar runs along the bottom. False on iPhone Duo closed
    * and open in landscape (`useVerticalTabBar`), where UIKit draws it as a
-   * vertical rail and only the accessory, along the bottom of the content, takes
-   * bottom space.
+   * vertical rail, and on a regular-width native iPad, where it is the sidebar or
+   * sits at the top. Only the accessory, along the bottom of the content, takes
+   * bottom space there.
    * The unmeasured reconstruction then leaves the 49pt bar out instead of
    * reserving dead space for it under every list. `true` (the default) leaves
    * every other call site byte-identical.
@@ -368,10 +370,20 @@ export function computeBottomChromeMetrics({
     insetsBottom +
     (tabBarAtBottom ? TAB_BAR_HEIGHT : 0) +
     (nativeAccessoryVisible ? NATIVE_BOTTOM_ACCESSORY_HEIGHT : 0);
-  const nativeChromeBottom =
+  const measuredNativeChromeBottom =
     measuredTabContentInsetBottom !== null && measuredTabContentInsetBottom >= insetsBottom
       ? measuredTabContentInsetBottom
       : nativeChromeFallback;
+  // With no bottom tab bar (the native iPad, the iPhone Duo's rail) the accessory
+  // is the only chrome down there, so floor the clearance at it: should UIKit
+  // ever leave the accessory out of the tab's inset, a docked footer, the rest
+  // pill and the floating controls still sit above the MiniPlayer, not under it.
+  // A bottom bar's minimize state legitimately shrinks the measured inset, so the
+  // floor applies only off it.
+  const nativeChromeBottom =
+    !tabBarAtBottom && nativeAccessoryVisible
+      ? Math.max(measuredNativeChromeBottom, nativeChromeFallback)
+      : measuredNativeChromeBottom;
   const tabBarBottom = tabBarOverlaysContent ? nativeChromeBottom : insetsBottom + tabBarHeight;
   // Scroll padding is floored at the un-minimized reconstruction: the gesture
   // that minimizes the bar is the same one scrolling the list, and shrinking

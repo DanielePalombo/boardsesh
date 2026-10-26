@@ -1,9 +1,8 @@
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useSegments } from 'expo-router';
-import { useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../providers/theme-provider';
-import { isAccessorySurfaceRoute, isTabsChromeRoute } from '../lib/route-segments';
+import { isAccessoryHiddenRoute, isAccessorySurfaceRoute, isTabsChromeRoute } from '../lib/route-segments';
 import { useNativeTabContentInsetBottom } from '../lib/native-tab-content-inset-store';
 import { useConnectivityBannerHeight } from '../lib/connectivity-banner-inset-store';
 import { getRestTimerState, subscribeRestTimer } from '../lib/rest-timer-store';
@@ -11,10 +10,9 @@ import { useStickyAccessoryPresence } from './use-sticky-accessory-presence';
 import { useTabChrome } from './use-bottom-accessory';
 import { useDeviceLayout } from './use-device-layout';
 import { useVerticalTabBar } from './use-vertical-tab-bar';
+import { useCurrentClimbSurface } from './use-current-climb-surface';
 import { computeBottomChromeMetrics, type BottomChromeMetrics } from './bottom-chrome-metrics';
 import { shouldThrowOnMissingProvider } from './bottom-chrome-provider-gate';
-import { resolveDetailPaneSurface } from '../theme/size-class';
-import { SIDEBAR_WIDTH } from '../theme/layout';
 import { reportHandledError } from '../lib/error-reporting';
 
 // The rest-timer store publishes a whole state object, and this provider cares
@@ -55,13 +53,19 @@ function useComputedBottomChromeMetrics(): BottomChromeMetrics {
   // occluded under the player. Keep it separate from `insideTabs` so a pushed sub-route
   // still reserves tab-bar height but no longer reserves toolbar space for a bar that's
   // gone. The NATIVE accessory is wider — see `nativeAccessoryPresented` below.
-  const onAccessorySurface = isAccessorySurfaceRoute(segments);
   // The single canonical answer to "which tab chrome is on screen?" — the same
   // `useTabChrome()` the tab layout mounts from, so the accessory reserved here is
   // exactly the accessory `_layout` mounts. On iOS 18 the native bar is up but the
   // accessory is not (it is an iOS 26 UIKit feature), so the JS queue bar floats
   // above the native bar and is reserved for below.
   const { nativeTabBar, nativeAccessory: nativeAccessoryActive } = useTabChrome();
+  // The tab layout hides the platter on a few routes (`isAccessoryHiddenRoute`,
+  // never on the Duo's rail), with the same expression as here. The iPad "On the
+  // Wall" kiosk is the one that is otherwise an accessory surface: nothing stands
+  // in for the hidden platter there, so it stops counting as one.
+  const verticalTabBar = useVerticalTabBar();
+  const accessoryHidden = nativeAccessoryActive && isAccessoryHiddenRoute(segments) && !verticalTabBar;
+  const onAccessorySurface = isAccessorySurfaceRoute(segments) && !accessoryHidden;
   // `onAccessorySurface`, NOT the host-mount gate — the two genuinely differ here, and
   // conflating them costs a dead gap. The host stays MOUNTED on pushed sub-routes (that
   // is #5055's fix, see `isAccessoryHostRoute`), but UIKit does not PRESENT the platter
@@ -73,19 +77,23 @@ function useComputedBottomChromeMetrics(): BottomChromeMetrics {
   // every pushed screen got dead space under its last row (#3776's failure shape).
   const nativeAccessoryPresented = onAccessorySurface && nativeAccessoryActive;
   const usesNativeTabBar = insideTabs && nativeTabBar;
-  // Regular-width iPad replaces the bottom tab bar with the left sidebar. Only
-  // widths that also mount the selected-climb detail pane suppress the floating
-  // queue toolbar; tight regular windows keep that toolbar because the pane is
-  // intentionally absent there.
-  const { width: windowWidth } = useWindowDimensions();
-  const { widthClass } = useDeviceLayout();
-  const usesSidebar = insideTabs && widthClass === 'regular';
-  const detailPaneOwnsQueue =
-    usesSidebar && resolveDetailPaneSurface({ width: windowWidth, widthClass, sidebarWidth: SIDEBAR_WIDTH }) === 'pane';
+  // The regular-width JS tablet shell replaces the bottom tab bar with its rail.
+  // Only widths that also mount the selected-climb detail pane suppress the
+  // floating queue toolbar; tight regular windows keep that toolbar because the
+  // pane is intentionally absent there. The native iPad is not this shell: the
+  // same resolver the floating bar and the rest pill read keeps it on the
+  // native-tab path below.
+  const { sidebarShell, home } = useCurrentClimbSurface();
+  const usesSidebar = insideTabs && sidebarShell;
+  const detailPaneOwnsQueue = usesSidebar && home === 'detailPane';
   // iPhone Duo (closed, or open in landscape with the split) keeps the phone
   // path: the accessory stays presented along the bottom and the in-tab inset
   // carries it. Only the tab bar leaves the bottom: it is a vertical rail.
-  const verticalTabBar = useVerticalTabBar();
+  // A regular-width native iPad is the same shape: its tab bar is the sidebar
+  // (landscape) or sits at the top (portrait), and only the accessory takes
+  // bottom space, which UIKit folds into the measured in-tab inset.
+  const { isTablet, widthClass } = useDeviceLayout();
+  const tabBarAtBottom = !verticalTabBar && !(isTablet && nativeTabBar && widthClass === 'regular');
   // This provider samples the ROOT safe-area inset (window / home indicator
   // only). The in-tab inset — the one UIKit extends with the native tab bar +
   // accessory — is published by NativeTabContentInsetProbe from inside the
@@ -119,10 +127,10 @@ function useComputedBottomChromeMetrics(): BottomChromeMetrics {
         measuredTabContentInsetBottom,
         connectivityBannerHeight,
         restTimerArmed,
-        tabBarAtBottom: !verticalTabBar,
+        tabBarAtBottom,
       }),
     [
-      verticalTabBar,
+      tabBarAtBottom,
       variant,
       usesNativeTabBar,
       insets.bottom,

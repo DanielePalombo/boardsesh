@@ -33,6 +33,7 @@ import { WallStatusCapsule } from '../queue-control/WallStatusCapsule';
 import { BoardHeldCapsule } from '../queue-control/BoardHeldCapsule';
 import { useBoardConnectionState } from '../ble/use-board-connection-state';
 import { useTabChrome } from '../../hooks/use-bottom-accessory';
+import { useDeviceLayout } from '../../hooks/use-device-layout';
 import { useWallClimbIfDistinct } from '../queue-control/use-wall-or-queue-climb';
 import { useActiveClimbUuid } from '../../providers/queue-provider';
 import { addErrorBreadcrumb } from '../../lib/error-reporting';
@@ -141,13 +142,20 @@ function ClimbTopChromeComponent({
   const wallClimb = useSettledHeaderValue(liveWallClimb);
   // "You have the board" takes the same slot while this climber holds the board
   // and the wall shows their own climb. Only where the iOS 26 accessory platter
-  // mounts: that platter collapses on scroll and drops its bulb, while the
-  // Material bar and the iOS 18 floating bar keep theirs on screen. Every input is
-  // settled, like the wall capsule, so nothing in the title view changes while
+  // mounts on iPhone: that platter collapses on scroll and drops its bulb, while
+  // the Material bar and the iOS 18 floating bar keep theirs on screen. A
+  // regular-width iPad has no bottom tab bar for the platter to collapse into, so
+  // its bulb stays in view and a capsule up here would only repeat it; an iPad in
+  // a narrow Split View has the phone's bottom bar and keeps the cue. Every input
+  // is settled, like the wall capsule, so nothing in the title view changes while
   // the player covers the list (#6619).
   const { nativeAccessory } = useTabChrome();
+  const { isPad, widthClass } = useDeviceLayout();
+  const accessoryCollapses = !(isPad && widthClass === 'regular');
   const { inAppBoardConnection, ledless: liveLedless, localConnected } = useBoardConnectionState();
-  const boardHeld = useSettledHeaderValue(nativeAccessory && inAppBoardConnection === 'connectedByMe');
+  const boardHeld = useSettledHeaderValue(
+    nativeAccessory && accessoryCollapses && inAppBoardConnection === 'connectedByMe',
+  );
   const ledless = useSettledHeaderValue(liveLedless);
   const canOpenControls = useSettledHeaderValue(localConnected);
   const wallCapsule = useMemo(() => {
