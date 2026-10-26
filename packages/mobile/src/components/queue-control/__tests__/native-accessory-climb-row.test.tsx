@@ -27,6 +27,26 @@ const queue = vi.hoisted(() => ({
   previousClimb: vi.fn(),
 }));
 
+// The live sends/rating the byline reads (the list rows' stats store). Null keeps
+// the climb's own counts, as the store does before a canonical row lands.
+const liveStats = vi.hoisted(() => ({
+  override: null as { ascensionistCount: number; qualityAverage: string | null } | null,
+}));
+vi.mock('@boardsesh/board-react', () => ({
+  useEffectiveClimbStats: (
+    _boardType: string,
+    _layoutId: number,
+    _climbUuid: string,
+    _angle: number,
+    base: { ascensionistCount?: number | null; qualityAverage?: string | null },
+  ) =>
+    liveStats.override ?? {
+      ascensionistCount: base.ascensionistCount ?? 0,
+      qualityAverage: base.qualityAverage ?? null,
+      difficulty: null,
+    },
+}));
+
 const drawer = vi.hoisted(() => ({
   boardConfig: null as BoardConfig | null,
   openPlayDrawer: vi.fn(),
@@ -164,9 +184,11 @@ vi.mock('react-native-gesture-handler', () => {
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
-// The leading board control drags in the BLE stack + Icon (@expo/vector-icons);
-// the row's layout tests don't exercise it, so stub it (it has its own unit test).
-vi.mock('../BoardControlIndicator', () => ({ BoardControlIndicator: () => null }));
+// The board control drags in the BLE stack + Icon (@expo/vector-icons); stub it
+// with a marker so the layout tests see where it sits (it has its own unit test).
+vi.mock('../BoardControlIndicator', () => ({
+  BoardControlIndicator: () => createElement('span', { 'data-board-control': 'true' }),
+}));
 
 type TextMockProps = {
   children?: ReactNode;
@@ -223,7 +245,7 @@ vi.mock('../../MarqueeText', () => ({
 vi.mock('../../../providers/theme-provider', () => ({
   useOptionalTheme: () => null,
   useTheme: () => ({
-    systemColors: { label: '#111111' },
+    systemColors: { label: '#111111', secondaryLabel: '#777777' },
   }),
 }));
 
@@ -400,6 +422,7 @@ describe('NativeAccessoryClimbRow', () => {
     boardRender.boardHeight = 1920;
     queue.nextClimb.mockClear();
     queue.previousClimb.mockClear();
+    liveStats.override = null;
     drawer.openPlayDrawer.mockClear();
   });
 
@@ -419,7 +442,8 @@ describe('NativeAccessoryClimbRow', () => {
     expect(container.querySelector('[data-tick-size="44"]')).not.toBeNull();
     expect(container.querySelector('[data-icon-size="24"]')).not.toBeNull();
     expect(container.querySelector('[data-height="48"]')).not.toBeNull();
-    expect(container.querySelector('[data-padding-end="32"]')).not.toBeNull();
+    // The trailing controls sit close to the platter's right edge.
+    expect(container.querySelector('[data-padding-end="4"]')).not.toBeNull();
 
     const thumbnail = getCurrentThumbnail(container);
     const thumbnailSlot = thumbnail.closest('[data-width="40"][data-height="40"]');
@@ -440,12 +464,38 @@ describe('NativeAccessoryClimbRow', () => {
     expect(climbNameText?.getAttribute('data-variant')).toBe('subheadline');
     expect(climbNameText?.getAttribute('data-font-weight')).toBe('500');
 
-    const gradeText = Array.from(container.querySelectorAll('[data-text]')).find(
-      (textNode) => textNode.textContent === 'V6',
+    // The grade rides a byline under the name, like an artist under a song.
+    const byline = Array.from(container.querySelectorAll('[data-text]')).find((textNode) =>
+      textNode.textContent?.startsWith('V6'),
     );
-    expect(gradeText?.getAttribute('data-color')).toBe('#111111');
-    expect(gradeText?.getAttribute('data-variant')).toBe('subheadline');
-    expect(gradeText?.getAttribute('data-font-weight')).toBe('600');
+    expect(byline?.textContent).toBe('V6 · sends');
+    expect(byline?.getAttribute('data-color')).toBe('#777777');
+    expect(byline?.getAttribute('data-variant')).toBe('footnote');
+  });
+
+  it('reads the byline from the live stats, and falls back to the rating, then the grade alone', () => {
+    liveStats.override = { ascensionistCount: 0, qualityAverage: '3.24' };
+    const rated = renderRow('regular');
+    expect(rated.container.textContent).toContain('V6 · 3.2★');
+    rated.unmount();
+
+    liveStats.override = { ascensionistCount: 0, qualityAverage: null };
+    const bare = renderRow('regular');
+    const byline = Array.from(bare.container.querySelectorAll('[data-text]')).find((textNode) =>
+      textNode.textContent?.startsWith('V6'),
+    );
+    expect(byline?.textContent).toBe('V6');
+  });
+
+  it('puts the lightbulb beside the tick on the open platter, outside the climb tap', () => {
+    const { container } = renderRow('regular');
+    const bulb = container.querySelector('[data-board-control="true"]');
+    const tick = container.querySelector('[data-tick="true"]');
+
+    expect(bulb).not.toBeNull();
+    expect(bulb?.closest('[data-gesture="true"]')).toBeNull();
+    // Bulb first, then the tick at the trailing edge.
+    expect(bulb!.compareDocumentPosition(tick!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('flips the thumbnail for a mirrored climb', () => {
@@ -493,11 +543,14 @@ describe('NativeAccessoryClimbRow', () => {
     expectNumericAttribute(thumbnail, 'data-board-height', 22.1);
   });
 
-  it('keeps the thumbnail out of inline placement', () => {
+  it('shows a smaller thumbnail, the byline and the tick, but no lightbulb, when collapsed', () => {
     const { container } = renderRow('inline');
 
     expect(container.textContent).toContain("Alvin's Nuts");
-    expect(container.querySelector('[data-thumbnail]')).toBeNull();
+    expect(container.textContent).toContain('V6 · sends');
+    // The art fits a 32pt box (this board is portrait, so 32pt tall), not the open 40pt.
+    expectNumericAttribute(getCurrentThumbnail(container), 'data-board-height', 32);
+    expect(container.querySelector('[data-board-control]')).toBeNull();
     expect(container.querySelector('[data-tick-size="44"]')).not.toBeNull();
     expect(container.querySelector('[data-height="44"]')).not.toBeNull();
   });

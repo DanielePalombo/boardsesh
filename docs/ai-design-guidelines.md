@@ -84,6 +84,9 @@ older iPhone is the variant with the chrome degraded, not Material.
     Music's Search tab, not a separated `role="search"` tab. On an iOS 27 iPhone it is the
     prominent tab, so it stays on screen when the bar collapses.
   - `nativeAccessory`: the `BottomAccessory` platter carries the current climb (iOS 26 only).
+    Like Apple Music's platter, it shows a thumbnail and the climb name over a byline (grade ·
+    sends, or grade · rating when nobody has sent it). Open, the lightbulb and the tick sit at the
+    trailing edge; collapsed, a smaller thumbnail and the tick alone, so the row fits the narrow bar.
     Wherever it is false, including the native bar on iOS 18, the floating JS `PersistentQueueBar`
     carries the current climb, positioned above whichever bar is on screen.
 - Surfaces degrade in `GlassSurface` via `useEffectiveSurfaceMode()`: `glass` (iOS 26) → `blur`
