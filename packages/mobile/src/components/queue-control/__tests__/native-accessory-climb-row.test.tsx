@@ -67,6 +67,10 @@ const drawer = vi.hoisted(() => ({
   openPlayDrawer: vi.fn(),
 }));
 
+// The width every mocked View reports from its layout pass: the row reads it
+// to decide whether the open platter fits both controls.
+const layout = vi.hoisted(() => ({ width: 400 }));
+
 const boardRender = vi.hoisted(() => ({
   boardWidth: 1080,
   boardHeight: 1920,
@@ -133,7 +137,7 @@ vi.mock('react-native', () => ({
     // jsdom never lays out, so simulate the swipe viewport being measured —
     // otherwise width stays 0, canPeek is false, and the peek slots never render.
     useEffect(() => {
-      onLayout?.({ nativeEvent: { layout: { width: 400, height: 48 } } });
+      onLayout?.({ nativeEvent: { layout: { width: layout.width, height: 48 } } });
     }, [onLayout]);
     const readStyleValue = (styleKey: string): unknown => {
       const styles = Array.isArray(style) ? style : [style];
@@ -295,7 +299,7 @@ vi.mock('../../../lib/haptics', () => ({ hapticLight: vi.fn() }));
 
 vi.mock('../../../theme/tokens', () => ({
   opacity: { disabled: 0.5 },
-  spacing: { 1: 4, 2: 8, 3: 12, 8: 32, 10: 40 },
+  spacing: { 1: 4, 2: 8, 3: 12, 4: 16, 8: 32, 10: 40 },
   borderRadius: { md: 8 },
 }));
 
@@ -436,6 +440,7 @@ describe('NativeAccessoryClimbRow', () => {
     queue.state.currentClimbQueueItem = currentItem;
     queue.state.queue = [currentItem];
     drawer.boardConfig = makeBoardConfig();
+    layout.width = 400;
     boardRender.boardWidth = 1080;
     boardRender.boardHeight = 1920;
     queue.nextClimb.mockClear();
@@ -611,6 +616,28 @@ describe('NativeAccessoryClimbRow', () => {
         expect(container.querySelector('[data-tick="true"]')?.getAttribute('data-placement')).toBe('regular');
       },
     );
+
+    it.each([
+      // The platter beside iPhone Duo's side tab rail in the closed shots.
+      ['290pt (iPhone Duo outer display)', 290],
+      // INFERRED: a 320pt-wide Display Zoom iPhone (SE, 13 mini) less the platter margins.
+      ['288pt (320pt Display Zoom iPhone)', 288],
+    ] as const)('keeps one slot on a narrow open platter: %s', (_label, platterWidth) => {
+      layout.width = platterWidth;
+      const free = renderRow('regular');
+      expect(free.container.querySelector('[data-board-control]')?.getAttribute('data-placement')).toBe('regular');
+      expect(free.container.querySelector('[data-tick="true"]')).toBeNull();
+      free.unmount();
+
+      connection.state.inAppBoardConnection = 'connectedByMe';
+      const held = renderRow('regular');
+      expect(held.container.querySelector('[data-board-control]')).toBeNull();
+      expect(held.container.querySelector('[data-tick="true"]')?.getAttribute('data-placement')).toBe('regular');
+      // The bulb is gone, so the climb link says who holds the board.
+      expect(held.container.querySelector('[data-accessory-play-link]')?.getAttribute('data-a11y-value')).toBe(
+        'ble.barControl.connectedLabel',
+      );
+    });
   });
 
   describe('the connection mark on the thumbnail', () => {
