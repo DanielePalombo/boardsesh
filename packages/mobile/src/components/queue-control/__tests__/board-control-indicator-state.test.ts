@@ -71,3 +71,33 @@ describe('getBoardControlIndicatorVisual on a wall with no LED light kit', () =>
     }
   });
 });
+
+// The iOS 26 accessory platter draws its glyphs solid, like Apple Music's. Off then
+// reads by colour and the held state's halo; the indicator turns this off under
+// Differentiate Without Color, which brings the outline back.
+describe('getBoardControlIndicatorVisual with solid glyphs', () => {
+  const ledlessColors = { ...colors, ledless: true, wallHeldColor: '#6D28D9' };
+
+  it('fills the open bulb and the open pin, in the neutral tone, with no halo', () => {
+    const bulb = getBoardControlIndicatorVisual({ boardConnection: 'disconnected', ...colors, solidGlyphs: true });
+    expect(bulb.iconName).toBe('lightbulb.fill');
+    expect(bulb.iconColor).toBe(colors.disconnectedColor);
+    expect(bulb.haloColor).toBeUndefined();
+
+    const pin = getBoardControlIndicatorVisual({
+      boardConnection: 'disconnected',
+      ...ledlessColors,
+      solidGlyphs: true,
+    });
+    expect(pin.iconName).toBe('pin.fill');
+    expect(pin.haloColor).toBeUndefined();
+  });
+
+  it('leaves the held and peer states as they are', () => {
+    for (const boardConnection of ['connectedByMe', 'heldByPeer'] as const) {
+      expect(getBoardControlIndicatorVisual({ boardConnection, ...colors, solidGlyphs: true })).toEqual(
+        getBoardControlIndicatorVisual({ boardConnection, ...colors }),
+      );
+    }
+  });
+});

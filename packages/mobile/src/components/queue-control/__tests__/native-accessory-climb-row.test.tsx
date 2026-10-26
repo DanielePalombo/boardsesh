@@ -187,7 +187,8 @@ vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => k
 // The board control drags in the BLE stack + Icon (@expo/vector-icons); stub it
 // with a marker so the layout tests see where it sits (it has its own unit test).
 vi.mock('../BoardControlIndicator', () => ({
-  BoardControlIndicator: () => createElement('span', { 'data-board-control': 'true' }),
+  BoardControlIndicator: ({ solidGlyphs }: { solidGlyphs?: boolean }) =>
+    createElement('span', { 'data-board-control': 'true', 'data-solid-glyphs': String(solidGlyphs === true) }),
 }));
 
 type TextMockProps = {
@@ -370,9 +371,9 @@ function makeBoardConfig(): BoardConfig {
 
 // The displayed climb is now passed in by QueueBottomAccessory; default to the
 // queue head the test set up so the existing assertions keep reading it.
-function renderRow(placement: 'regular' | 'inline', width = 344) {
+function renderRow(placement: 'regular' | 'inline') {
   const climb = queue.state.currentClimbQueueItem?.climb as Climb;
-  return render(<NativeAccessoryClimbRow climb={climb} placement={placement} width={width} />);
+  return render(<NativeAccessoryClimbRow climb={climb} placement={placement} />);
 }
 
 function getCurrentThumbnail(container: HTMLElement): HTMLElement {
@@ -386,25 +387,16 @@ function expectNumericAttribute(element: HTMLElement, attributeName: string, exp
 }
 
 describe('NativeAccessoryClimbRow', () => {
-  // The collapsed bar gives the inline platter less room than the open one; a row
-  // pinned to the open width clipped its trailing grade there.
-  it('pins the open platter to its width and lets the collapsed one fill its frame', () => {
-    const regular = renderRow('regular', 344);
-    expect((regular.container.firstElementChild as HTMLElement).getAttribute('data-width')).toBe('344');
-    regular.unmount();
-
-    const inline = renderRow('inline', 344);
-    expect((inline.container.firstElementChild as HTMLElement).getAttribute('data-width')).toBe('');
+  // Each placement fills the frame UIKit gives it. A width worked out from the
+  // screen overshot the real platter and crammed the tick into its edge.
+  it.each(['regular', 'inline'] as const)('fills the %s platter frame instead of pinning a width', (placement) => {
+    const { container } = renderRow(placement);
+    expect((container.firstElementChild as HTMLElement).getAttribute('data-width')).toBe('');
   });
 
   it.each(['regular', 'inline'] as const)('exposes the existing %s row as the CPP accessibility host', (placement) => {
     const { container } = render(
-      <NativeAccessoryClimbRow
-        climb={makeClimb()}
-        placement={placement}
-        width={344}
-        testID="cpp-accessory-climb-climb-1"
-      />,
+      <NativeAccessoryClimbRow climb={makeClimb()} placement={placement} testID="cpp-accessory-climb-climb-1" />,
     );
     const host = container.querySelector('[data-testid="cpp-accessory-climb-climb-1"]');
     expect(host).toBe(container.firstElementChild);
@@ -442,8 +434,8 @@ describe('NativeAccessoryClimbRow', () => {
     expect(container.querySelector('[data-tick-size="44"]')).not.toBeNull();
     expect(container.querySelector('[data-icon-size="24"]')).not.toBeNull();
     expect(container.querySelector('[data-height="48"]')).not.toBeNull();
-    // The trailing controls sit close to the platter's right edge.
-    expect(container.querySelector('[data-padding-end="4"]')).not.toBeNull();
+    // Apple Music's insets: the last control's centre ~30pt from the right edge.
+    expect(container.querySelector('[data-padding-end="8"]')).not.toBeNull();
 
     const thumbnail = getCurrentThumbnail(container);
     const thumbnailSlot = thumbnail.closest('[data-width="40"][data-height="40"]');
@@ -453,9 +445,9 @@ describe('NativeAccessoryClimbRow', () => {
     expect(thumbnailSlot?.getAttribute('data-border-color')).toBe('');
     expect(thumbnailSlot?.getAttribute('data-border-radius')).toBe('');
     expect(thumbnailSlot?.getAttribute('data-overflow')).toBe('');
-    expectNumericAttribute(thumbnail, 'data-board-width', 22.5);
-    expectNumericAttribute(thumbnail, 'data-board-height', 40);
-    expect(thumbnail.getAttribute('data-board-border-radius')).toBe('10');
+    expectNumericAttribute(thumbnail, 'data-board-width', 18);
+    expectNumericAttribute(thumbnail, 'data-board-height', 32);
+    expect(thumbnail.getAttribute('data-board-border-radius')).toBe('8');
     expect(thumbnail.getAttribute('data-board-overflow')).toBe('hidden');
 
     const climbNameText = Array.from(container.querySelectorAll('[data-text]')).find(
@@ -493,6 +485,9 @@ describe('NativeAccessoryClimbRow', () => {
     const tick = container.querySelector('[data-tick="true"]');
 
     expect(bulb).not.toBeNull();
+    // Solid like Music's platter controls (the indicator brings the outline back
+    // under Differentiate Without Color).
+    expect(bulb?.getAttribute('data-solid-glyphs')).toBe('true');
     expect(bulb?.closest('[data-gesture="true"]')).toBeNull();
     // Bulb first, then the tick at the trailing edge.
     expect(bulb!.compareDocumentPosition(tick!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -517,8 +512,8 @@ describe('NativeAccessoryClimbRow', () => {
     const { container } = renderRow('regular');
     const thumbnail = getCurrentThumbnail(container);
 
-    expectNumericAttribute(thumbnail, 'data-board-width', 17.293835);
-    expectNumericAttribute(thumbnail, 'data-board-height', 40);
+    expectNumericAttribute(thumbnail, 'data-board-width', 13.835068);
+    expectNumericAttribute(thumbnail, 'data-board-height', 32);
   });
 
   it('keeps near-square Kilter Homewall thumbnails off the accessory edges', () => {
@@ -529,8 +524,8 @@ describe('NativeAccessoryClimbRow', () => {
 
     expect(container.querySelector('[data-height="48"]')).not.toBeNull();
     expect(thumbnail.closest('[data-width="40"][data-height="40"]')).not.toBeNull();
-    expectNumericAttribute(thumbnail, 'data-board-width', 37.337943);
-    expectNumericAttribute(thumbnail, 'data-board-height', 40);
+    expectNumericAttribute(thumbnail, 'data-board-width', 29.870354);
+    expectNumericAttribute(thumbnail, 'data-board-height', 32);
   });
 
   it('uses the full silhouette for wide board thumbnails', () => {
@@ -539,16 +534,16 @@ describe('NativeAccessoryClimbRow', () => {
     const { container } = renderRow('regular');
     const thumbnail = getCurrentThumbnail(container);
 
-    expectNumericAttribute(thumbnail, 'data-board-width', 40);
-    expectNumericAttribute(thumbnail, 'data-board-height', 22.1);
+    expectNumericAttribute(thumbnail, 'data-board-width', 32);
+    expectNumericAttribute(thumbnail, 'data-board-height', 17.68);
   });
 
-  it('shows a smaller thumbnail, the byline and the tick, but no lightbulb, when collapsed', () => {
+  it('shows the thumbnail, the byline and the tick, but no lightbulb, when collapsed', () => {
     const { container } = renderRow('inline');
 
     expect(container.textContent).toContain("Alvin's Nuts");
     expect(container.textContent).toContain('V6 · sends');
-    // The art fits a 32pt box (this board is portrait, so 32pt tall), not the open 40pt.
+    // The same 32pt box as the open platter (this board is portrait, so 32pt tall).
     expectNumericAttribute(getCurrentThumbnail(container), 'data-board-height', 32);
     expect(container.querySelector('[data-board-control]')).toBeNull();
     expect(container.querySelector('[data-tick-size="44"]')).not.toBeNull();
@@ -599,11 +594,7 @@ describe('NativeAccessoryClimbRow', () => {
     queue.state.queue = [];
 
     const { container } = render(
-      <NativeAccessoryClimbRow
-        climb={makeClimb({ uuid: 'wall', name: 'On The Wall' })}
-        placement="regular"
-        width={344}
-      />,
+      <NativeAccessoryClimbRow climb={makeClimb({ uuid: 'wall', name: 'On The Wall' })} placement="regular" />,
     );
 
     expect(container.textContent).toContain('On The Wall');
@@ -613,9 +604,7 @@ describe('NativeAccessoryClimbRow', () => {
   // #5954: a draft is left out of the Climbs list, so the platter says why the
   // climb it is showing is not in it.
   it('marks a draft climb with the Draft chip', () => {
-    const { container } = render(
-      <NativeAccessoryClimbRow climb={makeClimb({ is_draft: true })} placement="regular" width={344} />,
-    );
+    const { container } = render(<NativeAccessoryClimbRow climb={makeClimb({ is_draft: true })} placement="regular" />);
     const chip = container.querySelector('[data-label="createClimbForm.draftBadge"]');
     expect(chip?.textContent).toBe('createClimbForm.draftBadge');
   });
@@ -623,7 +612,7 @@ describe('NativeAccessoryClimbRow', () => {
   it('leaves a published climb, and one that does not say, without the chip', () => {
     for (const isDraft of [false, null, undefined]) {
       const { container, unmount } = render(
-        <NativeAccessoryClimbRow climb={makeClimb({ is_draft: isDraft })} placement="regular" width={344} />,
+        <NativeAccessoryClimbRow climb={makeClimb({ is_draft: isDraft })} placement="regular" />,
       );
       expect(container.querySelector('[data-label="createClimbForm.draftBadge"]')).toBeNull();
       unmount();

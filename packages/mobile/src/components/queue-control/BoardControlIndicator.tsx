@@ -30,6 +30,7 @@ import { useLightbulbControl } from '../ble/use-lightbulb-control';
 import { hapticMedium } from '../../lib/haptics';
 import { glassSize } from '../../theme/layout';
 import { getBoardControlIndicatorVisual } from './board-control-indicator-state';
+import { useDifferentiateWithoutColor } from '../../hooks/use-differentiate-without-color';
 import { useAccessoryClimbTap } from './use-accessory-climb-tap';
 
 type BoardControlIndicatorProps = {
@@ -43,17 +44,25 @@ type BoardControlIndicatorProps = {
    * press/highlight gestures.
    */
   enableLongPress?: boolean;
+  /**
+   * Draw the glyph filled in every state, like the solid controls in Apple Music's
+   * platter (the iOS 26 accessory). The outline comes back while Differentiate
+   * Without Color is on, so "off" still differs from "on" by shape.
+   */
+  solidGlyphs?: boolean;
 };
 
 export function BoardControlIndicator({
   size = glassSize.inline,
   iconSize = 22,
   enableLongPress = false,
+  solidGlyphs = false,
 }: BoardControlIndicatorProps) {
   const { t } = useTranslation('settings');
   const { systemColors, brandColors } = useTheme();
   const { inAppBoardConnection, localConnected, ledless, holderDisplayName, bluetooth } = useBoardConnectionState();
   const { open: openBoardControls } = useBleControlSheet();
+  const differentiateWithoutColor = useDifferentiateWithoutColor();
   // Shared connect/disconnect path so undo-arming and the press semantics match
   // the drawer + toolbar lightbulbs: connectedByMe → disconnect, disconnected →
   // connect. (Connect outcome telemetry is emitted inside bluetooth.connect().)
@@ -98,6 +107,7 @@ export function BoardControlIndicator({
     disconnectedColor: systemColors.secondaryLabel,
     ledless,
     wallHeldColor: brandColors.primary,
+    solidGlyphs: solidGlyphs && differentiateWithoutColor !== 'on',
   });
 
   const heldByMe = inAppBoardConnection === 'connectedByMe';

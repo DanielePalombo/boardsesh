@@ -1,13 +1,7 @@
-import { useMemo, useRef, useSyncExternalStore } from 'react';
-import { useWindowDimensions } from 'react-native';
+import { useRef, useSyncExternalStore } from 'react';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import type { Climb } from '@boardsesh/queue';
 import { useQueue } from '../../providers/queue-provider';
-import {
-  glassSize,
-  NATIVE_BOTTOM_ACCESSORY_MAX_WIDTH,
-  NATIVE_BOTTOM_ACCESSORY_SCREEN_GUTTER,
-} from '../../theme/layout';
 import { NativeAccessoryClimbRow } from './NativeAccessoryClimbRow';
 import { getPrivacyRevocationGeneration, subscribeToPrivacyRevocations } from '../../lib/privacy/privacy-cache';
 
@@ -51,20 +45,12 @@ function useRetainedAccessoryClimb(currentClimb: Climb | null): Climb | null {
  */
 export function QueueBottomAccessory() {
   const placement = NativeTabs.BottomAccessory.usePlacement();
-  const { width: screenWidth } = useWindowDimensions();
   const { state, sessionId } = useQueue();
   // The accessory shows the local queue head only — never the wall's lit climb
   // (that lives in the top "On the wall" strip now). Retained across a presence
   // blip so the live platter never blanks while the host is held open.
   const resolvedClimb = state.currentClimbQueueItem?.climb ?? null;
   const currentClimb = useRetainedAccessoryClimb(resolvedClimb);
-
-  const accessoryWidth = useMemo(() => {
-    return Math.max(
-      glassSize.standard * 2,
-      Math.min(NATIVE_BOTTOM_ACCESSORY_MAX_WIDTH, screenWidth - NATIVE_BOTTOM_ACCESSORY_SCREEN_GUTTER),
-    );
-  }, [screenWidth]);
 
   if (!currentClimb) return null;
 
@@ -77,5 +63,5 @@ export function QueueBottomAccessory() {
     resolvedClimb?.uuid === currentClimb.uuid
       ? `cpp-accessory-climb-${currentClimb.uuid}`
       : undefined;
-  return <NativeAccessoryClimbRow climb={currentClimb} placement={placement} width={accessoryWidth} testID={testID} />;
+  return <NativeAccessoryClimbRow climb={currentClimb} placement={placement} testID={testID} />;
 }

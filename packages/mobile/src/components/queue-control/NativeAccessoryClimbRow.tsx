@@ -12,7 +12,7 @@ import { CHROME_LABEL_MAX_FONT_SCALE } from '../../theme/typography';
 import { Text } from '../Text';
 import { MarqueeText } from '../MarqueeText';
 import { DraftChip } from '../DraftChip';
-import { ACCESSORY_THUMBNAIL_SLOT_SIZE, AccessoryClimbThumbnail } from './AccessoryClimbThumbnail';
+import { AccessoryClimbThumbnail } from './AccessoryClimbThumbnail';
 import { useAccessoryClimbTap } from './use-accessory-climb-tap';
 import { AccessoryPlayLink } from './AccessoryPlayLink';
 import { LargeContentViewer } from '../LargeContentViewer';
@@ -26,17 +26,15 @@ type AccessoryPlacement = 'regular' | 'inline';
 type NativeAccessoryClimbRowProps = {
   climb: Climb;
   placement: AccessoryPlacement;
-  /** Width of the open (regular) platter. The collapsed (inline) one fills its frame. */
-  width: number;
   testID?: string;
 };
 
-// The platter's own edges. The trailing controls sit close to the right edge,
-// like the play control in Apple Music's platter.
-const ACCESSORY_LEADING_INSET = spacing[2];
-const ACCESSORY_TRAILING_INSET = spacing[1];
-// The collapsed platter is 44pt tall, so its thumbnail is smaller than the open one's.
-const INLINE_THUMBNAIL_SIZE = 32;
+// Measured against Apple Music's platter (iOS 27): the artwork starts 16pt in, and
+// the last control's centre sits ~30pt from the right edge (8pt + half its 44pt slot).
+const ACCESSORY_LEADING_INSET = spacing[4];
+const ACCESSORY_TRAILING_INSET = spacing[2];
+// One artwork size in both placements, as Music uses (~30pt).
+const ACCESSORY_PLATTER_THUMBNAIL_SIZE = 32;
 
 type ClimbLabelProps = {
   climb: Climb;
@@ -126,7 +124,7 @@ function useAccessoryByline(climb: Climb, boardConfig: BoardConfig | null, grade
  * are tuned for the platter, so they intentionally differ from the floating
  * capsule's colorized grade.
  */
-export function NativeAccessoryClimbRow({ climb, placement, width, testID }: NativeAccessoryClimbRowProps) {
+export function NativeAccessoryClimbRow({ climb, placement, testID }: NativeAccessoryClimbRowProps) {
   const { boardConfig } = useDrawerHost();
   const { systemColors } = useTheme();
   const { resolveGrade } = useDisplayGrade();
@@ -134,7 +132,7 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
 
   const isInline = placement === 'inline';
   const rowHeight = isInline ? glassSize.inline : glassSize.standard;
-  const thumbnailSize = boardConfig === null ? null : isInline ? INLINE_THUMBNAIL_SIZE : ACCESSORY_THUMBNAIL_SLOT_SIZE;
+  const thumbnailSize = boardConfig === null ? null : ACCESSORY_PLATTER_THUMBNAIL_SIZE;
   // The platter shows a plain (non-colorized) grade; only the label swaps to the
   // Boardsesh grade when the toggle is on and a trusted one exists.
   const currentFormattedGrade = resolveGrade(climb, boardConfig?.boardName).label;
@@ -145,11 +143,11 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
   // normal use leave each control's accessibility unchanged.
   return (
     <View
-      // The collapsed (inline) platter is narrower than the open one: it shares the
-      // collapsed bar with the selected tab (and, on iOS 27, the prominent Climbs tab).
-      // Pinning it to the open width clipped its trailing tick, so inline fills the
-      // frame UIKit gives it (react-native-screens sizes that root natively).
-      style={[styles.row, { width: placement === 'regular' ? width : undefined, height: rowHeight }]}
+      // Both placements fill the frame UIKit gives them (react-native-screens sizes
+      // the accessory root natively). A width worked out from the screen overshot
+      // the real platter: open, by ~10pt, cramming the tick into the edge; collapsed,
+      // where the bar also holds the selected and prominent tabs, by far more.
+      style={[styles.row, { height: rowHeight }]}
       testID={testID}
       accessible={testID ? true : undefined}
       accessibilityLabel={testID ? climb.name : undefined}
@@ -183,7 +181,7 @@ export function NativeAccessoryClimbRow({ climb, placement, width, testID }: Nat
           lightbulbs now that a short press disconnects. */}
       {isInline ? null : (
         <View style={[styles.controlSlot, { width: glassSize.inline, height: rowHeight }]}>
-          <BoardControlIndicator size={glassSize.inline} iconSize={22} enableLongPress />
+          <BoardControlIndicator size={glassSize.inline} iconSize={22} enableLongPress solidGlyphs />
         </View>
       )}
       <View style={[styles.controlSlot, { width: glassSize.inline, height: rowHeight }]}>

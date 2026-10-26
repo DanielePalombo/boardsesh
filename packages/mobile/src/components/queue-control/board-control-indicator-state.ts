@@ -33,6 +33,13 @@ type BoardControlIndicatorVisualInput = {
    * it must stay exclusive to a real write.
    */
   wallHeldColor?: string;
+  /**
+   * Draw the "tap to connect" state filled too (the iOS 26 accessory platter, whose
+   * glyphs are solid like Apple Music's). The open state then reads by colour and
+   * the held state's halo, so callers turn this off while Differentiate Without
+   * Color is on, which brings back the outline.
+   */
+  solidGlyphs?: boolean;
 };
 
 /**
@@ -49,6 +56,7 @@ export function getBoardControlIndicatorVisual({
   disconnectedColor,
   ledless = false,
   wallHeldColor,
+  solidGlyphs = false,
 }: BoardControlIndicatorVisualInput): BoardControlIndicatorVisual {
   if (ledless) {
     switch (boardConnection) {
@@ -61,7 +69,7 @@ export function getBoardControlIndicatorVisual({
         return { iconName: 'person.fill', iconColor: peerColor };
       case 'disconnected':
         // The wall is open — tap to take it.
-        return { iconName: 'pin', iconColor: disconnectedColor };
+        return { iconName: solidGlyphs ? 'pin.fill' : 'pin', iconColor: disconnectedColor };
     }
   }
   switch (boardConnection) {
@@ -73,6 +81,6 @@ export function getBoardControlIndicatorVisual({
       return { iconName: 'person.fill', iconColor: peerColor };
     case 'disconnected':
       // Tap to take control — neutral outline bulb, no glow.
-      return { iconName: 'lightbulb', iconColor: disconnectedColor };
+      return { iconName: solidGlyphs ? 'lightbulb.fill' : 'lightbulb', iconColor: disconnectedColor };
   }
 }
