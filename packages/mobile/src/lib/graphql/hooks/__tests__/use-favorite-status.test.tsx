@@ -78,6 +78,7 @@ vi.mock('../../../../hooks/use-offline-mutations', () => ({
 vi.mock('../../../../offline/offline-sync-adapter', () => ({ drainMutationQueue: vi.fn(async () => undefined) }));
 
 import { favoritesStore } from '@boardsesh/climb-actions';
+import { smartPlaylistQueryKey } from '@boardsesh/playlists-react';
 import { useFavoriteStatus, useToggleFavorite } from '../index';
 
 function makeWrapper() {
@@ -363,5 +364,185 @@ describe('useToggleFavorite', () => {
     // Tap 1's rollback would have written `false`. The guard sees the store no
     // longer holds tap 1's optimistic value and leaves tap 2's result standing.
     expect(favoritesStore.getIsFavorited('climb-1')).toBe(true);
+  });
+
+  // #5304: the Liked list loses an un-liked row at tap time. Both ways it can come
+  // back must work from the cache alone, without a refetch.
+  describe('Liked list rows', () => {
+    const likedKey = smartPlaylistQueryKey({ smartPlaylistType: 'LIKED_CLIMBS', userId: 'u' });
+    function seedLiked(queryClient: QueryClient) {
+      queryClient.setQueryData(likedKey, {
+        pages: [{ climbs: [{ uuid: 'climb-0' }, { uuid: 'climb-1' }, { uuid: 'climb-2' }], totalCount: 3 }],
+        pageParams: [0],
+      });
+    }
+    function likedTotal(queryClient: QueryClient) {
+      return queryClient.getQueryData<{ pages: { totalCount: number }[] }>(likedKey)?.pages[0].totalCount;
+    }
+    function likedUuids(queryClient: QueryClient) {
+      return queryClient
+        .getQueryData<{ pages: { climbs: { uuid: string }[] }[] }>(likedKey)
+        ?.pages[0].climbs.map((climb) => climb.uuid);
+    }
+
+    it('puts the row back when the climb is liked again after an un-like', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+      const input = { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 };
+
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: false } });
+      await result.current.mutateAsync({ input, currentlyFavorited: true });
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']);
+
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: true } });
+      await result.current.mutateAsync({ input, currentlyFavorited: false });
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-1', 'climb-2']);
+    });
+
+    it('puts the row back when the un-like fails, with no request to do it', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+
+      requestMock.mockRejectedValueOnce(new Error('offline'));
+      await expect(
+        result.current.mutateAsync({
+          input: { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 },
+          currentlyFavorited: true,
+        }),
+      ).rejects.toThrow('offline');
+
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-1', 'climb-2']);
+      expect(requestMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('puts the row back when the un-like fails after a board or angle change', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      favoritesStore.applyContext('kilter|40|u');
+      favoritesStore.setIsFavorited('climb-1', true);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+
+      let rejectUnlike: (error: Error) => void = () => undefined;
+      requestMock.mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectUnlike = reject;
+        }),
+      );
+      const unlike = result.current.mutateAsync({
+        input: { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 },
+        currentlyFavorited: true,
+      });
+      await waitFor(() => expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']));
+
+      // The climber moves the board to 25° while the un-like is in flight.
+      favoritesStore.applyContext('kilter|25|u');
+      rejectUnlike(new Error('offline'));
+      await expect(unlike).rejects.toThrow('offline');
+
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-1', 'climb-2']);
+      expect(likedTotal(queryClient)).toBe(3);
+      // The 25° heart store never held this climb, so the 40° rollback stays out.
+      expect(favoritesStore.getIsFavorited('climb-1')).toBe(false);
+    });
+
+    it('leaves the Liked rows to a newer toggle when an older one fails after a board change', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+      const input = { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 };
+
+      // Tap 1 un-likes and hangs; tap 2 likes; tap 3 un-likes and hangs.
+      let rejectFirstUnlike: (error: Error) => void = () => undefined;
+      requestMock.mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectFirstUnlike = reject;
+        }),
+      );
+      const firstUnlike = result.current.mutateAsync({ input, currentlyFavorited: true });
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: true } });
+      await result.current.mutateAsync({ input, currentlyFavorited: false });
+      let resolveLastUnlike: (value: unknown) => void = () => undefined;
+      requestMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLastUnlike = resolve;
+        }),
+      );
+      const lastUnlike = result.current.mutateAsync({ input, currentlyFavorited: true });
+      await waitFor(() => expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']));
+
+      // Tap 1's failure must not put the row back over tap 3's un-like.
+      favoritesStore.applyContext('kilter|25|u');
+      rejectFirstUnlike(new Error('offline'));
+      await expect(firstUnlike).rejects.toThrow('offline');
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']);
+      expect(likedTotal(queryClient)).toBe(2);
+
+      resolveLastUnlike({ toggleFavorite: { favorited: false } });
+      await lastUnlike;
+    });
+
+    it('takes the row out again when a re-like fails, and a later like still puts it back', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+      const input = { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 };
+
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: false } });
+      await result.current.mutateAsync({ input, currentlyFavorited: true });
+
+      requestMock.mockRejectedValueOnce(new Error('offline'));
+      await expect(result.current.mutateAsync({ input, currentlyFavorited: false })).rejects.toThrow('offline');
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']);
+      expect(likedTotal(queryClient)).toBe(2);
+      expect(favoritesStore.getIsFavorited('climb-1')).toBe(false);
+
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: true } });
+      await result.current.mutateAsync({ input, currentlyFavorited: false });
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-1', 'climb-2']);
+      expect(likedTotal(queryClient)).toBe(3);
+    });
+
+    it('takes the row out again when a queued re-like fails to write locally', async () => {
+      localQueue.offlineEnabled = true;
+      localQueue.db = { tag: 'db' };
+      localQueue.removeFavoriteLocal.mockResolvedValueOnce(undefined);
+      localQueue.addFavoriteLocal.mockRejectedValueOnce(new Error('disk full'));
+      const { queryClient, Wrapper } = makeWrapper();
+      seedLiked(queryClient);
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+      const input = { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 };
+
+      await result.current.mutateAsync({ input, currentlyFavorited: true });
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']);
+
+      await expect(result.current.mutateAsync({ input, currentlyFavorited: false })).rejects.toThrow('disk full');
+      expect(likedUuids(queryClient)).toEqual(['climb-0', 'climb-2']);
+      expect(likedTotal(queryClient)).toBe(2);
+      expect(requestMock).not.toHaveBeenCalled();
+    });
+
+    it('refetches an on-screen Liked list after a like, but only marks it stale after an un-like', async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useToggleFavorite(), { wrapper: Wrapper });
+      const input = { boardName: 'kilter', climbUuid: 'climb-1', angle: 40 };
+
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: true } });
+      await result.current.mutateAsync({ input, currentlyFavorited: false });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['smartPlaylist', 'LIKED_CLIMBS'],
+        refetchType: 'active',
+      });
+
+      invalidateSpy.mockClear();
+      requestMock.mockResolvedValueOnce({ toggleFavorite: { favorited: false } });
+      await result.current.mutateAsync({ input, currentlyFavorited: true });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['smartPlaylist', 'LIKED_CLIMBS'],
+        refetchType: 'none',
+      });
+    });
   });
 });
