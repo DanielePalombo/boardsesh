@@ -1,5 +1,6 @@
 import { useNativeRootHeader } from '../../../src/hooks/use-native-root-header';
 import { NativeTabletContent } from '../../../src/components/navigation/NativeTabletContent';
+import { renderHiddenHeaderTitle } from '../../../src/components/chrome/hidden-header-title';
 import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -24,11 +25,14 @@ export default function ClimbsLayout() {
           <Stack.Screen
             name="index"
             options={{
+              // The tab already names the screen, so the header draws no title, large or
+              // inline, in any state (NativeRootHeader `titleHidden`). `title` stays for
+              // VoiceOver and the back button's long-press menu. Set here too so nothing
+              // flashes before the chrome mounts. Material keeps its own app bar.
               title: t('mobile.nav.climbs'),
-              // UIKit owns the native large title, including empty/loading branches.
-              // ClimbTopChrome adds actions; Material keeps its own app bar.
               headerShown: nativeRootHeader,
-              headerLargeTitle: nativeRootHeader,
+              headerLargeTitle: false,
+              headerTitle: nativeRootHeader ? renderHiddenHeaderTitle : undefined,
               headerTransparent: nativeRootHeader,
             }}
           />

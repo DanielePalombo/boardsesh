@@ -18,9 +18,11 @@ vi.mock('../../chrome/NativeRootHeader', async () => {
       onHeightChange,
       centerContent,
       centerActionWidths,
+      titleHidden,
       rightActions,
     }: {
       scrollEdge?: unknown;
+      titleHidden?: boolean;
       centerContent?: ReactNode;
       rightActions?: ReactNode;
       centerActionWidths?: { leading: number; trailing: number };
@@ -32,6 +34,7 @@ vi.mock('../../chrome/NativeRootHeader', async () => {
     }) => {
       nativeChrome.scrollEdge = scrollEdge;
       nativeChrome.centerActionWidths = centerActionWidths;
+      nativeChrome.titleHidden = titleHidden;
       return createElement(
         'div',
         null,
@@ -74,9 +77,8 @@ vi.mock('../../play-drawer/AngleBoardDiagram', () => ({ AngleBoardDiagram: () =>
 vi.mock('../../play-drawer/AngleSlider', () => ({ AngleSlider: () => null }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
-import { createElement, forwardRef, useImperativeHandle, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { createElement, type MouseEvent, type ReactNode } from 'react';
 import type { UserBoard } from '@boardsesh/shared-schema';
-import type { SearchHeaderHandle } from '../../SearchHeader';
 
 type BoardLabelFields = Pick<
   UserBoard,
@@ -98,6 +100,7 @@ const nativeChrome = vi.hoisted(() => ({
   measuredChromeHeight: 88,
   scrollEdge: undefined as unknown,
   centerActionWidths: undefined as { leading: number; trailing: number } | undefined,
+  titleHidden: undefined as boolean | undefined,
   // The native stack's frame: an iPhone 17 Pro.
   frameWidth: 402,
 }));
@@ -409,30 +412,6 @@ vi.mock('../../Text', () => ({
   Text: ({ children }: { children?: ReactNode }) => createElement('span', { 'data-text': 'true' }, children),
 }));
 
-type SearchHeaderMockProps = {
-  placeholder?: string;
-  initialValue?: string;
-  onChangeText?: (text: string) => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
-};
-vi.mock('../../SearchHeader', () => ({
-  SearchHeader: forwardRef<SearchHeaderHandle, SearchHeaderMockProps>(function SearchHeaderMock(props, ref) {
-    useImperativeHandle(ref, () => ({
-      blur: () => props.onBlur?.(),
-      focus: () => props.onFocus?.(),
-      getText: () => props.initialValue ?? '',
-      setText: (text: string) => props.onChangeText?.(text),
-    }));
-    return createElement('input', {
-      'data-search-field': 'true',
-      'data-placeholder': props.placeholder ?? '',
-      onFocus: props.onFocus,
-      onBlur: props.onBlur,
-    });
-  }),
-}));
-
 vi.mock('../../grade', () => ({
   GradeRangeRail: ({ recenterKey, glass }: { recenterKey?: number; glass?: boolean }) =>
     createElement('div', {
@@ -499,12 +478,6 @@ function makeProps(over: Partial<Parameters<typeof ClimbTopChrome>[0]> = {}) {
     onCreate: vi.fn(),
     onOpenBoardDetail: vi.fn(),
     onHeightChange: vi.fn(),
-    searchFieldRef: { current: null } as RefObject<SearchHeaderHandle | null>,
-    searchInitialValue: '',
-    searchPlaceholder: 'Search climbs',
-    onSearchChange: vi.fn(),
-    onSearchFocus: vi.fn(),
-    onSearchBlur: vi.fn(),
     onCloseGrade: vi.fn(),
     onDismissGradePopover: vi.fn(),
     ...over,
@@ -553,6 +526,7 @@ describe('ClimbTopChrome', () => {
     nativeChrome.measuredChromeHeight = 88;
     nativeChrome.scrollEdge = undefined;
     nativeChrome.centerActionWidths = undefined;
+    nativeChrome.titleHidden = undefined;
     haptics.light.mockClear();
     haptics.selection.mockClear();
   });
@@ -708,25 +682,30 @@ describe('ClimbTopChrome', () => {
     expect(haptics.light).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the custom search field without top-row filter chrome', () => {
-    const { container } = render(<ClimbTopChrome {...makeProps()} />);
-    expect(lightbulb(container)).toBeNull();
-    expect(container.querySelector('[data-search-field]')).not.toBeNull();
-    expect(container.querySelector('[data-pressable^="mobile.search.filters"]')).toBeNull();
+  // No search field on any variant: the climb-name search is the Filters sheet's
+  // first row, like the Logbook.
+  it.each([
+    ['fallback Liquid Glass', 'liquidGlass', false],
+    ['native Liquid Glass', 'liquidGlass', true],
+    ['Material', 'material', false],
+  ] as const)('renders no search field on %s', (_label, variant, nativeHeader) => {
+    ctrl.variant = variant;
+    nativeChrome.enabled = nativeHeader;
+    const { container } = render(<ClimbTopChrome {...makeProps({ onOpenFilters: vi.fn() })} />);
+    expect(container.querySelector('input')).toBeNull();
+    expect(container.querySelector('[data-placeholder]')).toBeNull();
   });
 
-  it('renders the Material filter affordance next to the custom search field', () => {
+  it('tells the native header to draw no title: the tab names the screen', () => {
+    nativeChrome.enabled = true;
+    render(<ClimbTopChrome {...makeProps()} />);
+    expect(nativeChrome.titleHidden).toBe(true);
+  });
+
+  it('keeps the Material filter button when the persistent chip row is off', () => {
     ctrl.variant = 'material';
     const { container } = render(<ClimbTopChrome {...makeProps({ onOpenFilters: vi.fn() })} />);
-    expect(container.querySelector('[data-search-field]')).not.toBeNull();
     expect(container.querySelector('[data-glass-icon="filter"][data-label="mobile.search.filters"]')).not.toBeNull();
-  });
-
-  it('native search mode leaves text search in the stack header and does not render filter chrome', () => {
-    const { container } = render(<ClimbTopChrome {...makeProps({ searchMode: 'native' })} />);
-    expect(container.querySelector('[data-search-field]')).toBeNull();
-    expect(container.querySelector('[data-gradepill]')).toBeNull();
-    expect(container.querySelector('[data-pressable^="mobile.search.filters"]')).toBeNull();
   });
 
   // The climbs tab suppresses the top-chrome BLE lightbulb in BOTH variants:
@@ -793,17 +772,15 @@ describe('ClimbTopChrome', () => {
   });
 
   it.each([
-    ['Material', 'material', false, 'custom'],
-    ['fallback Liquid Glass', 'liquidGlass', false, 'custom'],
-    ['native Liquid Glass with custom search', 'liquidGlass', true, 'custom'],
-    ['native Liquid Glass with native search', 'liquidGlass', true, 'native'],
-  ] as const)('reserves the disclosed grade row only while open on %s', (_label, variant, nativeHeader, searchMode) => {
+    ['Material', 'material', false],
+    ['fallback Liquid Glass', 'liquidGlass', false],
+    ['native Liquid Glass', 'liquidGlass', true],
+  ] as const)('reserves the disclosed grade row only while open on %s', (_label, variant, nativeHeader) => {
     ctrl.variant = variant;
     nativeChrome.enabled = nativeHeader;
     nativeChrome.glassGradeRail = nativeHeader;
     const onHeightChange = vi.fn();
     const props = makeProps({
-      searchMode,
       onHeightChange,
       gradeBound: { minGradeId: 10, maxGradeId: 12 },
       onGradeChange: vi.fn(),
@@ -812,7 +789,10 @@ describe('ClimbTopChrome', () => {
     });
     const { container, rerender, getByText } = render(<ClimbTopChrome {...props} />);
     const measure = () => container.querySelector('[data-has-layout="true"]')!;
+    // The chips render even with no search field above them (Material used to nest
+    // them inside the search branch).
     const filterTokens = getByText('Persistent filter tokens');
+    expect(container.querySelector('input')).toBeNull();
     fireEvent.click(measure());
     expect(onHeightChange).toHaveBeenLastCalledWith(88);
 
@@ -867,7 +847,7 @@ describe('ClimbTopChrome', () => {
     ).toBe('#010203');
   });
 
-  it('renders Material with a static board title, separate history, search, and grade controls', () => {
+  it('renders Material with a static board title, separate history and grade controls, and no search field', () => {
     ctrl.variant = 'material';
     ctrl.board = typedBoard;
     const onOpenBoardDetail = vi.fn();
@@ -890,7 +870,7 @@ describe('ClimbTopChrome', () => {
     expect(container.querySelector('[data-appbar-title]')?.textContent).toBe('Display:kilter • 12x12');
     const history = capsule(container);
     expect(history?.getAttribute('data-capsule')).toBe('Board history, Display:kilter • 12x12 • 40°');
-    expect(container.querySelector('[data-search-field]')).not.toBeNull();
+    expect(container.querySelector('input')).toBeNull();
     const gradeLabel = container.querySelector('[data-pressable="mobile.search.gradeAction"]')?.textContent;
     expect(gradeLabel).toContain('Grade');
     // The resting label is the bare "Grade", not the old "Grade range" placeholder.
@@ -1047,26 +1027,6 @@ describe('ClimbTopChrome', () => {
         expect(onDismissGradePopover).not.toHaveBeenCalled();
         if (typeof loseFocus === 'function') loseFocus();
 
-        expect(onDismissGradePopover).toHaveBeenCalledTimes(1);
-        expect(onCloseGrade).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each(['liquidGlass', 'material'] as const)(
-      'dismisses the popover, not the rail, when search takes focus (%s)',
-      (variant) => {
-        ctrl.variant = variant;
-        ctrl.board = typedBoard;
-        const onCloseGrade = vi.fn();
-        const onDismissGradePopover = vi.fn();
-        const onSearchFocus = vi.fn();
-        const { container } = render(
-          <ClimbTopChrome {...makeProps({ onCloseGrade, onDismissGradePopover, onSearchFocus })} />,
-        );
-
-        fireEvent.focus(container.querySelector('[data-search-field="true"]') as HTMLInputElement);
-
-        expect(onSearchFocus).toHaveBeenCalledTimes(1);
         expect(onDismissGradePopover).toHaveBeenCalledTimes(1);
         expect(onCloseGrade).not.toHaveBeenCalled();
       },

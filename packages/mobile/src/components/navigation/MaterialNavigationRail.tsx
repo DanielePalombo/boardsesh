@@ -107,11 +107,6 @@ function MaterialNavigationRailComponent({ showWallCell = true }: { showWallCell
   const primary = useMemo<RailDestination[]>(
     () => [
       { segment: 'home', href: '/home', icon: 'home', iconInactive: 'home-outline', label: t('mobile.nav.home') },
-      // Climbs (search) deliberately uses the same glyph for both states — matching
-      // MaterialTabBar's `materialTabIcon('magnify', 'magnify')`; MaterialCommunityIcons
-      // has no filled `magnify` that reads as "search selected". The active pill carries
-      // the focus state instead.
-      { segment: 'climbs', href: '/climbs', icon: 'magnify', iconInactive: 'magnify', label: t('mobile.nav.climbs') },
       {
         segment: 'record',
         href: '/record',
@@ -135,6 +130,12 @@ function MaterialNavigationRailComponent({ showWallCell = true }: { showWallCell
         iconInactive: 'bookmark-multiple-outline',
         label: tPlaylists('bottomTabBar.discover'),
       },
+      // Climbs (search) is the last primary row, as it is the rightmost phone tab. It
+      // deliberately uses the same glyph for both states — matching MaterialTabBar's
+      // `materialTabIcon('magnify', 'magnify')`; MaterialCommunityIcons has no filled
+      // `magnify` that reads as "search selected". The active pill carries the focus
+      // state instead.
+      { segment: 'climbs', href: '/climbs', icon: 'magnify', iconInactive: 'magnify', label: t('mobile.nav.climbs') },
     ],
     [t, tSession, tPlaylists],
   );

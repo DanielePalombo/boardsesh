@@ -132,6 +132,7 @@ import {
   toolbarGlyphSize,
 } from '../GlassActionToolbar';
 import { UserAvatarToolbarAction } from '../../user-drawer/UserAvatarToolbarAction';
+import { renderHiddenHeaderTitle } from '../hidden-header-title';
 
 function lastOptions(): NativeStackNavigationOptions {
   return controls.options.at(-1)!;
@@ -284,6 +285,24 @@ describe('NativeRootHeader', () => {
     expect({ ...routeOptions, ...lastOptions() }.title).toBe('Climbs');
     expect(lastOptions().headerLargeTitle).toBe(true);
     expect(lastOptions().headerTitle).toBeUndefined();
+  });
+
+  // Climbs: the tab names the screen, so the header draws no title in any state,
+  // while the navigation item keeps the route title for VoiceOver and the back menu.
+  it('draws no title, large or inline, when the title is hidden', () => {
+    const routeOptions: NativeStackNavigationOptions = { title: 'Climbs' };
+    const { rerender } = render(<NativeRootHeader titleHidden onHeightChange={vi.fn()} />);
+
+    expect(lastOptions().headerLargeTitle).toBe(false);
+    expect(lastOptions().headerTitle).toBe(renderHiddenHeaderTitle);
+    expect(lastOptions()).not.toHaveProperty('title');
+    expect({ ...routeOptions, ...lastOptions() }.title).toBe('Climbs');
+
+    // The wall capsule still takes the centre when it shows.
+    rerender(<NativeRootHeader titleHidden centerContent={<span>On the wall</span>} onHeightChange={vi.fn()} />);
+    expect(lastOptions().headerLargeTitle).toBe(false);
+    expect(lastOptions().headerTitle).not.toBe(renderHiddenHeaderTitle);
+    expect(typeof lastOptions().headerTitle).toBe('function');
   });
 
   it('keeps an explicit title override independent of the focused route', () => {

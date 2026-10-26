@@ -47,8 +47,11 @@ There are **5 tabs** (the web has a 6th "Create" tab but it is between Discover 
 
 #### Mobile: library entry and tab variants
 
-The mobile tabs remain **Home, Climbs, Session, Discover, You**, in that order.
-Session keeps the `/record` route; only its visible navigation label changes.
+The mobile tabs are **Home, Session, Discover, You, Climbs**, in that order:
+Climbs is the rightmost tab, like Apple Music's Search tab (HIG Tab bars: the
+search tab sits "at the trailing end"). The tablet rails list it last among the
+primary rows, with You still pinned at the bottom. Session keeps the `/record`
+route; only its visible navigation label changes.
 An ordinary launch and untargeted post-login entry select **Climbs**, using the
 stored active board, unless the climber chose **Home** under Settings › Home ›
 "Open the app on" (#6289; it moved from General to the Home page with #6546). Selecting the initial tab does not reorder the bar.
@@ -77,13 +80,16 @@ The bar itself depends on the device:
 - **Native iPhone:** Liquid Glass uses `NativeTabs` (the system UIKit tab bar) on
   every iPhone, iOS 18 included. Climbs is an ordinary labelled tab, like Apple
   Music's Search tab, not `role="search"`: since SDK 58 that role is a
-  UISearchTab, which iOS 26 sets apart from the other tabs and which moves the
-  search field into the bottom bar. On iOS 26 Climbs' native search field sits
-  under the title (`placement: 'stacked'`); the tap that opens Climbs leaves it
-  alone and a second tap focuses it (`useTabReselect`). The queue accessory and
-  scroll minimization ride the bar. On iOS 18 the bar has none of those: Climbs
-  has its own search field in the screen, and the current climb rides the
-  floating JS queue bar just above the native bar.
+  UISearchTab, which iOS 26 sets apart from the other tabs and which brings a
+  search field into the bar. The queue accessory and scroll minimization ride
+  the iOS 26 bar. On iOS 18 the bar has neither, and the current climb rides
+  the floating JS queue bar just above the native bar.
+- **Climbs search, every platform:** the Climbs screen has no search field and
+  its header draws no "Climbs" title (`NativeRootHeader` `titleHidden`; the tab
+  names the screen). The climb-name search is the first row of the Filters
+  sheet, as in the Logbook. A second tap on the Climbs tab with the list showing
+  opens Filters without the keyboard (`useTabReselect`); a typed name shows as
+  the first token under the chips and counts in the Filters badge.
 - **Other phones:** Material, and Liquid Glass forced on Android, use JS `Tabs`
   with `MaterialTabBar`.
 - **Tablets:** one JS `Tabs` navigator at every width (sidebar at regular width,

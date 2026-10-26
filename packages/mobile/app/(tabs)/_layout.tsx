@@ -233,11 +233,6 @@ export default function TabLayout() {
       options={{ title: t('mobile.nav.home'), tabBarIcon: materialTabIcon('home', 'home-outline') }}
     />,
     <Tabs.Screen
-      key="climbs"
-      name="climbs"
-      options={{ title: t('mobile.nav.climbs'), tabBarIcon: materialTabIcon('magnify', 'magnify') }}
-    />,
-    <Tabs.Screen
       key="record"
       name="record"
       options={{
@@ -279,6 +274,12 @@ export default function TabLayout() {
         title: t('mobile.nav.profile'),
         tabBarIcon: materialTabIcon('account-circle', 'account-circle-outline'),
       }}
+    />,
+    // Last, so Climbs is the rightmost tab here too, matching the native bar.
+    <Tabs.Screen
+      key="climbs"
+      name="climbs"
+      options={{ title: t('mobile.nav.climbs'), tabBarIcon: materialTabIcon('magnify', 'magnify') }}
     />,
   ];
 
@@ -397,16 +398,6 @@ export default function TabLayout() {
         <NativeTabs.Trigger.Label>{t('mobile.nav.home')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
 
-      {/* An ordinary labelled tab in the bar, like Apple Music's Search tab: no
-          `role="search"`. Since SDK 58 that role makes a UISearchTab, which iOS 26
-          sets apart from the other tabs and which moves the search field into the
-          bottom bar. The field sits under the title instead (climbs/index.tsx), and
-          a second tap on the tab focuses it (`useTabReselect`). */}
-      <NativeTabs.Trigger name="climbs">
-        <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.climbs} md="search" />
-        <NativeTabs.Trigger.Label>{t('mobile.nav.climbs')}</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
       <NativeTabs.Trigger name="record">
         <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.record} md="radio_button_checked" />
         <NativeTabs.Trigger.Label>{tSession('mobile.session.recordTab')}</NativeTabs.Trigger.Label>
@@ -425,6 +416,17 @@ export default function TabLayout() {
       <NativeTabs.Trigger name="profile">
         <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.profile} md="account_circle" />
         <NativeTabs.Trigger.Label>{t('mobile.nav.profile')}</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      {/* Last, so it is the rightmost tab, like Apple Music's Search tab (HIG Tab
+          bars: the search tab sits "at the trailing end"). An ordinary labelled tab,
+          not `role="search"`: since SDK 58 that role makes a UISearchTab, which iOS 26
+          sets apart from the other tabs and which brings a search field into the bar.
+          Climbs has no search field; a second tap on the tab opens Filters instead
+          (`useTabReselect` in climbs/index.tsx). */}
+      <NativeTabs.Trigger name="climbs">
+        <NativeTabs.Trigger.Icon sf={TAB_SF_SYMBOLS.climbs} md="search" />
+        <NativeTabs.Trigger.Label>{t('mobile.nav.climbs')}</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
     </NativeTabs>
   );

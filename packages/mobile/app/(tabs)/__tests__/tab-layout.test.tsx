@@ -336,13 +336,14 @@ describe('TabLayout', () => {
     }
   });
 
-  it('renders Home as the leftmost native tab', () => {
+  // Home leads; Climbs is the rightmost tab, like Apple Music's Search tab.
+  it('renders Home as the leftmost native tab and Climbs as the rightmost', () => {
     const { container } = render(<TabLayout />);
     const triggerNames = Array.from(container.querySelectorAll('[data-trigger]')).map((trigger) =>
       trigger.getAttribute('data-trigger'),
     );
 
-    expect(triggerNames).toEqual(['home', 'climbs', 'record', 'discover', 'profile']);
+    expect(triggerNames).toEqual(['home', 'record', 'discover', 'profile', 'climbs']);
   });
 
   it.each([
@@ -380,18 +381,18 @@ describe('TabLayout', () => {
     expect(climbs?.textContent).toContain('mobile.nav.climbs');
   });
 
-  it('registers Home as the leftmost material tab', () => {
+  it('registers Home as the leftmost material tab and Climbs as the rightmost', () => {
     cfg.variant = 'material';
 
     render(<TabLayout />);
 
     expect(cfg.materialScreens.map((screen) => screen.name)).toEqual([
       'home',
-      'climbs',
       'record',
       'wall',
       'discover',
       'profile',
+      'climbs',
     ]);
   });
 
@@ -409,12 +410,12 @@ describe('TabLayout', () => {
     const triggerNames = Array.from(container.querySelectorAll('[data-trigger]')).map((trigger) =>
       trigger.getAttribute('data-trigger'),
     );
-    expect(triggerNames).toEqual(['home', 'climbs', 'record', 'discover', 'profile']);
+    expect(triggerNames).toEqual(['home', 'record', 'discover', 'profile', 'climbs']);
   });
 
   it('leaves the iOS 26-only extras off the iOS 18 native bar', () => {
     // No minimize behavior (react-native-screens warns below iOS 26), no search role
-    // (Climbs is a labelled tab with its own search field), and no accessory even
+    // (Climbs is an ordinary labelled tab everywhere), and no accessory even
     // with a climb current: the floating JS queue bar carries it instead.
     cfg.variant = 'liquidGlass';
     cfg.glassCapable = false;
@@ -442,11 +443,11 @@ describe('TabLayout', () => {
     expect(container.querySelector('[data-tabs="true"]')).toBeNull();
     expect(cfg.materialScreens.map((screen) => screen.name)).toEqual([
       'home',
-      'climbs',
       'record',
       'wall',
       'discover',
       'profile',
+      'climbs',
     ]);
   });
 
@@ -485,11 +486,11 @@ describe('TabLayout', () => {
     expect(container.querySelector('[data-tabs="true"]')).toBeNull();
     expect(cfg.materialScreens.map((screen) => screen.name)).toEqual([
       'home',
-      'climbs',
       'record',
       'wall',
       'discover',
       'profile',
+      'climbs',
     ]);
     // The wall screen registers with href:null so it never shows as a Material tab
     // button (MaterialTabBar filters the resulting display:none item).
@@ -513,11 +514,11 @@ describe('TabLayout', () => {
     expect(container.querySelector('[data-tabs="true"]')).toBeNull();
     expect(cfg.materialScreens.map((screen) => screen.name)).toEqual([
       'home',
-      'climbs',
       'record',
       'wall',
       'discover',
       'profile',
+      'climbs',
     ]);
   });
 
@@ -565,11 +566,11 @@ describe('TabLayout', () => {
     expect(container.querySelector('[data-ipad-wall-column="true"]')).not.toBeNull();
     expect(cfg.materialScreens.map((screen) => screen.name)).toEqual([
       'home',
-      'climbs',
       'record',
       'wall',
       'discover',
       'profile',
+      'climbs',
     ]);
   });
 

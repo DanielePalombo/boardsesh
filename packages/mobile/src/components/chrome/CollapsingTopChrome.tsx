@@ -54,6 +54,9 @@ type CollapsingTopChromeProps = {
   /** Optional interactive element for the centre slot (Climbs "On the wall"
    *  capsule), taking precedence over `centerTitle`. */
   centerContent?: ReactNode;
+  /** iOS native header only: draw no title for a screen its tab already names
+   *  (Climbs). See `NativeRootHeader`. */
+  titleHidden?: boolean;
   /** Optional glass action(s) docked at the far right of the right toolbar (e.g. the
    *  Record tab's share/invite + End controls). Discover/Climbs pass none. */
   trailingAction?: ReactNode;
@@ -105,6 +108,7 @@ export function CollapsingTopChrome({
   onHeightChange,
   centerTitle,
   centerContent,
+  titleHidden = false,
   trailingAction,
   trailingActionCount,
   leadingAction,
@@ -261,6 +265,7 @@ export function CollapsingTopChrome({
         leftActions={leftActions}
         leftActionsStandalone={leftActionCount === 1}
         centerContent={centerContent}
+        titleHidden={titleHidden}
         centerActionWidths={{
           leading: leftActionCount * NATIVE_ACTION_SIZE,
           trailing: rightActionCount * NATIVE_ACTION_SIZE,

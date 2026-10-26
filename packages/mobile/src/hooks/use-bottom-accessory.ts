@@ -51,8 +51,7 @@ export function useNativeTabBar(): boolean {
 }
 
 /**
- * Whether the native bar is the iOS 26 Liquid Glass bar, with minimize-on-scroll
- * and the native search field on Climbs.
+ * Whether the native bar is the iOS 26 Liquid Glass bar, with minimize-on-scroll.
  */
 export function useLiquidGlassTabBar(): boolean {
   return useTabChrome().liquidGlassTabBar;

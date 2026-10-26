@@ -606,7 +606,6 @@
     },
     "search": {
       "recentFilters": "Recientes",
-      "clearRecent": "Borrar",
       "gradeRange": "{{min}}–{{max}}",
       "gradeMin": "{{grade}}+",
       "gradeMax": "≤{{grade}}",

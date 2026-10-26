@@ -774,3 +774,18 @@ text, a grade, a date or a setter name.
 `surface` is new with the capsule row; events from older builds have only `fields` (Filter Changed)
 or only `preset` (Sort Changed). The sheet applies live, so each tap in it is its own event; there is no
 Apply to batch them.
+
+## Climbs Filters sheet (mobile, 2026-10-26)
+
+The Climbs list lost its search field: the climb-name search is the first row of the Filters
+sheet, as in the Logbook, and a second tap on the Climbs tab (the rightmost tab) opens that sheet.
+Two events from `packages/mobile/app/(tabs)/climbs/index.tsx`. Neither carries the typed name.
+
+| Event | Properties | When |
+| --- | --- | --- |
+| `Climb Filters Opened` | `source` (`tab_reselect` = second tap on the Climbs tab / `filters_chip` = the Filters chip or Material filter button / `empty_recovery` = "Open filters" on an empty search), `activeFilterCount`, `hasName` | The sheet actually opened; a tap while it is open fires nothing |
+| `Climb Filters Closed` | `source` (as opened), `activeFilterCount`, `hasName` (as left on close) | The climber closed the sheet; not when the app cancels it (leaving the screen, switching board) |
+
+`activeFilterCount` leaves the name out, like `Climb Search Performed`; `hasName` covers it. Expect
+the `hasQuery` share of `Climb Search Performed` to move from this build on: name search now starts
+inside Filters instead of a field on the page.

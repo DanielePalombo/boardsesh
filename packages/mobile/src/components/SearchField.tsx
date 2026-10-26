@@ -28,9 +28,6 @@ type SearchFieldProps = {
 /**
  * The app's plain search field: a filled capsule with a magnifier, an input, and a
  * clear button that appears once there is something to clear.
- *
- * Not `SearchHeader` — that one is the climb list's Liquid Glass capsule and owns
- * focus choreography and recent-search behaviour that a simple filter does not want.
  */
 export const SearchField = forwardRef<NativeTextInput, SearchFieldProps>(function SearchField(
   { value, onChangeText, placeholder, clearAccessibilityLabel, inputComponent, autoFocus, onSubmitEditing },

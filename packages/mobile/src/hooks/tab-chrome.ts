@@ -31,9 +31,8 @@ export type TabChrome = {
    */
   nativeTabBar: boolean;
   /**
-   * The iOS 26 Liquid Glass version of that bar: minimize-on-scroll and the
-   * native search field on Climbs. Both are iOS 26 UIKit features, so an iOS 18
-   * iPhone keeps the classic bar and the in-screen search field.
+   * The iOS 26 Liquid Glass version of that bar, with minimize-on-scroll, an iOS
+   * 26 UIKit feature: an iOS 18 iPhone keeps the classic bar.
    */
   liquidGlassTabBar: boolean;
   /**

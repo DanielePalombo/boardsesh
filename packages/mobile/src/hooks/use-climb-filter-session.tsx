@@ -60,7 +60,7 @@ import {
   type SessionSortModel,
 } from '../lib/climb-filter-session-reducer';
 import { getCollectionFilter, type ClimbTypeFilter, type CollectionFilter } from '../lib/collection-filter';
-import { getActiveFilterTokens, type FilterToken } from '../lib/filter-tokens';
+import { buildNameFilterToken, getActiveFilterTokens, type FilterToken } from '../lib/filter-tokens';
 import { buildGradeRailStops } from '../lib/grade-stops';
 import { chipKindToTokenKeys, type FilterChipKind } from '../lib/pinnable-chips';
 import type { PinnedChipsStore } from '../lib/pinned-chips-store';
@@ -521,13 +521,8 @@ export function useClimbFilterSession<K extends string, P extends FilterChipKind
   const tokens = useMemo(() => {
     const chipBackedTokenKeys = new Set<string>(pinned.flatMap((kind) => chipKindToTokenKeys(kind)));
     const receipt: FilterToken[] = [];
-    if (hasName) {
-      receipt.push({
-        key: 'name',
-        label: t('mobile.filter.nameToken', { name: session.name }),
-        clear: handleClearName,
-      });
-    }
+    const nameToken = buildNameFilterToken(session.name, t, handleClearName);
+    if (nameToken) receipt.push(nameToken);
     for (const filterToken of filterTokens) {
       if (!chipBackedTokenKeys.has(filterToken.key)) receipt.push(filterToken);
     }
@@ -540,7 +535,6 @@ export function useClimbFilterSession<K extends string, P extends FilterChipKind
     return receipt;
   }, [
     pinned,
-    hasName,
     t,
     session.name,
     handleClearName,

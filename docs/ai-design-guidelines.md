@@ -80,8 +80,8 @@ older iPhone is the variant with the chrome degraded, not Material.
     system UIKit tab bar through `NativeTabs` (HIG, Tab bars). Material, Android and the tablet
     shell keep the JS `Tabs` + `MaterialTabBar` / sidebar.
   - `liquidGlassTabBar`: the iOS 26 extras on that bar, also gated on `useGlassCapability()` —
-    Climbs' native search field under its title and minimize-on-scroll. Climbs stays an ordinary
-    labelled tab, like Apple Music's Search tab, not a separated `role="search"` tab.
+    minimize-on-scroll. Climbs stays an ordinary labelled tab, the rightmost one, like Apple
+    Music's Search tab, not a separated `role="search"` tab.
   - `nativeAccessory`: the `BottomAccessory` platter carries the current climb (iOS 26 only).
     Wherever it is false, including the native bar on iOS 18, the floating JS `PersistentQueueBar`
     carries the current climb, positioned above whichever bar is on screen.
@@ -434,7 +434,8 @@ The Profile Logbook puts the quick filter capsule row (see "Quick filter capsule
 profile tabs: Filters · N, then the climber's pinned capsules, then at most one inline Grade or Angle
 rail and the removable tokens. There is no search field on the page: the climb-name search is the
 first row of the filter sheet, and a typed name shows as a token ("“crimp”") so a filtered list
-always says why. In the composed profile header the selected Logbook tab already names the page, so
+always says why. The Climbs list works the same way on every platform, with no title in its header
+either: a second tap on the Climbs tab opens Filters, without the keyboard. In the composed profile header the selected Logbook tab already names the page, so
 the row has no heading of its own. A public profile keeps its "Logbook" heading in the page's
 normal flow; its scope line says "All boards" until a board is picked, then names that board.
 
