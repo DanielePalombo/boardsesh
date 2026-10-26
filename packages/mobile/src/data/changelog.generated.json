@@ -1,6 +1,20 @@
 {
-  "generatedAt": "2026-10-26T09:10:56.909Z",
+  "generatedAt": "2026-10-26T14:42:01.824Z",
   "entries": [
+    {
+      "prNumber": 6892,
+      "category": "fixed",
+      "title": "Old climb links now land on the current climb URL.",
+      "mergedAt": "2026-10-26T14:37:57Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6892"
+    },
+    {
+      "prNumber": 6899,
+      "category": "fixed",
+      "title": "Lit holds stay visible when you open or edit a climb.",
+      "mergedAt": "2026-10-26T12:45:09Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6899"
+    },
     {
       "prNumber": 6883,
       "category": "fixed",

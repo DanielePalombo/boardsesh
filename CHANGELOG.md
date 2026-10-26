@@ -17,6 +17,8 @@ A new version shipped to the App Store and Play Store.
 
 ### Fixed
 
+- Old climb links now land on the current climb URL. ([#6892](https://github.com/boardsesh/boardsesh/pull/6892))
+- Lit holds stay visible when you open or edit a climb. ([#6899](https://github.com/boardsesh/boardsesh/pull/6899))
 - Choose another saved board's controller and confirm which wall you're connecting to. ([#6883](https://github.com/boardsesh/boardsesh/pull/6883))
 - Following a setter no longer sends a follow request to someone else who happens to use the same name on another board. ([#6764](https://github.com/boardsesh/boardsesh/pull/6764))
 - See who set a climb, even when their account is private: their name and avatar now show on new-climb feeds and alerts ([#6550](https://github.com/boardsesh/boardsesh/pull/6550))
