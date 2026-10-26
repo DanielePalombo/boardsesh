@@ -17,6 +17,9 @@ A new version shipped to the App Store and Play Store.
 
 ### Fixed
 
+- Choose another saved board's controller and confirm which wall you're connecting to. ([#6883](https://github.com/boardsesh/boardsesh/pull/6883))
+- Following a setter no longer sends a follow request to someone else who happens to use the same name on another board. ([#6764](https://github.com/boardsesh/boardsesh/pull/6764))
+- See who set a climb, even when their account is private: their name and avatar now show on new-climb feeds and alerts ([#6550](https://github.com/boardsesh/boardsesh/pull/6550))
 - Your climb's logbook updates as soon as you edit or delete an ascent. ([#6878](https://github.com/boardsesh/boardsesh/pull/6878))
 - Your pinned playlists stay with the account and board you're using. ([#6879](https://github.com/boardsesh/boardsesh/pull/6879))
 - Playlists recover after a brief connection drop followed by a short server wait. ([#6869](https://github.com/boardsesh/boardsesh/pull/6869))
