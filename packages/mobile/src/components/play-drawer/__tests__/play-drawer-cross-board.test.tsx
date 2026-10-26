@@ -188,7 +188,11 @@ vi.mock('react-native-mmkv', () => {
   };
 });
 vi.mock('react-native-gesture-handler', () => ({
-  ScrollView: ({ children, ...props }: { children?: ReactNode } & Props) => {
+  // RNGH 3's default component cannot coordinate with the player's builders.
+  ScrollView: () => {
+    throw new Error('The player must use the legacy scroll handler on RNGH 3');
+  },
+  LegacyScrollView: ({ children, ...props }: { children?: ReactNode } & Props) => {
     recorded.scroll.push(props);
     return createElement('div', null, children);
   },
