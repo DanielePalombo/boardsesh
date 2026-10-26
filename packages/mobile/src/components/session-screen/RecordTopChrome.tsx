@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { type LayoutChangeEvent, StyleSheet, View } from 'react-native';
 import type { NativeStackNavigationOptions } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +25,9 @@ import { glassSize } from '../../theme/layout';
 import { topBarFor } from '../../theme/top-bar';
 import { useNativeRootHeader } from '../../hooks/use-native-root-header';
 import { useGlassCapability } from '../../hooks/use-glass-capability';
+import { useNativeRootBarItems } from '../../hooks/use-native-root-bar-items';
+import { barItemsFactory, symbolBarItem, type RootBarItem } from '../chrome/root-bar-items';
+import { useAccountRailItem, useBarItemsOnRail } from '../chrome/use-root-bar-items';
 
 type RecordTopChromeProps = {
   /** The native or Material header owns the contextual session title. */
@@ -64,6 +67,28 @@ export function RecordTopChrome({
     (event: LayoutChangeEvent) => onHeightChange(event.nativeEvent.layout.height),
     [onHeightChange],
   );
+
+  // On iPhone Duo's side rail the account and invite are native bar items. A
+  // horizontal bar keeps the glass avatar (round photo, initials) and invite.
+  const nativeBarItems = useNativeRootBarItems();
+  const onRail = useBarItemsOnRail();
+  const accountItem = useAccountRailItem();
+  const inviteLabel = t('mobile.session.invite');
+  const leftItems = useMemo(() => {
+    if (!nativeBarItems || !onRail) return undefined;
+    const items: RootBarItem[] = [accountItem];
+    if (onShare) {
+      items.push(
+        symbolBarItem({
+          label: inviteLabel,
+          symbol: iconMap['person.badge.plus'].ios,
+          onPress: onShare,
+          identifier: 'root.invite',
+        }),
+      );
+    }
+    return barItemsFactory(items);
+  }, [nativeBarItems, onRail, accountItem, inviteLabel, onShare]);
 
   const isMaterial = selectByVariant(variant, { material: true, liquidGlass: false });
   const exitAction = onEndSession ? (
@@ -199,6 +224,7 @@ export function RecordTopChrome({
         title={title}
         leftActions={leftActions}
         leftActionsStandalone={!onShare}
+        leftItems={leftItems}
         rightActions={rightActions}
         rightItems={rightItems}
         onHeightChange={onHeightChange}

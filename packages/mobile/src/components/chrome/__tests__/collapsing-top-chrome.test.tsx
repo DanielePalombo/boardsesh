@@ -1,23 +1,61 @@
 // @vitest-environment jsdom
+vi.mock('../../../hooks/use-native-root-bar-items', () => ({ useNativeRootBarItems: () => ctrl.nativeBarItems }));
+// The live item hooks have their own suite; here they hand back labelled stand-ins
+// so the chrome's ordering and gating can be read off the items it passes UIKit.
+vi.mock('../use-root-bar-items', () => {
+  const stub = (label: string, identifier?: string) => ({
+    type: 'button' as const,
+    label,
+    onPress: () => undefined,
+    ...(identifier ? { identifier } : {}),
+  });
+  return {
+    useAccountRailItem: () => stub('account'),
+    useAngleBarItem: () => ({
+      item: ctrl.board ? { ...stub('40°'), accessibilityLabel: 'Board angle, 40°' } : null,
+      picker: createElement('div', { 'data-native-angle-picker': 'true' }),
+    }),
+    useBoardSwitcherBarItem: () => (ctrl.board ? stub('board') : null),
+    useClimbListBarItems: ({ angleRow }: { angleRow?: { label: string } | null }) => {
+      ctrl.climbListAngleRow = angleRow ?? null;
+      return [stub('history', 'root.boardHistory'), stub('list-menu')];
+    },
+    useLightbulbBarItem: () => (ctrl.bluetooth ? stub('lightbulb') : null),
+    useBarItemsOnRail: () => ctrl.onRail,
+  };
+});
+vi.mock('../NativeTrailingItemShowcaseAnchor', () => ({
+  NativeTrailingItemShowcaseAnchor: ({ name, positionFromEnd }: { name: string; positionFromEnd: number }) =>
+    createElement('div', { 'data-native-anchor': name, 'data-position-from-end': positionFromEnd }),
+}));
 vi.mock('../../SheetTopBar', () => ({ SheetTopBar: () => null }));
 vi.mock('../../../hooks/use-native-root-header', () => ({ useNativeRootHeader: () => ctrl.nativeHeader }));
 vi.mock('../../chrome/NativeRootHeader', () => ({
   NativeRootHeader: ({
     centerContent,
     centerActionWidths,
+    centerItemSides,
     children,
     leftActions,
+    leftItems,
+    rightItems,
     scrollEdge,
   }: {
     centerContent?: ReactNode;
     centerActionWidths?: { leading: number; trailing: number };
+    centerItemSides?: ItemSides;
     children?: ReactNode;
     leftActions?: ReactNode;
+    leftItems?: () => BarItemStandIn[];
+    rightItems?: () => BarItemStandIn[];
     scrollEdge?: unknown;
   }) => {
     ctrl.nativeScrollEdge = scrollEdge;
     ctrl.nativeLeftActions = leftActions;
+    ctrl.nativeLeftItems = leftItems?.() ?? null;
+    ctrl.nativeRightItems = rightItems?.() ?? null;
     ctrl.nativeCenterActionWidths = centerActionWidths;
+    ctrl.nativeCenterItemSides = centerItemSides;
     return createElement(
       'div',
       null,
@@ -38,7 +76,7 @@ vi.mock('../../play-drawer/AngleSlider', () => ({ AngleSlider: () => null }));
 vi.mock('../../../lib/boards/use-set-board-angle', () => ({ useSetBoardAngle: () => vi.fn() }));
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
-import { createElement, type ReactNode } from 'react';
+import { createElement, type ReactElement, type ReactNode } from 'react';
 import type { UserBoard } from '@boardsesh/shared-schema';
 
 type BoardFields = Pick<
@@ -52,15 +90,34 @@ type BluetoothCtx = {
   armUndoWallChangeToast: () => void;
 } | null;
 
+type BarSide = { nativeItems?: number; titleItems?: number; customSlots?: number };
+type ItemSides = { leading: BarSide; trailing: BarSide };
+
+type BarItemStandIn = {
+  type: string;
+  label?: string;
+  onPress?: () => void;
+  visibilityPriority?: string;
+  icon?: { type: string; name?: string };
+};
+
 const ctrl = vi.hoisted(() => ({
   board: null as BoardFields | null,
   bluetooth: null as BluetoothCtx,
   setActiveBoard: vi.fn(),
   variant: 'liquidGlass' as 'liquidGlass' | 'material',
   nativeHeader: false,
+  nativeBarItems: false,
+  onRail: false,
+  windowWidth: 402,
+  climbListAngleRow: null as { label: string } | null,
+  openBoardControls: vi.fn(),
+  nativeLeftItems: null as BarItemStandIn[] | null,
+  nativeRightItems: null as BarItemStandIn[] | null,
   // The scroll-edge store the native header was handed.
   nativeScrollEdge: undefined as unknown,
   nativeCenterActionWidths: undefined as { leading: number; trailing: number } | undefined,
+  nativeCenterItemSides: undefined as ItemSides | undefined,
   nativeLeftActions: undefined as ReactNode,
 }));
 const haptics = vi.hoisted(() => ({ light: vi.fn() }));
@@ -81,6 +138,7 @@ vi.mock('react-native', () => ({
       children,
     ),
   StyleSheet: { create: (styles: Record<string, unknown>) => styles, absoluteFill: {}, hairlineWidth: 1 },
+  useWindowDimensions: () => ({ width: ctrl.windowWidth, height: 874 }),
 }));
 
 vi.mock('expo-linear-gradient', () => ({
@@ -137,7 +195,7 @@ vi.mock('../../../lib/graphql/use-active-board', () => ({
 }));
 vi.mock('../../../providers/bluetooth-provider', () => ({ useOptionalBluetoothContext: () => ctrl.bluetooth }));
 vi.mock('../../../providers/ble-control-sheet-provider', () => ({
-  useBleControlSheet: () => ({ open: vi.fn(), close: vi.fn() }),
+  useBleControlSheet: () => ({ open: ctrl.openBoardControls, close: vi.fn() }),
 }));
 // The shared lightbulb hook also reads board presence + session state. Inert
 // defaults here so the bulb follows local BLE (boardId null → session fallback,
@@ -153,17 +211,27 @@ vi.mock('../../../hooks/use-native-glass', () => ({ useNativeGlass: () => false 
 vi.mock('../../../hooks/use-effective-surface-mode', () => ({ useEffectiveSurfaceMode: () => 'blur' }));
 vi.mock('../../../lib/haptics', () => ({ hapticLight: haptics.light }));
 vi.mock('../../../theme/tokens', () => ({ spacing: { 1: 4, 2: 8, 4: 16 }, shadows: { sm: {} } }));
-vi.mock('../../../theme/layout', () => ({ glassSize: { standard: 48, capsule: 44, inline: 44, bar: 38 } }));
+vi.mock('../../../theme/layout', () => ({
+  glassSize: { standard: 48, capsule: 44, inline: 44, bar: 38 },
+  TOOLBAR_SIDE_MARGIN: 16,
+}));
 
 vi.mock('../../GlassSurface', () => ({ GlassSurface: () => createElement('div', { 'data-glass': 'true' }) }));
 
-type PressMockProps = { children?: ReactNode; onPress?: () => void; accessibilityLabel?: string };
+type PressMockProps = {
+  children?: ReactNode;
+  onPress?: () => void;
+  onLongPress?: () => void;
+  accessibilityLabel?: string;
+};
 vi.mock('../../PressableSurface', () => ({
-  PressableSurface: ({ children, onPress, accessibilityLabel }: PressMockProps) =>
+  PressableSurface: ({ children, onPress, onLongPress, accessibilityLabel }: PressMockProps) =>
     createElement(
       'button',
       {
         onClick: onPress,
+        // A long press, as far as jsdom can say one.
+        onContextMenu: onLongPress,
         'data-pressable': accessibilityLabel ?? '',
         'data-capsule': accessibilityLabel?.includes('•') ? accessibilityLabel : '',
       },
@@ -305,7 +373,15 @@ describe('CollapsingTopChrome', () => {
     ctrl.nativeHeader = false;
     ctrl.nativeScrollEdge = undefined;
     ctrl.nativeCenterActionWidths = undefined;
+    ctrl.nativeCenterItemSides = undefined;
     ctrl.nativeLeftActions = undefined;
+    ctrl.nativeBarItems = false;
+    ctrl.onRail = false;
+    ctrl.nativeLeftItems = null;
+    ctrl.nativeRightItems = null;
+    ctrl.windowWidth = 402;
+    ctrl.climbListAngleRow = null;
+    ctrl.openBoardControls.mockClear();
     haptics.light.mockClear();
   });
 
@@ -489,6 +565,150 @@ describe('CollapsingTopChrome', () => {
       const { container } = render(<CollapsingTopChrome {...makeProps({ onHeightChange })} />);
       fireEvent.click(container.querySelector('[data-has-layout="true"]') as HTMLElement);
       expect(onHeightChange).toHaveBeenCalledWith(64);
+    });
+  });
+
+  describe('native bar items (iOS 26 iPhone)', () => {
+    beforeEach(() => {
+      ctrl.nativeHeader = true;
+      ctrl.nativeBarItems = true;
+    });
+
+    const labels = (items: BarItemStandIn[] | null) => items?.map((item) => item.label ?? item.type) ?? null;
+    const connected = () => ({
+      isConnected: true,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      armUndoWallChangeToast: vi.fn(),
+    });
+    const climbList = { onOpenHistory: vi.fn(), badge: false };
+
+    describe('in a horizontal bar', () => {
+      it('keeps the glass avatar and + as the left island, and native items on the right', () => {
+        ctrl.board = board;
+        ctrl.bluetooth = connected();
+        const { container } = render(<CollapsingTopChrome {...makeProps({ canCreate: true })} />);
+        expect(ctrl.nativeLeftItems).toBeNull();
+        const leading = render(<>{ctrl.nativeLeftActions}</>).container;
+        expect(leading.querySelector('[data-pressable="ariaLabels.userMenu"]')).not.toBeNull();
+        expect(createAction(leading)).not.toBeNull();
+        expect(labels(ctrl.nativeRightItems)).toEqual(['40°', 'board', 'custom']);
+        // The angle picker sheet still mounts beside the header.
+        expect(container.querySelector('[data-native-angle-picker]')).not.toBeNull();
+        expect(ctrl.nativeCenterItemSides).toEqual({
+          leading: { customSlots: 2 },
+          trailing: { nativeItems: 3, titleItems: 1 },
+        });
+      });
+
+      it('keeps the glass bulb last, and its long press opens Board controls', () => {
+        ctrl.board = board;
+        ctrl.bluetooth = connected();
+        render(<CollapsingTopChrome {...makeProps()} />);
+        const bulb = ctrl.nativeRightItems?.at(-1) as BarItemStandIn & { element?: ReactElement };
+        expect(bulb.type).toBe('custom');
+        const { container } = render(bulb.element as ReactElement);
+        const bulbButton = container.querySelector('[data-pressable="lightControl.disconnect"]') as HTMLElement;
+        fireEvent.contextMenu(bulbButton);
+        expect(ctrl.openBoardControls).toHaveBeenCalledWith(expect.objectContaining({ surface: 'toolbar' }));
+      });
+
+      it.each([
+        [375, true],
+        [402, true],
+        [440, false],
+      ])('on a %ipt iPhone beside the wall capsule, moves the angle into the list menu: %s', (width, moved) => {
+        ctrl.windowWidth = width;
+        ctrl.board = board;
+        render(
+          <CollapsingTopChrome
+            {...makeProps({ canCreate: true, hideLight: true, climbListBarActions: climbList })}
+            centerContent={<button>On the wall</button>}
+          />,
+        );
+        expect(labels(ctrl.nativeRightItems)).toEqual(
+          moved ? ['history', 'list-menu'] : ['40°', 'history', 'list-menu'],
+        );
+        expect(ctrl.climbListAngleRow).toEqual(moved ? expect.objectContaining({ label: 'Board angle, 40°' }) : null);
+      });
+
+      it('keeps the angle in the bar when no capsule needs the room', () => {
+        ctrl.windowWidth = 375;
+        ctrl.board = board;
+        render(
+          <CollapsingTopChrome {...makeProps({ canCreate: true, hideLight: true, climbListBarActions: climbList })} />,
+        );
+        expect(labels(ctrl.nativeRightItems)).toEqual(['40°', 'history', 'list-menu']);
+        expect(ctrl.climbListAngleRow).toBeNull();
+      });
+
+      it('anchors the showcase callout on the native history item, second from the end', () => {
+        ctrl.board = board;
+        const { container } = render(
+          <CollapsingTopChrome
+            {...makeProps({ hideLight: true, climbListBarActions: climbList, anchorBoardButton: true })}
+          />,
+        );
+        const anchor = container.querySelector('[data-native-anchor="board-history-button"]');
+        expect(anchor?.getAttribute('data-position-from-end')).toBe('1');
+      });
+    });
+
+    describe('on the iPhone Duo rail', () => {
+      beforeEach(() => {
+        ctrl.onRail = true;
+      });
+
+      it('hands UIKit every action as a native item, the bulb included', () => {
+        ctrl.board = board;
+        ctrl.bluetooth = connected();
+        render(<CollapsingTopChrome {...makeProps({ canCreate: true })} />);
+        expect(labels(ctrl.nativeLeftItems)).toEqual(['account', 'create.label']);
+        expect(labels(ctrl.nativeRightItems)).toEqual(['40°', 'board', 'lightbulb']);
+        // Every item has left the bar, so the capsule has the whole bar.
+        expect(ctrl.nativeCenterItemSides).toEqual({ leading: {}, trailing: {} });
+      });
+
+      it('gives + an SF Symbol, its label and the highest visibility priority, and fires onCreate', () => {
+        const onCreate = vi.fn();
+        render(<CollapsingTopChrome {...makeProps({ canCreate: true, onCreate })} />);
+        const create = ctrl.nativeLeftItems?.[1];
+        expect(create).toMatchObject({
+          type: 'button',
+          label: 'create.label',
+          icon: { type: 'sfSymbol', name: 'plus' },
+          visibilityPriority: 'high',
+        });
+        create?.onPress?.();
+        expect(onCreate).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves out + without canCreate and the bulb when hideLight is set', () => {
+        ctrl.bluetooth = connected();
+        render(<CollapsingTopChrome {...makeProps({ hideLight: true })} />);
+        expect(labels(ctrl.nativeLeftItems)).toEqual(['account']);
+        expect(ctrl.nativeRightItems).toBeNull();
+      });
+
+      it('keeps the angle on the rail beside the capsule, and logs no history anchor', () => {
+        ctrl.windowWidth = 375;
+        ctrl.board = board;
+        const { container } = render(
+          <CollapsingTopChrome
+            {...makeProps({ hideLight: true, climbListBarActions: climbList, anchorBoardButton: true })}
+            centerContent={<button>On the wall</button>}
+          />,
+        );
+        expect(labels(ctrl.nativeRightItems)).toEqual(['40°', 'history', 'list-menu']);
+        expect(container.querySelector('[data-native-anchor]')).toBeNull();
+      });
+    });
+
+    it('keeps an interactive centre capsule as a custom view', () => {
+      const { getByRole } = render(
+        <CollapsingTopChrome {...makeProps({ centerContent: <button>On the wall</button> })} />,
+      );
+      expect(getByRole('button', { name: 'On the wall' })).toBeTruthy();
     });
   });
 });

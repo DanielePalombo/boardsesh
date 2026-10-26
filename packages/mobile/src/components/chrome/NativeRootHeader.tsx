@@ -15,7 +15,7 @@ import {
   NativeHeaderOwnBackgroundContext,
   NativeTitleMaxWidthContext,
 } from './native-header-action-context';
-import { nativeTitleMaxWidth } from './native-title-bound';
+import { nativeItemsTitleMaxWidth, nativeTitleMaxWidth, type NativeBarSide } from './native-title-bound';
 import { HIDDEN_HEADER_TITLE_STYLE } from './hidden-header-title';
 
 /** UIKit owns title collapse, edge effects, Dynamic Type and the status-bar tap. */
@@ -24,9 +24,11 @@ export function NativeRootHeader({
   leftActions,
   leftActionsStandalone = false,
   rightActions,
+  leftItems,
   rightItems,
   centerContent,
   centerActionWidths,
+  centerItemSides,
   titleHidden = false,
   children,
   opaqueControls = false,
@@ -37,12 +39,23 @@ export function NativeRootHeader({
   /** A single avatar draws a circle instead of UIKit's wider shared capsule. */
   leftActionsStandalone?: boolean;
   rightActions?: ReactNode;
+  /**
+   * Native leading bar items (`root-bar-items.ts`). When set they replace
+   * `leftActions`: iPhone Duo moves native items onto its side rail.
+   */
+  leftItems?: NativeStackNavigationOptions['unstable_headerLeftItems'];
   /** Native bar items take precedence over the custom trailing group. */
   rightItems?: NativeStackNavigationOptions['unstable_headerRightItems'];
   /** Interactive content in the compact native bar, beside the action groups. */
   centerContent?: ReactNode;
   /** Content widths of the native action groups flanking the custom title. */
   centerActionWidths?: { leading: number; trailing: number };
+  /**
+   * What the native bar items on each side hold, for `leftItems`/`rightItems`:
+   * they take UIKit's measured widths, not the custom 38pt slots. Takes
+   * precedence over `centerActionWidths`.
+   */
+  centerItemSides?: { leading: NativeBarSide; trailing: NativeBarSide };
   /**
    * Draw no title, large or inline, for a screen whose tab already names it
    * (Climbs). `centerContent` still shows when present.
@@ -72,7 +85,11 @@ export function NativeRootHeader({
   const frameWidth = useFrameSize((frame) => frame.width);
   const insets = useSafeAreaInsets();
   // The title view gets the free space between the two groups (see nativeTitleMaxWidth).
-  const centerMaxWidth = centerActionWidths ? nativeTitleMaxWidth(frameWidth, insets, centerActionWidths) : undefined;
+  const centerMaxWidth = centerItemSides
+    ? nativeItemsTitleMaxWidth(frameWidth, insets, centerItemSides)
+    : centerActionWidths
+      ? nativeTitleMaxWidth(frameWidth, insets, centerActionWidths)
+      : undefined;
   // Stable renderer identity across re-renders that change neither input: one
   // fewer header option that changes on every render of the screen (#6619).
   const hasCenterContent = centerContent != null;
@@ -122,13 +139,14 @@ export function NativeRootHeader({
           headerTitleStyle: titleHidden ? HIDDEN_HEADER_TITLE_STYLE : { color: systemColors.label },
           headerLargeTitleStyle: { color: systemColors.label },
           headerLeft:
-            leftActions && !leftActionsStandalone
+            leftActions && !leftItems && !leftActionsStandalone
               ? () => (
                   <NativeHeaderActionContext.Provider value={true}>{leftActions}</NativeHeaderActionContext.Provider>
                 )
               : undefined,
           unstable_headerLeftItems:
-            leftActions && leftActionsStandalone
+            leftItems ??
+            (leftActions && leftActionsStandalone
               ? () => [
                   {
                     type: 'custom',
@@ -142,7 +160,7 @@ export function NativeRootHeader({
                     ),
                   },
                 ]
-              : undefined,
+              : undefined),
           headerRight: rightActions
             ? () => <NativeHeaderActionContext.Provider value={true}>{rightActions}</NativeHeaderActionContext.Provider>
             : undefined,
