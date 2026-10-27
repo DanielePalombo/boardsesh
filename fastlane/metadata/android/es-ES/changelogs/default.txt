@@ -1,6 +1,6 @@
-Novedades de 2.6:
-- Añade un Spraywall desde una foto, revisa las presas, monta bloques y registra encadenes. Descárgalo para escalar sin cobertura.
-- Encuentra sesiones de tu crew y sus registros en cada bloque.
-- Temporizador de descanso con avance automático de la cola mientras la app esté abierta.
-- Elige los detalles bajo cada bloque. Añade playlists sin vaciar la cola.
-- MoonBoard usa su escala V. Importa logbooks en más formatos CSV.
+Novedades de 2.7:
+- Tu cuenta atrás de descanso aparece en la notificación de la sesión, con un tono al terminar.
+- Monta entrenamientos por fases: calentamiento, pirámide y luego volumen.
+- Al deslizar te quedas en la lista que tocaste. Desliza un bloque para ponerlo a continuación o al final.
+- Ordena y filtra playlists, Favoritos y Proyectos.
+- Logbook, favoritos y playlists funcionan sin cobertura. Los escaneos encuentran MoonBoards.
