@@ -159,6 +159,17 @@ describe('findScreenshotTreeOffenders', () => {
             buffer: pngHeader({ width: 2420, height: 1668 }),
           },
         ],
+        // One set, two displays: inner (open, landscape) and outer (closed).
+        'iphone-duo': [
+          {
+            name: `${locale}/iphone-duo/00-board-view.png`,
+            buffer: pngHeader({ width: 2853, height: 2007 }),
+          },
+          {
+            name: `${locale}/iphone-duo/05-profile.png`,
+            buffer: pngHeader({ width: 1398, height: 2034 }),
+          },
+        ],
       };
     }
     for (const [locale, devices] of Object.entries(overrides)) {

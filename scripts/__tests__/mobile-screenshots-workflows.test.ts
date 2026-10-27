@@ -231,7 +231,7 @@ describe('mobile-screenshots-ios.yml probe gate', () => {
     expect(source).toContain(`probe_exclude=$(printf '%s' "$devices" | jq -c '[{locale:"en-US", device: .[0]}]')`);
   });
 
-  it('captures four devices across four app locales and five store locales', () => {
+  it('captures five devices across four app locales and five store locales', () => {
     const compute = workflow.jobs.setup.steps?.find((step) => step.id === 'compute')?.run ?? '';
     const devicesJson = compute.match(/devices='([^']+)'/)?.[1];
     expect(devicesJson).toBeDefined();
@@ -241,9 +241,10 @@ describe('mobile-screenshots-ios.yml probe gate', () => {
       'iphone-16-pro',
       'ipad-pro-13-inch-m5',
       'ipad-pro-11-inch-m5',
+      'iphone-duo',
     ]);
-    expect(devices.length * 4).toBe(16);
-    expect(devices.length * 5).toBe(20);
+    expect(devices.length * 4).toBe(20);
+    expect(devices.length * 5).toBe(25);
   });
 
   it('runs the probe on gate=probe only, off the shared shard action', () => {

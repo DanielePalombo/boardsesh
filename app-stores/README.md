@@ -29,9 +29,11 @@ Apple screenshots are written to
 `app-stores/apple/screenshots/<app-store-locale>/<device>/`. `--locales all`
 captures the app locales `en-US`, `es`, `fr`, and `de`, then writes App Store
 Connect folders `en-US`, `es-ES`, `es-MX`, `fr-FR`, and `de-DE`. `--devices
-common` captures the full App Store matrix: the three iPhone portrait slots plus
-13-inch and 11-inch iPad landscape slots. Use `--devices phones` or `--devices
-ipads` for narrowed local capture.
+common` captures the full App Store matrix: the iPhone 16 Pro Max and iPhone 16
+Pro portrait slots, the 13-inch and 11-inch iPad landscape slots, and the iPhone
+Duo set (five inner-display shots open, three outer-display shots closed). Use
+`--devices phones`, `--devices ipads` or `--devices duo` for narrowed local
+capture.
 
 Google Play screenshots are written to `app-stores/google/screenshots/<device>/`.
 Dark is the default; pass `--theme light` for a light set. See

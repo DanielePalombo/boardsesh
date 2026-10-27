@@ -245,9 +245,13 @@ the first `navigate` / `screenshot --to` may catch the dialog.
 ## Store capture device coverage
 
 `vp run mobile:screenshots -- --devices common` captures iPhone 16 Pro Max
-(1320 × 2868), iPhone 16 Pro (1206 × 2622), and both existing landscape iPads.
-`--devices phones` selects both phones. The four app locales produce 16 capture
-shards and 20 storefront sets because Spanish targets both `es-ES` and `es-MX`.
+(1320 × 2868), iPhone 16 Pro (1206 × 2622), both existing landscape iPads, and
+the iPhone Duo (inner display open at 2853 × 2007, outer display closed at
+1398 × 2034, one set). `--devices phones` selects both phones; `--devices duo`
+the Duo alone, which needs Xcode 27 with the iOS 27.1 runtime. The four app
+locales produce 20 capture shards and 25 storefront sets because Spanish targets
+both `es-ES` and `es-MX`. How the Duo is folded headlessly:
+[docs/mobile-store-release.md](mobile-store-release.md#the-iphone-duo-set).
 The `smoke` flow keeps its single Pro Max / English default; pass an explicit
 `--device` to inspect another device. The ad-hoc `mobile:ios-shots` default is
 unchanged.
