@@ -459,7 +459,7 @@
           "logbook": "Diario",
           "climberLogs": "Log dei climber",
           "setterNotes": "Note del tracciatore",
-          "betaVideos": "Video di beta",
+          "betaVideos": "Video della beta",
           "boardseshGrade": "Grado Boardsesh",
           "community": "Community",
           "similarClimbs": "Blocchi simili"
@@ -499,7 +499,7 @@
           "session": "Avvia una session o guarda il suo timer",
           "playlists": "Blocchi preferiti e Progetti",
           "climbingNow": "Session in diretta a cui puoi unirti",
-          "beta": "Nuovi video di beta per il tuo pannello",
+          "beta": "Nuovi video della beta per il tuo pannello",
           "feed": "Session e nuovi blocchi della tua crew. Sempre in fondo."
         },
         "presets": {
@@ -1142,7 +1142,7 @@
     "unfollow": "Smetti di seguire"
   },
   "betaVideos": {
-    "empty": "Ancora nessun video di beta"
+    "empty": "Ancora nessun video della beta"
   },
   "moonboardImport": {
     "removeConfirmTitle": "Rimuovere questo blocco?"

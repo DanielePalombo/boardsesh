@@ -67,10 +67,10 @@
       "noClimbs": "Ancora nessun blocco creato",
       "climbsError": "Impossibile caricare i blocchi",
       "betaShelf": {
-        "title": "Video beta",
+        "title": "Video della beta",
         "seeAll": "Vedi tutti",
-        "allTitle": "Video beta",
-        "empty": "Ancora nessun video beta",
+        "allTitle": "Video della beta",
+        "empty": "Ancora nessun video della beta",
         "emptyBody": "Le beta che questo climber condivide compaiono qui."
       }
     },
@@ -130,7 +130,7 @@
         "a11yGradeDelta": "hai dato {{logged}}, per la community è {{consensus}}",
         "a11yStars": "valutato {{count}} stelle su 5",
         "a11yHasNote": "ha una nota",
-        "a11yHasBetaVideo": "ha un video beta",
+        "a11yHasBetaVideo": "ha un video della beta",
         "a11yMirrored": "specchiato",
         "editAction": "Modifica salita",
         "deleteAction": "Elimina salita",

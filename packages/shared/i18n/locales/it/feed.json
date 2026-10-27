@@ -5,8 +5,8 @@
   },
   "mobile": {
     "home": {
-      "betaOpenError": "Impossibile aprire quel video beta.",
-      "betaCardLabel": "Apri video beta",
+      "betaOpenError": "Impossibile aprire quel video della beta.",
+      "betaCardLabel": "Apri video della beta",
       "feedTitle": "Dalla tua crew",
       "signInTitle": "Accedi per vedere il tuo feed",
       "signInBody": "Segui i climber per vedere qui le loro session e le ripetizioni del giorno.",
@@ -40,8 +40,8 @@
         "beta": {
           "title": "Beta fresche",
           "titleBoard": "Beta fresche su questo pannello",
-          "empty": "Ancora nessun video beta",
-          "error": "Impossibile caricare i video beta.",
+          "empty": "Ancora nessun video della beta",
+          "error": "Impossibile caricare i video della beta.",
           "offline": "Nessun segnale. Le beta fresche tornano quando sei di nuovo online.",
           "offlineMode": "La modalità offline è attiva. Le beta fresche tornano quando la disattivi.",
           "unknownClimb": "Blocco sconosciuto",
@@ -136,8 +136,8 @@
     "addedToast": "Video aggiunto alla beta",
     "addError": "Impossibile aggiungere il video. Riprova.",
     "urlPlaceholder": "URL di Instagram o TikTok",
-    "urlLabel": "URL del video beta",
-    "urlLabelForClimb": "URL del video beta per {{name}}",
+    "urlLabel": "URL del video della beta",
+    "urlLabelForClimb": "URL del video della beta per {{name}}",
     "defaultHelper": "Incolla l'URL di un reel/post pubblico di Instagram o di TikTok così gli altri possono vedere la tua beta.",
     "cancel": "Annulla",
     "copyAndOpenInstagram": "Copia e apri Instagram",

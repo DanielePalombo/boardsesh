@@ -17,7 +17,7 @@
     "body": "Un attimo: questa schermata si riconnette da sola. La parete torna appena torniamo noi."
   },
   "board": {
-    "wallsOpen": "La parete è libera",
+    "wallsOpen": "Il pannello è libero",
     "lastLit": "Ultimo in parete: {{name}}",
     "litBy": "Scelta di {{name}}",
     "unnamedClimb": "Blocco senza nome"

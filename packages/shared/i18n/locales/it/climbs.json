@@ -37,7 +37,7 @@
       "description": "{{climbName}} - {{grade}} di {{setter}}. Qualità: {{quality}}/5. Salite: {{ascents}}",
       "imageAlt": "{{climbName}} - {{grade}} sul pannello {{boardName}}",
       "fallbackTitle": "Blocco",
-      "fallbackDescription": "Guarda i dettagli del blocco e i video di beta",
+      "fallbackDescription": "Guarda i dettagli del blocco e i video della beta",
       "seoHeading": "{{climbName}} — {{grade}}",
       "seoSummary": "Blocco {{boardName}} {{layoutName}}",
       "seoSetterSuffix": " tracciato da {{setter}}",
@@ -591,9 +591,9 @@
       "wideClimbs": "Blocchi larghi",
       "wideDescription": "Usano l'espansione laterale 10x10",
       "wideLockedHint": "Bloccato. Tieni premuto il chip Larghi per sbloccare.",
-      "betaVideos": "Solo con video di beta",
+      "betaVideos": "Solo con video della beta",
       "betaVideosShort": "🎥 Beta",
-      "betaVideosDescription": "Solo blocchi con un video di beta",
+      "betaVideosDescription": "Solo blocchi con un video della beta",
       "boardFit": {
         "label": "Adatti al mio pannello",
         "switch": "Solo blocchi adatti al mio pannello",
@@ -672,7 +672,7 @@
         "send": "Chiuso",
         "attempt": "Provato"
       },
-      "noMatch": "Niente matching",
+      "noMatch": "Vietato accoppiare",
       "campus": "Campus",
       "anyFeet": "Piedi liberi",
       "noKickboard": "No KB",
@@ -698,9 +698,9 @@
       }
     },
     "climbRules": {
-      "matchingAllowed": "Matching consentito",
-      "noMatching": "Niente matching",
-      "matchingUnknown": "Regola sul matching non registrata",
+      "matchingAllowed": "Accoppiare consentito",
+      "noMatching": "Vietato accoppiare",
+      "matchingUnknown": "Regola sull'accoppiare non registrata",
       "anyFeet": "Piedi liberi",
       "markedHoldsOnly": "Solo prese segnate",
       "noFeet": "Niente piedi",
@@ -756,7 +756,7 @@
       "copyNameHint": "Tieni premuto per copiare il nome",
       "copyName": "Copia il nome",
       "tick": "Registra una salita",
-      "addBetaVideo": "Aggiungi un video di beta",
+      "addBetaVideo": "Aggiungi un video della beta",
       "openInApp": "Apri nell'app Aurora",
       "fork": "Remixa questo blocco",
       "edit": "Modifica il blocco",
@@ -821,8 +821,8 @@
       "settings": {
         "draftLabel": "Salva come bozza",
         "draftDescription": "Le bozze restano private finché non le pubblichi.",
-        "noMatchLabel": "Niente matching",
-        "noMatchDescription": "Le mani non possono fare matching sulla stessa presa",
+        "noMatchLabel": "Vietato accoppiare",
+        "noMatchDescription": "Non puoi accoppiare le mani sulla stessa presa",
         "noKickboardLabel": "Niente kickboard",
         "noKickboardDescription": "I piedi non possono usare il kickboard",
         "campusLabel": "Campus (senza piedi)",
@@ -1023,7 +1023,7 @@
       "current": "{{angle}}° · {{grade}} — sei qui"
     },
     "beta": {
-      "heading": "Video di beta",
+      "heading": "Video della beta",
       "empty": "Ancora nessuna beta filmata.",
       "unavailable": "Questa volta la beta non si è caricata. Ricarica la pagina per riprovare."
     },

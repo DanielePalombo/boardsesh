@@ -377,7 +377,7 @@
     "web": {
       "title": "Su questo sito",
       "intro": "Tutto quello che c'è su boardsesh.com funziona nel browser, anche senza accedere.",
-      "item1": "Cerca grado, tracciatore, salite e video beta di un blocco.",
+      "item1": "Cerca grado, tracciatore, salite e video della beta di un blocco.",
       "item2": "Sfoglia il catalogo di un pannello per layout, dimensione e inclinazione.",
       "item3": "Condividi un blocco, una playlist o un profilo con un link.",
       "item4": "Trova palestre con pannelli vicino a te.",
@@ -390,7 +390,7 @@
       "item1": "Crea una coda e percorrila con la tua crew.",
       "item2": "Avvia una session live così ogni telefono gestisce una sola coda.",
       "item3": "Illumina le prese via Bluetooth su pannelli Kilter, Tension e MoonBoard.",
-      "item4": "Registra ripetizioni e tentativi e allega video beta."
+      "item4": "Registra ripetizioni e tentativi e allega video della beta."
     },
     "aurora": {
       "title": "Porta qui il tuo diario Kilter o Tension",
@@ -449,7 +449,7 @@
         "body": "Connettiti al pannello, risolvi una connessione fallita e controllalo dalla schermata di blocco con Live Activity."
       },
       "betaVideos": {
-        "title": "Video beta",
+        "title": "Video della beta",
         "body": "Condividi un reel di Instagram o TikTok in Boardsesh, allegalo a un blocco e trova le beta degli altri."
       },
       "sprayWalls": {
@@ -551,7 +551,7 @@
       "wall": {
         "title": "Chi illumina il pannello",
         "p1": "Un pannello accetta una sola connessione Bluetooth alla volta. Su tutti gli altri telefoni, guarda l'anteprima di un blocco e tocca la lampadina: il telefono connesso lo illumina per te.",
-        "p2": "Su un pannello senza luci la lampadina dice Prendi la parete.",
+        "p2": "Su un pannello senza luci la lampadina dice Prendi il pannello.",
         "bluetoothLink": "Connettersi a un pannello"
       },
       "crowd": {
@@ -679,7 +679,7 @@
         "climbActions": "Registra una salita da qualsiasi lista",
         "findingClimbs": "Ritrova il blocco",
         "hub": "Tutti gli argomenti di aiuto",
-        "betaVideos": "Allega un video beta"
+        "betaVideos": "Allega un video della beta"
       }
     },
     "bluetooth": {
@@ -734,7 +734,7 @@
       "control": {
         "title": "Quando il pannello ce l'ha qualcun altro",
         "p1": "In una session, un telefono gestisce il pannello. Sugli altri, guarda l'anteprima di un blocco e tocca la lampadina: il telefono che lo gestisce lo illumina.",
-        "p2": "Sui pannelli senza luci il pulsante dice Prendi la parete.",
+        "p2": "Sui pannelli senza luci il pulsante dice Prendi il pannello.",
         "sessionsLink": "Altro sulla condivisione di un pannello"
       },
       "liveActivity": {
@@ -786,7 +786,7 @@
         "queue": "Metti subito dopo mette il blocco in cima a Prossimi. Metti in fondo lo mette in fondo.",
         "favorite": "Attiva o disattiva il preferito è il cuore. I blocchi con il cuore riempiono Blocchi che ti piacciono.",
         "editEntry": "Modifica la salita, quando arrivi dal tuo diario.",
-        "betaVideo": "Aggiungi un video di beta, se hai effettuato l'accesso.",
+        "betaVideo": "Aggiungi un video della beta, se hai effettuato l'accesso.",
         "edit": "Modifica il blocco, per i tuoi blocchi come bozza o entro 24 ore dalla pubblicazione.",
         "remix": "Remixa questo blocco avvia un nuovo blocco da queste prese.",
         "openInAurora": "Apri nell'app Aurora, per Tension e altri pannelli Aurora. Kilter non ce l'ha.",
@@ -797,33 +797,33 @@
         "logbook": "Modifica quello che hai registrato",
         "playlists": "Playlist",
         "hub": "Tutti gli argomenti di aiuto",
-        "betaVideos": "Video beta"
+        "betaVideos": "Video della beta"
       }
     },
     "betaVideos": {
-      "breadcrumb": "Video beta",
+      "breadcrumb": "Video della beta",
       "hero": {
-        "title": "Allega un video beta a un blocco",
+        "title": "Allega un video della beta a un blocco",
         "subtitle": "Boardsesh collega reel di Instagram e TikTok ai blocchi."
       },
       "share": {
         "title": "Condividi un reel da Instagram o TikTok",
         "step1": "Sul reel o sul TikTok, tocca Condividi. Scegli Boardsesh. In Instagram può nascondersi sotto Altro.",
         "step2": "Boardsesh apre Allega la tua beta, con il post in alto e i tuoi blocchi registrati sotto.",
-        "step3": "Tocca il blocco che mostra il video. Un messaggio Video beta allegato lo conferma.",
+        "step3": "Tocca il blocco che mostra il video. Un messaggio Video della beta allegato lo conferma.",
         "p1": "Non c'è un passaggio di conferma e non c'è modo di rimuovere un video una volta allegato, quindi controlla prima il nome del blocco.",
         "p2": "Serve un account, e il blocco deve essere nel tuo diario come ripetizione o tentativo. Non hai effettuato l'accesso? Accedi e il link ti aspetta. Funzionano solo link pubblici di Instagram e TikTok."
       },
       "find": {
         "title": "Trova la beta su un blocco",
-        "p1": "Apri un blocco e scorri fino a Video beta. Tocca una scheda e si apre in Instagram o TikTok.",
+        "p1": "Apri un blocco e scorri fino a Video della beta. Tocca una scheda e si apre in Instagram o TikTok.",
         "p2": "Se hai effettuato l'accesso, il più nell'intestazione della sezione apre Condividi la tua beta, descritto sotto.",
-        "p3": "Per elencare solo i blocchi con beta, apri Filtri e attiva Solo con video di beta.",
+        "p3": "Per elencare solo i blocchi con beta, apri Filtri e attiva Solo con video della beta.",
         "filtersLink": "Altro sui filtri"
       },
       "add": {
         "title": "Gira una nuova beta da un blocco",
-        "step1": "Tieni premuto un blocco e scegli Aggiungi un video di beta, oppure tocca il più nella sua sezione Video beta.",
+        "step1": "Tieni premuto un blocco e scegli Aggiungi un video della beta, oppure tocca il più nella sua sezione Video della beta.",
         "step2": "Tocca Copia didascalia. Contiene nome del blocco, inclinazione e pannello.",
         "step3": "Tocca Apri Instagram e pubblica il tuo video con quella didascalia.",
         "step4": "Condividi il reel pubblicato in Boardsesh come sopra, oppure incolla il suo link sotto Hai già un link? e tocca Allega.",
@@ -831,7 +831,7 @@
       },
       "shelf": {
         "title": "Le tue beta nel profilo",
-        "p1": "Apri la scheda Profilo e scorri in fondo a Progressi. Lo scaffale Video beta mostra i più recenti, e Vedi tutti apre l'insieme completo.",
+        "p1": "Apri la scheda Profilo e scorri in fondo a Progressi. Lo scaffale Video della beta mostra i più recenti, e Vedi tutti apre l'insieme completo.",
         "p2": "Chiunque può guardare. Il link di un blocco mostra le sue beta su boardsesh.com senza accedere."
       },
       "next": {

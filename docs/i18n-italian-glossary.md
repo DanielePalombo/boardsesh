@@ -44,7 +44,7 @@ Workout copy uses _serie_ and _ripetizioni_ for sets and reps; context keeps tha
 
 ## The board device is **il pannello**
 
-Every string names the board device **pannello** (masculine — _il pannello, un pannello, il tuo pannello, i tuoi pannelli_), with masculine agreement (_il pannello connesso_, _sul pannello_, _al pannello_). Do **not** use _board_, _tavola_ or _tabellone_ for the device, and do not use _parete_ for it (_parete_ is the gym wall). Brand product names stay in English (below): _il Kilter Board_, _la MoonBoard_ keep their brand spelling.
+Every string names the board device **pannello** (masculine — _il pannello, un pannello, il tuo pannello, i tuoi pannelli_), with masculine agreement (_il pannello connesso_, _sul pannello_, _al pannello_). Controlling the board in a session is about the pannello too: _Prendi il pannello_ / _Libera il pannello_ / _Hai il pannello_ / _Il pannello è libero_ ("Take / Release / You have the wall", "Wall's open"), and _Questo pannello non ha luci_. Only a climb that is lit stays _in parete_. Do **not** use _board_, _tavola_ or _tabellone_ for the device, and do not use _parete_ for it (_parete_ is the gym wall). Brand product names stay in English (below): _il Kilter Board_, _la MoonBoard_ keep their brand spelling.
 
 ## A spray wall is a **Spraywall** (feminine)
 
@@ -75,6 +75,8 @@ Never: _spray wall_, _spray-wall_, _parete spray_, _muro spray_. Never a bare _p
 | Party Mode                                               | Modalità party                                |
 | Boardsesh grade                                          | grado Boardsesh                               |
 | kickboard (climb rule)                                   | kickboard                                     |
+| No matching (climb rule)                                 | Vietato accoppiare (allowed: Accoppiare consentito) |
+| beta video                                               | video della beta                              |
 | campus (no feet)                                         | campus (kept in English)                      |
 
 Kept in English by convention (technical board-config or loanwords): **layout**, **set / sets**, **beta**, **crew**, **flash**, **playlist**, **session**, **campus**, **kickboard**.
