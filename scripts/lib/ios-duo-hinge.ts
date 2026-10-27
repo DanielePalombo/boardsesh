@@ -118,14 +118,25 @@ function simctlSpawn(udid: string, args: string[], timeoutMs?: number) {
 }
 
 /** True when the display shows anything at all. */
+/** True when a saved screenshot shows anything at all. */
+export function pngIsLit(png: string): boolean {
+  const scratch = mkdtempSync(join(tmpdir(), 'boardsesh-duo-'));
+  try {
+    const bmp = join(scratch, 'display.bmp');
+    if (run('sips', ['-s', 'format', 'bmp', '--resampleWidth', '96', png, '--out', bmp]).status !== 0) return false;
+    return !isUnlitBmp(readFileSync(bmp));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** True when the display shows anything at all. */
 export function duoDisplayLit(udid: string, display: string): boolean {
   const scratch = mkdtempSync(join(tmpdir(), 'boardsesh-duo-'));
   try {
     const png = join(scratch, 'display.png');
-    const bmp = join(scratch, 'display.bmp');
     if (run('xcrun', ['simctl', 'io', udid, 'screenshot', `--display=${display}`, png]).status !== 0) return false;
-    if (run('sips', ['-s', 'format', 'bmp', '--resampleWidth', '96', png, '--out', bmp]).status !== 0) return false;
-    return !isUnlitBmp(readFileSync(bmp));
+    return pngIsLit(png);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -156,9 +167,18 @@ export function installDuoHinge(udid: string, library: string, logPath: string):
   writeFileSync(logPath, '');
   const previousPid = springBoardPid(simctlSpawn(udid, ['launchctl', 'list']).stdout);
   if (previousPid === null) throw new Error(`${LOG} SpringBoard is not running on ${udid}.`);
+  const launchctl = (args: string[]): void => {
+    const result = simctlSpawn(udid, ['launchctl', ...args]);
+    if (result.status !== 0) {
+      throw new Error(
+        `${LOG} \`launchctl ${args.slice(0, 2).join(' ')}\` failed in simulator ${udid} (exit ${result.status}): ${result.stderr.trim() || '(no output)'}`,
+      );
+    }
+  };
+  let installError: unknown = null;
   try {
-    simctlSpawn(udid, ['launchctl', 'setenv', 'DYLD_INSERT_LIBRARIES', library]);
-    simctlSpawn(udid, ['launchctl', 'setenv', 'BOARDSESH_DUO_HINGE_LOG', logPath]);
+    launchctl(['setenv', 'DYLD_INSERT_LIBRARIES', library]);
+    launchctl(['setenv', 'BOARDSESH_DUO_HINGE_LOG', logPath]);
     // Simulator processes are host processes, so the host can restart it.
     process.kill(previousPid, 'SIGKILL');
     if (!waitFor(() => readLog(logPath).includes('coordinator ready'), 90, 2)) {
@@ -166,10 +186,21 @@ export function installDuoHinge(udid: string, library: string, logPath: string):
         `${LOG} SpringBoard did not load the hinge library. Log: ${readLog(logPath).trim() || '(empty)'}`,
       );
     }
-  } finally {
-    simctlSpawn(udid, ['launchctl', 'unsetenv', 'DYLD_INSERT_LIBRARIES']);
-    simctlSpawn(udid, ['launchctl', 'unsetenv', 'BOARDSESH_DUO_HINGE_LOG']);
+  } catch (error) {
+    installError = error;
   }
+  // Always try both, so one failure cannot leave the other variable behind.
+  const unsetErrors: string[] = [];
+  for (const name of ['DYLD_INSERT_LIBRARIES', 'BOARDSESH_DUO_HINGE_LOG']) {
+    try {
+      launchctl(['unsetenv', name]);
+    } catch (error) {
+      unsetErrors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (installError) throw installError;
+  // A leftover DYLD_INSERT_LIBRARIES would load the library into the app too.
+  if (unsetErrors.length > 0) throw new Error(unsetErrors.join('\n'));
   if (!waitFor(() => currentDuoPose(udid) !== null, 60, 2)) {
     throw new Error(`${LOG} no Duo display lit up after the SpringBoard restart.`);
   }

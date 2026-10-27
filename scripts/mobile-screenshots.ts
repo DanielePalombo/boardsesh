@@ -176,13 +176,7 @@ import {
 import { ensureAndroidApk } from './mobile-android-apk';
 import { assertCppGradeCountProof, readCppCountFixtures } from './lib/cpp-grade-count';
 import { readIosCampaignPrimaryCapture, type IosCampaignPrimaryCapture } from './lib/ios-campaign-primary';
-import {
-  buildDuoHingeLibrary,
-  captureDuoDisplay,
-  duoDisplayLit,
-  installDuoHinge,
-  setDuoPose,
-} from './lib/ios-duo-hinge';
+import { buildDuoHingeLibrary, captureDuoDisplay, installDuoHinge, pngIsLit, setDuoPose } from './lib/ios-duo-hinge';
 import {
   matchScreenshotBoardCandidates,
   parseScreenshotBoardSelectors,
@@ -3057,12 +3051,21 @@ function captureIosDevice(
           return shotStatus;
         }
         const shotPath = join(captureDir, `${shot.name}.png`);
-        if (captureDuoDisplay(device.udid, 'open', shotPath) !== 0 || !duoDisplayLit(device.udid, 'primary-1')) {
+        // Judge the PNG that will ship, not a second screenshot taken after it.
+        if (captureDuoDisplay(device.udid, 'open', shotPath) !== 0 || !pngIsLit(shotPath)) {
           console.error(`${LOG} FAILED: the Duo's inner display was dark for ${shot.name}.`);
           return 1;
         }
       }
-      setDuoPose(device.udid, 'closed', duoHingeLog);
+      // The captures are done; folding back is tidying up. The finally block
+      // below tries again, so a failure here only warns.
+      try {
+        setDuoPose(device.udid, 'closed', duoHingeLog);
+      } catch (error) {
+        console.warn(
+          `${LOG} Could not fold the Duo back yet: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
 
     const normalizeStatus = normalizeCapturedIosScreenshots(captureDir, screenshotDevice);

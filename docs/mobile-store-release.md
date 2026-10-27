@@ -466,7 +466,13 @@ the outer display (`05-profile`, `06-session-detail`, `07-workout-generator`,
 from `app-store-duo.yaml`), then five open on the inner display in landscape
 (`00-board-view`, `01-board-view-2`, `02-climbs`, `03-home`,
 `04-playlist-detail`, from `app-store-duo-inner.yaml`). The filenames put the
-open layout first in the set.
+open layout first in the set. Every open shot has a lit climb in the board
+pane: the first shot opens the first climb's player, and the split keeps it in
+the left pane while the right pane moves to Home, the playlist and Climbs. Each
+shot waits on an id only its own screen has (the playlist's add-to-queue row carries
+`playlist-add-to-queue` for this) and on the "Open in 'Boardsesh'?" dialog being
+gone. The dimension gate pins each slot to its display: `00`-`04` must be
+2853 × 2007 and `05`-`07` must be 1398 × 2034 (`ACCEPTED_SIZES_BY_FILENAME`).
 
 Two simulator facts shape it:
 
