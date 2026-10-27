@@ -44,6 +44,7 @@ export const EXPECTED_APP_STORE_DEVICE_SLUGS = [
   'iphone-16-pro',
   'ipad-pro-13-inch-m5',
   'ipad-pro-11-inch-m5',
+  'iphone-duo',
 ] as const;
 
 /**
@@ -73,6 +74,15 @@ export const ACCEPTED_SIZES: Record<string, readonly Dimensions[]> = {
     { width: 2420, height: 1668 },
     { width: 2388, height: 1668 },
     { width: 2360, height: 1640 },
+  ],
+  // iPhone Duo: Apple's one APP_IPHONE_DUO set takes both displays in either
+  // orientation. We ship the inner display open in landscape and the outer
+  // display closed in portrait; the other two orientations are accepted too.
+  'iphone-duo': [
+    { width: 2853, height: 2007 },
+    { width: 2007, height: 2853 },
+    { width: 1398, height: 2034 },
+    { width: 2034, height: 1398 },
   ],
 };
 

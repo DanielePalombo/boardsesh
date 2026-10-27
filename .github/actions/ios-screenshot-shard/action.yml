@@ -134,6 +134,32 @@ runs:
         key: ${{ inputs.app-cache-key }}
         fail-on-cache-miss: true
 
+    # The iPhone Duo simulator exists only in Xcode 27 with the iOS 27.1
+    # runtime, which the runner's default Xcode may not be. Pick the newest
+    # installed Xcode 27 and make sure the runtime is there before capturing.
+    # The Duo shard also compiles a small simulator library at capture time
+    # (scripts/ios-duo-hinge/duo-hinge.m) to fold the device, which needs that
+    # Xcode's iphonesimulator SDK.
+    - name: Select Xcode 27 for the iPhone Duo
+      if: ${{ inputs.device-slug == 'iphone-duo' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        xcode="$(ls -d /Applications/Xcode_27*.app /Applications/Xcode-27*.app 2>/dev/null | sort -V | tail -1 || true)"
+        if [ -z "$xcode" ]; then
+          echo "::error::The iPhone Duo shard needs Xcode 27 on the runner; none is installed under /Applications."
+          exit 1
+        fi
+        sudo xcode-select --switch "$xcode/Contents/Developer"
+        xcodebuild -version
+        if ! xcrun simctl list runtimes | grep -Eq '^iOS 27\.([1-9]|[1-9][0-9])'; then
+          xcodebuild -downloadPlatform iOS -buildVersion 27.1
+        fi
+        if ! xcrun simctl list devicetypes | grep -q 'com.apple.CoreSimulator.SimDeviceType.iPhone-Duo'; then
+          echo "::error::Xcode at $xcode has no iPhone Duo simulator device type."
+          exit 1
+        fi
+
     - name: Install Maestro
       # Pinned to a specific GitHub Releases asset and verified against a
       # checksum committed in this repo — NOT `curl … get.maestro.mobile.dev | bash`,
