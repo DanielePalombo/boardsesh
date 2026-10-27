@@ -4,6 +4,14 @@ User-facing changes to Boardsesh, newest first. Auto-generated from the "Release
 Notes" section of merged pull requests — do not edit by hand (a CI check rejects
 manual changes). See docs/mobile-ota-updates.md.
 
+## 2026-10-27
+
+### Fixed
+
+- Prepare your workout without leaving Workout, then tap Start workout when you're ready to climb. ([#6964](https://github.com/boardsesh/boardsesh/pull/6964))
+- Preview Bluetooth climbs on the Waveshare without setting up WiFi. ([#6950](https://github.com/boardsesh/boardsesh/pull/6950))
+  See a larger board preview with highlights that leave hold shapes visible.
+
 ## 2026-10-26
 
 ### App update
@@ -17,6 +25,7 @@ A new version shipped to the App Store and Play Store.
 
 ### Fixed
 
+- Your profile no longer says you've sent 0 climbs when your totals are still loading or didn't come through. ([#6944](https://github.com/boardsesh/boardsesh/pull/6944))
 - Keep Bluetooth reconnects on the saved board you selected after reopening. ([#6894](https://github.com/boardsesh/boardsesh/pull/6894))
 - Old climb links now land on the current climb URL. ([#6892](https://github.com/boardsesh/boardsesh/pull/6892))
 - Lit holds stay visible when you open or edit a climb. ([#6899](https://github.com/boardsesh/boardsesh/pull/6899))

@@ -1,6 +1,28 @@
 {
-  "generatedAt": "2026-10-26T15:27:14.797Z",
+  "generatedAt": "2026-10-27T10:28:36.941Z",
   "entries": [
+    {
+      "prNumber": 6964,
+      "category": "fixed",
+      "title": "Prepare your workout without leaving Workout, then tap Start workout when you're ready to climb.",
+      "mergedAt": "2026-10-27T10:22:52Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6964"
+    },
+    {
+      "prNumber": 6950,
+      "category": "fixed",
+      "title": "Preview Bluetooth climbs on the Waveshare without setting up WiFi.",
+      "mergedAt": "2026-10-27T07:42:58Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6950",
+      "body": "See a larger board preview with highlights that leave hold shapes visible."
+    },
+    {
+      "prNumber": 6944,
+      "category": "fixed",
+      "title": "Your profile no longer says you've sent 0 climbs when your totals are still loading or didn't come through.",
+      "mergedAt": "2026-10-26T20:25:39Z",
+      "prUrl": "https://github.com/boardsesh/boardsesh/pull/6944"
+    },
     {
       "prNumber": 6894,
       "category": "fixed",
