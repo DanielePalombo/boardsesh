@@ -1,6 +1,6 @@
-Neu in 2.6:
-- Spraywall aus einem Foto: Griffe prüfen, Boulder erstellen und Begehungen loggen. Herunterladen und ohne Empfang klettern.
-- Live-Sessions deiner Crew und ihre Einträge bei jedem Boulder.
-- Pausen-Timer mit automatischem Weiterschalten bei geöffneter App.
-- Wähle die Details unter jedem Boulder. Füge Playlists hinzu, ohne die Warteschlange zu leeren.
-- MoonBoard nutzt seine V-Skala. Routenbuch-Importe lesen mehr CSV-Formate.
+Neu in 2.7:
+- Dein Pausen-Countdown erscheint in der Session-Benachrichtigung, mit einem Ton am Ende.
+- Baue Workouts aus Blöcken: Aufwärmen, Pyramide, dann Volumen.
+- Beim Wischen bleibst du in der getippten Liste. Wische über einen Boulder, um ihn als Nächstes oder Letztes zu spielen.
+- Sortiere und filtere Playlists, Gelikt und Projekte.
+- Routenbuch, Likes und Playlists funktionieren ohne Empfang. Scans finden MoonBoards.

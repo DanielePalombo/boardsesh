@@ -1,29 +1,36 @@
-Spraywalls: deine Spraywall in Boardsesh
+iPad und iPhone Duo: mehr Platz fürs Board
 
-Füge ein Foto deiner Spraywall zu Hause oder in deiner Halle hinzu, prüfe die erkannten Griffe und erstelle Boulder. Lege sie in die Warteschlange, speichere sie in Playlists und logge deine Begehungen. Keine LEDs nötig.
+Auf dem iPad bekommen deine Boulder den ganzen Bildschirm, und der Boulder an der Wand sitzt unten in einem Mini-Player. Tippe darauf, um den Player zu öffnen. Im Querformat sitzt das Board neben Als Nächstes, deinem Routenbuch und der Beta. Montiere ein iPad neben deinem Board und aktiviere im ⋯-Menü von Boulder die Wandanzeige, um den Boulder im Vollbild zu zeigen, groß genug, um ihn von der Matte aus zu lesen.
 
-Halte die Spraywall privat oder teile sie per Link oder QR-Code mit deiner Crew. Setze die Spraywall zurück und behalte ihre alten Boulder und Begehungen im Archiv. Lade eine Spraywall herunter, damit Foto, Griffe und Boulder ohne Empfang verfügbar sind. Auf dem iPad kannst du Griffe mit Apple Pencil markieren.
+Öffne dein iPhone Duo, und das Board sitzt neben deiner Liste. Baue ein Workout auf einem geöffneten Duo und sieh die geplanten Boulder neben deinen Blöcken.
 
-DEINE CREW UND DEIN NÄCHSTER VERSUCH
+DEIN PAUSEN-TIMER AUF DEM SPERRBILDSCHIRM
 
-Finde die Live-Sessions deiner Crew auf Start. Öffne einen Boulder und sieh neben deinen Einträgen die von Leuten, denen du folgst. Folge Routenbauer*innen, um ihre neuen Boulder im Crew-Feed zu sehen.
+Dein Pausen-Countdown erscheint auf dem Sperrbildschirm und in der Dynamic Island. In den letzten Sekunden tickt es leise, und am Ende der Pause ertönt ein Ton, auch wenn dein Handy auf lautlos steht.
 
-Wähle eine Pause nach jedem geloggten Boulder oder klettere in festen Zeitabständen. Aktiviere das automatische Weiterschalten und lass Boardsesh zwischen den Versuchen geöffnet. Mit Als Nächstes dran kommt ein Boulder direkt nach dem an der Wand. Du kannst auch eine Playlist hinzufügen, ohne die Warteschlange zu leeren.
+WORKOUTS IN BLÖCKEN
+
+Baue eine Session aus Blöcken: Aufwärmen, dann eine Pyramide, dann Volumen. Füge mitten in der Session einen Block hinzu, gib jedem Block eigene Boulder-Filter und sieh auf einen Blick, wo du stehst. Workouts wählen zuerst Boulder, die du noch nicht getoppt hast, können Getoppte und Versuchte überspringen und sich aus deinen getoppten oder gelikten Bouldern füllen. Am Ende erscheint eine Zusammenfassung.
+
+ABSPIELEN AUS DER LISTE, DIE DU ANGETIPPT HAST
+
+Der Player zeigt, aus welcher Liste du kletterst, und beim Wischen bleibst du in dieser Liste, von deinem Routenbuch und deinen Sessions bis zu Profilen und ähnlichen Bouldern. Playlists laufen, ohne deine Warteschlange anzutasten. Wische in jeder Liste über einen Boulder, um ihn als Nächstes oder als Letztes zu spielen.
 
 MEHR NACH DEINEM GESCHMACK
 
-- Wähle, welche Abschnitte unter einem Boulder erscheinen, etwa Beta-Videos, Routenbucheinträge und ähnliche Boulder.
-- Aktiviere Meine Grade verwenden, um nach deinen eigenen Graden zu suchen, zu sortieren und zu filtern.
-- Ähnliche Boulder und die Griff-Heatmap funktionieren mit deinem heruntergeladenen Board ohne Empfang.
-- Wechsle über die Wandansicht zu einem anderen Board deiner Halle.
-- Exportiere deine Kletterhistorie, Playlists und Boulder aus den Einstellungen.
+- Sortiere jede Playlist nach Schwierigkeit, zuletzt hinzugefügt, Bewertung oder zufällig. Gelikt, Fünf Sterne, Projekte und Seiten von Routenbauer*innen lassen sich auch sortieren und filtern.
+- Boulder hat einen eigenen Tab. Tippe erneut darauf für Filter und die Namenssuche. Auf dem iPhone öffnet sich Filter in halber Höhe und sieht aus wie die iOS-Einstellungen.
+- Wähle, welche Bereiche auf Start erscheinen und in welcher Reihenfolge, und ob die App auf Start oder auf Boulder öffnet.
+- Einstellungen hat nur noch sechs Seiten, mit deinen Timern an einem Ort.
+- Trage eine Begehung in einem anderen Winkel ein als dem an der Wand.
+- Lass dich über Kommentare zu deinen Sessions, Bouldern, Playlists, Boards und Hallen benachrichtigen.
 
 KORREKTUREN FÜR DEINE NÄCHSTE SESSION
 
-- MoonBoard-Grade nutzen jetzt die eigene V-Skala von MoonBoard. Beim Routenbuch-Import sind auch anders angeordnete Spalten oder Bouldernamen statt IDs möglich.
-- Aktiviere auf Woods Andere Winkel, um auch Boulder mit anderen Schraubwinkeln zu sehen. Der Filter für Routenbauer*innen folgt deiner Winkelauswahl.
-- Bei schlechter Verbindung geloggte Begehungen warten auf Empfang und versuchen die Synchronisierung erneut.
-- Beim Wischen bleibst du in der gewählten Liste, auch wenn ein neuer Eintrag sie umsortiert.
-- Ein Absturz beim iOS-Start und unerwünschte Safari-Tabs beim Öffnen der App sind behoben.
+- Dein Routenbuch, deine Likes und deine Playlists funktionieren ohne Empfang, und heruntergeladene Boards werden nicht mehr jede Woche neu geladen.
+- Board-Scans finden MoonBoards und neuere Kilter-Boxen, die nächstgelegenen zuerst. Boardsesh fragt beim ersten Scan nach Bluetooth, nicht beim Start.
+- Nach unten wischen schließt den Player wieder. Beleuchtete Griffe bleiben beim Stöbern sichtbar.
+- Boulder, die du entlikest, verschwinden sofort aus Gelikt.
+- Bessere Unterstützung für VoiceOver und große Schrift.
 
 Kostenlos, ohne Werbung, Open Source.
