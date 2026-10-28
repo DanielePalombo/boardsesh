@@ -986,7 +986,7 @@ export default function PlaylistDetail() {
         <OfflineState
           reason={metadataOffline.reason}
           onRetry={() => {
-            // Both failed together; retrying only the header would land on the climbs placard next.
+            // They usually fail together; retrying only the header would land on the climbs placard next.
             void refetchMeta();
             void query.refetch();
           }}
