@@ -208,6 +208,33 @@ and hidden off-plan ticks stop counting. Headlines apply the same rule for who a
 batched across the page, but read only the plan. A per-session "Show workout" switch is a
 follow-up.
 
+**On the web.** The session page (`/session/[id]`) fetches `sessionWorkouts` on the
+server beside the session, signed out like the detail fetch, and refetches signed in. It
+shows the viewer's own workout, else the first one stored. The overview gets the headline
+("Workout · 4x4 at V4 · 3 blocks") and the Climbs list is grouped: one section per block
+with its name, detail line and tally, a 4x4 as one row per set ("Set 1 · 3 of 4" and a
+glyph per rep), a planned climb with no visible tick dimmed as "Skipped", then "Off plan"
+and the crew. Ticks are placed by the answer's uuids (`tickUuids` per climb,
+`offPlanTickUuids`; `assignWorkoutTicks`): a crewmate's go on a planned climb stays with
+the crew, and an owner tick the answer doesn't name (logged after it was read) is off plan.
+An answer without the uuids falls back to matching the owner's ticks by climb and angle
+the way the derivation did. A 4x4 set row lists its own ticks under the reps, for likes,
+comments and delete. Feed cards on the web profile
+Sessions page ask `sessionWorkoutHeadlines` once per loaded page. The copy lives in
+`@boardsesh/workout-summary` (`format.ts`), which takes the caller's `t` over the `session`
+catalog: block names, detail lines, tallies, climb outcomes and the headline. Mobile still
+has its own copy under `mobile.workoutSummary.*` and can switch to it.
+
+**On Strava.** An exported activity is named after the main block when the session
+followed a workout, "4x4 at V4 — 13 sends" (the same sends number as before), and the
+description starts with one line per block, "Workout: Warm-up 4/4 · 4x4 V4 9/16 reps ·
+Cool-down 2/3": a 4x4 counts reps sent of reps planned, any other block climbs sent of
+its climbs. The workout is the exporter's own, else the session creator's (a crew climbs
+the creator's queue); either way it is tallied from the exporter's own ticks, and the
+creator's tick map is never applied to them. Block names come from the en-US `session`
+catalog; the rest of the activity text stays English. Reading the workout is best
+effort: a failure exports the session with the board name, as before.
+
 ## Store lifecycle
 
 - **Two slots, one run.** A run made only of the original kinds (warm-up, volume,
