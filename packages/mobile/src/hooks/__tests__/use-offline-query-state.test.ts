@@ -5,6 +5,7 @@ import {
   type OfflineQueryInput,
 } from '../use-offline-query-state';
 import { createGraphqlTimeoutError } from '../../lib/graphql/request-timeout';
+import { BackendUnavailableError } from '../../lib/connectivity/backend-unavailable-error';
 
 const pausedPending: OfflineQueryInput = { status: 'pending', fetchStatus: 'paused' };
 const fetchingPending: OfflineQueryInput = { status: 'pending', fetchStatus: 'fetching' };
@@ -117,6 +118,14 @@ describe('deriveOfflineQueryState', () => {
       error: createGraphqlTimeoutError(20_000),
     };
     expect(deriveOfflineQueryState([notFailingWithStaleError, idleError], reachable).reason).toBe('error');
+  });
+
+  it('blames our server only for a short-circuited request whose reason was our server', () => {
+    const blockedBy = (reason: 'backend_unreachable' | 'offline_mode' | 'device_offline') =>
+      deriveOfflineQueryState([{ ...idleError, error: new BackendUnavailableError(reason) }], reachable).reason;
+    expect(blockedBy('backend_unreachable')).toBe('backend_unreachable');
+    expect(blockedBy('offline_mode')).toBe('error');
+    expect(blockedBy('device_offline')).toBe('error');
   });
 
   it('does not blame our server for a request that was cancelled', () => {

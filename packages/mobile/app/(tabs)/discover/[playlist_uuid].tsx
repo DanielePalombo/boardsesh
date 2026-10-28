@@ -983,7 +983,14 @@ export default function PlaylistDetail() {
     return (
       <View style={styles.stateContainer}>
         <PlaylistStateHeader />
-        <OfflineState reason={metadataOffline.reason} onRetry={() => void refetchMeta()} />
+        <OfflineState
+          reason={metadataOffline.reason}
+          onRetry={() => {
+            // Both failed together; retrying only the header would land on the climbs placard next.
+            void refetchMeta();
+            void query.refetch();
+          }}
+        />
       </View>
     );
   }

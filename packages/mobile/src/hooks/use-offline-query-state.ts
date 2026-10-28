@@ -6,6 +6,7 @@ import {
 import type { ConnectivityReason } from '../lib/connectivity/connectivity-store';
 import { useConnectivity } from '../lib/connectivity/use-connectivity';
 import { assertNever } from '../lib/assert-never';
+import { isBackendUnavailableError } from '../lib/connectivity/backend-unavailable-error';
 import { isGraphqlRequestTimeoutError } from '../lib/graphql/request-timeout';
 
 /**
@@ -98,6 +99,8 @@ function isServerSideFailure(error: unknown): boolean {
   // request says nothing about the server. `isNetworkError` lets a returned
   // status outrank English transport prose, so a 400 never reads as an outage.
   if (isGraphqlRequestTimeoutError(error)) return true;
+  // Thrown before sending while the store said offline; its reason says whose fault.
+  if (isBackendUnavailableError(error)) return error.reason === 'backend_unreachable';
   const isCancellation = error instanceof Error && error.name === 'AbortError';
   return (!isCancellation && isNetworkError(error)) || isServerFailureSignal(error) || isServerUnavailableError(error);
 }
