@@ -4,10 +4,29 @@ User-facing changes to Boardsesh, newest first. Auto-generated from the "Release
 Notes" section of merged pull requests — do not edit by hand (a CI check rejects
 manual changes). See docs/mobile-ota-updates.md.
 
+## 2026-10-28
+
+### New
+
+- Browse three board previews on one Waveshare using its buttons. ([#6989](https://github.com/boardsesh/boardsesh/pull/6989))
+  Reconnect to compatible MoonBoard controllers that advertise a serial number.
+- Share your gym with the crew by link while keeping it out of search and maps. ([#6985](https://github.com/boardsesh/boardsesh/pull/6985))
+
 ## 2026-10-27
+
+### App update
+
+A new version shipped to the App Store and Play Store.
+
+### New
+
+- Add your gym from the directory and link boards already on Boardsesh. ([#6970](https://github.com/boardsesh/boardsesh/pull/6970))
 
 ### Fixed
 
+- Android buttons, switches and filter chips now stay Boardsesh violet whatever your wallpaper colour ([#6945](https://github.com/boardsesh/boardsesh/pull/6945))
+- Your session summary shows every climb you logged, even when you end right after your last tick. ([#6962](https://github.com/boardsesh/boardsesh/pull/6962))
+- The wall sheet now says "1 climber" and "1 send" instead of "1 climbers" ([#6966](https://github.com/boardsesh/boardsesh/pull/6966))
 - Prepare your workout without leaving Workout, then tap Start workout when you're ready to climb. ([#6964](https://github.com/boardsesh/boardsesh/pull/6964))
 - Preview Bluetooth climbs on the Waveshare without setting up WiFi. ([#6950](https://github.com/boardsesh/boardsesh/pull/6950))
   See a larger board preview with highlights that leave hold shapes visible.
