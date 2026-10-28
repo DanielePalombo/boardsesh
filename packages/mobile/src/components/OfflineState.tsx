@@ -96,8 +96,7 @@ function OfflineStateComponent({ reason, errorTitle, onRetry, style }: OfflineSt
       </Text>
       {showRetry ? (
         <View style={styles.cta}>
-          {/* Filled: on a dead-end screen this is the only way forward. Medium,
-              because these placards sit inside a tab (design guidelines). */}
+          {/* Filled: on a dead-end screen this is the only way forward. */}
           <Button title={t('mobile.offlineState.retry')} variant="filled" onPress={onRetry} />
         </View>
       ) : null}

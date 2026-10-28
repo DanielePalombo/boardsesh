@@ -1,7 +1,7 @@
 import {
+  isNetworkError,
   isServerFailureSignal,
   isServerUnavailableError,
-  isTransportNetworkError,
 } from '@boardsesh/offline-sync/error-classification';
 import type { ConnectivityReason } from '../lib/connectivity/connectivity-store';
 import { useConnectivity } from '../lib/connectivity/use-connectivity';
@@ -94,14 +94,12 @@ export function offlineReasonFor(reason: ConnectivityReason | null): OfflineQuer
  * is the only thing that knows (issue #6937).
  */
 function isServerSideFailure(error: unknown): boolean {
-  // Our own deadline, but not any other abort: a cancelled request says
-  // nothing about the server, which is why the transport check leaves aborts out.
-  return (
-    isGraphqlRequestTimeoutError(error) ||
-    isTransportNetworkError(error) ||
-    isServerFailureSignal(error) ||
-    isServerUnavailableError(error)
-  );
+  // Our own deadline counts; any other abort does not, because a cancelled
+  // request says nothing about the server. `isNetworkError` lets a returned
+  // status outrank English transport prose, so a 400 never reads as an outage.
+  if (isGraphqlRequestTimeoutError(error)) return true;
+  const isCancellation = error instanceof Error && error.name === 'AbortError';
+  return (!isCancellation && isNetworkError(error)) || isServerFailureSignal(error) || isServerUnavailableError(error);
 }
 
 /**

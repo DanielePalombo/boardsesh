@@ -79,6 +79,9 @@ describe('deriveOfflineQueryState', () => {
     const serverErrors: unknown[] = [
       { response: { status: 503 } },
       { response: { status: 500 } },
+      { response: { status: 504 } },
+      // An edge that failed to route: a GraphQL server never answers 404 itself.
+      { response: { status: 404 } },
       new TypeError('Network request failed'),
       { response: { status: 200, errors: [{ message: 'boom', extensions: { code: 'INTERNAL_SERVER_ERROR' } }] } },
     ];
@@ -93,7 +96,14 @@ describe('deriveOfflineQueryState', () => {
       error: { response: { status: 200, errors: [{ message: 'nope', extensions: { code: 'FORBIDDEN' } }] } },
     };
     expect(deriveOfflineQueryState([refused], reachable).reason).toBe('error');
-    expect(deriveOfflineQueryState([{ ...idleError, error: { response: { status: 400 } } }], reachable).reason).toBe(
+    for (const status of [400, 401, 429]) {
+      expect(deriveOfflineQueryState([{ ...idleError, error: { response: { status } } }], reachable).reason).toBe(
+        'error',
+      );
+    }
+    // English transport prose on a request that still got a status is the server answering.
+    const answeredWithTimeoutProse = Object.assign(new Error('The request timed out.'), { response: { status: 400 } });
+    expect(deriveOfflineQueryState([{ ...idleError, error: answeredWithTimeoutProse }], reachable).reason).toBe(
       'error',
     );
   });
