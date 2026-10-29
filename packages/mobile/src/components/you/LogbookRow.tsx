@@ -5,6 +5,7 @@ import {
   SWIPE_FULL_THRESHOLD as COMMIT_THRESHOLD,
   SWIPE_REVEAL_THRESHOLD,
   SWIPE_FRICTION,
+  SWIPE_ACTIVATION_OFFSET,
 } from '../swipe-action-model';
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, StyleSheet, type AccessibilityActionEvent } from 'react-native';
@@ -484,6 +485,8 @@ export const LogbookRow = memo(function LogbookRow({
         simultaneousWithExternalGesture={fullSwipe.gesture}
         leftThreshold={SWIPE_REVEAL_THRESHOLD}
         rightThreshold={SWIPE_REVEAL_THRESHOLD}
+        dragOffsetFromLeftEdge={SWIPE_ACTIVATION_OFFSET}
+        dragOffsetFromRightEdge={SWIPE_ACTIVATION_OFFSET}
         overshootLeft
         overshootRight
         renderLeftActions={onEdit ? renderLeftActions : undefined}
