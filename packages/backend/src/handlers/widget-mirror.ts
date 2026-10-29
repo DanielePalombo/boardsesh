@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { boardSupportsMirroring, parseBoardPath } from '@boardsesh/board-config';
+import { boardSupportsMirroring, parseBoardPath, parseNamedBoardPath } from '@boardsesh/board-config';
 import { z } from 'zod';
 import { applyCorsHeaders } from './cors';
 import { authenticateWidget } from './widget-auth';
 import { verifyWidgetSession } from './widget-session-guard';
 import { checkWidgetRateLimit, ensureWidgetRateLimitPruner } from './widget-rate-limit';
 import { mirrorSessionClimb, MirrorTargetChangedError } from '../services/queue-mirror';
+import { resolveBoardBySlug } from '../graphql/resolvers/shared/board-lookup';
 import { logger } from '../utils/logger';
 
 const mirrorBody = z.object({
@@ -13,6 +14,20 @@ const mirrorBody = z.object({
   queueItemUuid: z.string().min(1),
   mirrored: z.boolean(),
 });
+
+/**
+ * The board type and layout a session path is on. A named path (`/b/<slug>`, a
+ * gym wall or a home wall) carries neither, so it is looked up the way the
+ * watch's session-state endpoint does; the caller already passed auth and the
+ * durable membership guard. Reading only the positional tuple refused mirroring
+ * on every named wall (#7013).
+ */
+async function sessionBoardLayout(boardPath: string): Promise<{ boardName: string; layoutId: number } | null> {
+  const named = parseNamedBoardPath(boardPath);
+  if (!named) return parseBoardPath(boardPath);
+  const board = await resolveBoardBySlug(named.slug);
+  return board ? { boardName: board.boardType, layoutId: Number(board.layoutId) } : null;
+}
 
 /** Widget requests set an orientation on an exact queue slot, never on a moving index. */
 export async function handleWidgetMirror(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -44,7 +59,7 @@ export async function handleWidgetMirror(req: IncomingMessage, res: ServerRespon
     if (!checkWidgetRateLimit(parsed.sessionId)) return reply(429, { error: 'Too many requests' });
     const guard = await verifyWidgetSession(parsed.sessionId, auth.userId);
     if (!guard.ok) return reply(guard.status, { error: guard.error });
-    const board = parseBoardPath(guard.session.boardPath);
+    const board = await sessionBoardLayout(guard.session.boardPath);
     if (!board || !boardSupportsMirroring(board.boardName, board.layoutId)) {
       return reply(409, { error: 'This board does not support mirroring' });
     }
