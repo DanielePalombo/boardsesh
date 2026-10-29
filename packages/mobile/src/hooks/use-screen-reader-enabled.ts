@@ -13,12 +13,17 @@ export function useScreenReaderEnabled(): boolean {
 
   useEffect(() => {
     let mounted = true;
+    // A change event is newer than the first read, which may still be in flight.
+    let changedBeforeRead = false;
     AccessibilityInfo.isScreenReaderEnabled()
       .then((enabled) => {
-        if (mounted) setScreenReaderEnabled(enabled);
+        if (mounted && !changedBeforeRead) setScreenReaderEnabled(enabled);
       })
       .catch(() => {});
-    const subscription = AccessibilityInfo.addEventListener('screenReaderChanged', setScreenReaderEnabled);
+    const subscription = AccessibilityInfo.addEventListener('screenReaderChanged', (enabled: boolean) => {
+      changedBeforeRead = true;
+      setScreenReaderEnabled(enabled);
+    });
     return () => {
       mounted = false;
       subscription.remove();
