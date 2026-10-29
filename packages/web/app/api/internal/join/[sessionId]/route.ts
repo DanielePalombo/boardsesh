@@ -4,8 +4,8 @@ import { parseNamedBoardPath } from '@boardsesh/board-config';
 import { dbz } from '@/app/lib/db/db';
 import { executeAuthenticatedGraphQL } from '@/app/lib/graphql/server-graphql';
 import { getServerAuthToken } from '@/app/lib/auth/server-auth';
-import { boardSessions } from '@/app/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { boardSessions, userBoards } from '@/app/lib/db/schema';
+import { and, eq, isNull } from 'drizzle-orm';
 import { SessionIdSchema } from '@/app/lib/validation/session';
 import { CLIMB_SESSION_COOKIE } from '@/app/lib/climb-session-cookie';
 
@@ -45,23 +45,38 @@ const SESSION_BOARD_PATH = gql`
  * holder of a session id the slug of a private wall (#7013). A positional path
  * names no wall and is used as stored.
  *
- * Null when the backend gives nothing back (no such live session for this
- * visitor, or the backend is unreachable): the caller then sends them home
- * rather than guess.
+ * When the backend gives nothing back (a dormant session with an empty live
+ * roster, which `session` answers with null, or an unreachable backend), the
+ * visitor still lands on the wall: by its geometry, built here the same way the
+ * backend projects it, so the slug never leaves. Null only when no live board
+ * holds the slug; the caller then sends them home.
  */
 async function visibleBoardPath(sessionId: string, storedPath: string): Promise<string | null> {
-  if (!parseNamedBoardPath(storedPath)) return storedPath;
+  const named = parseNamedBoardPath(storedPath);
+  if (!named) return storedPath;
   try {
     const response = await executeAuthenticatedGraphQL<{ session: { boardPath: string } | null }>(
       SESSION_BOARD_PATH,
       { sessionId },
       await getServerAuthToken(),
     );
-    return response.session?.boardPath || null;
+    if (response.session?.boardPath) return response.session.boardPath;
   } catch (error) {
     console.error(`[/api/internal/join] could not read session ${sessionId}'s board path:`, error);
-    return null;
   }
+  const [board] = await dbz
+    .select({
+      boardType: userBoards.boardType,
+      layoutId: userBoards.layoutId,
+      sizeId: userBoards.sizeId,
+      setIds: userBoards.setIds,
+      angle: userBoards.angle,
+    })
+    .from(userBoards)
+    .where(and(eq(userBoards.slug, named.slug), isNull(userBoards.deletedAt)))
+    .limit(1);
+  if (!board) return null;
+  return `/${board.boardType}/${board.layoutId}/${board.sizeId}/${board.setIds}/${named.angle ?? board.angle}`;
 }
 
 function getBaseUrl(request: Request): string {

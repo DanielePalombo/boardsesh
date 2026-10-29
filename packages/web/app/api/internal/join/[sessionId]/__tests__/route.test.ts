@@ -13,21 +13,29 @@ vi.mock('server-only', () => ({}));
 const SESSION_ID = '5b1f0c2e-8d3a-4e6f-9a21-5c0d9e8f7a61';
 const mocks = vi.hoisted(() => ({
   storedPath: '' as string | null,
+  /** What the board-by-slug read finds, when the route falls back to it. */
+  board: null as null | { boardType: string; layoutId: number; sizeId: number; setIds: string; angle: number },
   graphql: vi.fn(),
   token: vi.fn(),
 }));
 
-vi.mock('@/app/lib/db/db', () => ({
-  dbz: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: async () => (mocks.storedPath === undefined ? [] : [{ id: SESSION_ID, boardPath: mocks.storedPath }]),
+vi.mock('@/app/lib/db/db', async () => {
+  const schema = await import('@/app/lib/db/schema');
+  return {
+    dbz: {
+      select: () => ({
+        from: (table: unknown) => ({
+          where: () => ({
+            limit: async () => {
+              if (table === schema.boardSessions) return [{ id: SESSION_ID, boardPath: mocks.storedPath }];
+              return mocks.board ? [mocks.board] : [];
+            },
+          }),
         }),
       }),
-    }),
-  },
-}));
+    },
+  };
+});
 vi.mock('@/app/lib/graphql/server-graphql', () => ({ executeAuthenticatedGraphQL: mocks.graphql }));
 vi.mock('@/app/lib/auth/server-auth', () => ({ getServerAuthToken: mocks.token }));
 
@@ -43,6 +51,7 @@ async function redirectFor(): Promise<string | null> {
 describe('GET /api/internal/join/[sessionId]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.board = null;
     mocks.token.mockResolvedValue('visitor-token');
   });
 
@@ -64,12 +73,20 @@ describe('GET /api/internal/join/[sessionId]', () => {
     expect(await redirectFor()).toBe('https://boardsesh.com/b/rocodromo-norte/40/list');
   });
 
-  it('sends the visitor home when the backend gives no path for a named wall', async () => {
-    mocks.storedPath = '/b/marcos-private-garage/40';
+  it("lands a dormant session's invite on the wall's geometry, never its slug", async () => {
+    // A dormant session has an empty live roster, so `session` answers null.
+    mocks.storedPath = '/b/marcos-private-garage/45';
+    mocks.board = { boardType: 'kilter', layoutId: 1, sizeId: 10, setIds: '1,20', angle: 40 };
     mocks.graphql.mockResolvedValue({ session: null });
-    expect(await redirectFor()).toBe('https://boardsesh.com/');
+    expect(await redirectFor()).toBe('https://boardsesh.com/kilter/1/10/1,20/45/list');
 
     mocks.graphql.mockRejectedValue(new Error('backend down'));
+    expect(await redirectFor()).toBe('https://boardsesh.com/kilter/1/10/1,20/45/list');
+  });
+
+  it('sends the visitor home only when no live board holds the slug', async () => {
+    mocks.storedPath = '/b/marcos-private-garage/40';
+    mocks.graphql.mockResolvedValue({ session: null });
     expect(await redirectFor()).toBe('https://boardsesh.com/');
   });
 
