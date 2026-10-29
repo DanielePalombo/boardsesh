@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
+import { gql } from 'graphql-request';
+import { parseNamedBoardPath } from '@boardsesh/board-config';
 import { dbz } from '@/app/lib/db/db';
+import { executeAuthenticatedGraphQL } from '@/app/lib/graphql/server-graphql';
+import { getServerAuthToken } from '@/app/lib/auth/server-auth';
 import { boardSessions } from '@/app/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { SessionIdSchema } from '@/app/lib/validation/session';
@@ -22,6 +26,42 @@ function ensureViewSegment(path: string): string | null {
     return `${path}/list`;
   }
   return null;
+}
+
+const SESSION_BOARD_PATH = gql`
+  query JoinRedirectSessionBoardPath($sessionId: ID!) {
+    session(sessionId: $sessionId) {
+      boardPath
+    }
+  }
+`;
+
+/**
+ * The stored path as this visitor may see it. A named path (`/b/<slug>`) names
+ * its wall, and a session can sit on a wall the visitor may not see, so it goes
+ * through the backend's `session` read, which projects it per viewer exactly as
+ * `joinSession` and the app's join screen get it: the wall's geometry for
+ * someone the wall is not named to. Redirecting to the raw row handed any
+ * holder of a session id the slug of a private wall (#7013). A positional path
+ * names no wall and is used as stored.
+ *
+ * Null when the backend gives nothing back (no such live session for this
+ * visitor, or the backend is unreachable): the caller then sends them home
+ * rather than guess.
+ */
+async function visibleBoardPath(sessionId: string, storedPath: string): Promise<string | null> {
+  if (!parseNamedBoardPath(storedPath)) return storedPath;
+  try {
+    const response = await executeAuthenticatedGraphQL<{ session: { boardPath: string } | null }>(
+      SESSION_BOARD_PATH,
+      { sessionId },
+      await getServerAuthToken(),
+    );
+    return response.session?.boardPath || null;
+  } catch (error) {
+    console.error(`[/api/internal/join] could not read session ${sessionId}'s board path:`, error);
+    return null;
+  }
 }
 
 function getBaseUrl(request: Request): string {
@@ -74,19 +114,22 @@ export async function GET(request: Request, { params }: { params: Promise<{ sess
     return new NextResponse('Session not found', { status: 404 });
   }
 
-  const { boardPath } = session[0];
-  const cleanPath = boardPath.replace(/^\/+/, '');
-  const redirectPath = ensureViewSegment(cleanPath);
+  const boardPath = await visibleBoardPath(validatedSessionId, session[0].boardPath);
+  const cleanPath = boardPath?.replace(/^\/+/, '') ?? '';
+  const redirectPath = boardPath ? ensureViewSegment(cleanPath) : null;
 
   if (!redirectPath) {
-    // The stored boardPath doesn't carry an angle segment — almost certainly
-    // a malformed row. Don't fabricate /40/ as we did before (that silently
-    // landed every joiner on 40° regardless of what the session was actually
-    // running at). Log and bail to the home page so the user can at least
+    // Either the named wall's path could not be read for this visitor (logged
+    // above), or the stored boardPath doesn't carry an angle segment — almost
+    // certainly a malformed row. Don't fabricate /40/ as we did before (that
+    // silently landed every joiner on 40° regardless of what the session was
+    // actually running at). Bail to the home page so the user can at least
     // browse and rejoin via a healthier link.
-    console.error(
-      `[/api/internal/join] session ${validatedSessionId} has malformed boardPath (no angle): ${boardPath}`,
-    );
+    if (boardPath) {
+      console.error(
+        `[/api/internal/join] session ${validatedSessionId} has malformed boardPath (no angle): ${boardPath}`,
+      );
+    }
     const response = NextResponse.redirect(`${baseUrl}/`, 307);
     response.cookies.set(CLIMB_SESSION_COOKIE, validatedSessionId, {
       path: '/',
