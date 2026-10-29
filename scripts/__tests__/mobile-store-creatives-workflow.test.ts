@@ -45,8 +45,12 @@ function manifestFixture(root: string) {
         assets: ['en-US', 'es', 'fr', 'de'].map((locale) => ({
           locale,
           placement: 'search-results',
-          poster: 'poster.jpg',
-          posterSha256: 'a'.repeat(64),
+          file: `.boardsesh/app-store-creatives/${variant}/${locale}/search-results.mp4`,
+          sha256: 'a'.repeat(64),
+          provenance: `.boardsesh/app-store-creatives/${variant}/${locale}/search-results.manifest.json`,
+          provenanceSha256: 'b'.repeat(64),
+          poster: `.boardsesh/app-store-creatives/${variant}/${locale}/search-results.jpg`,
+          posterSha256: 'c'.repeat(64),
         })),
       },
     ]),
@@ -55,6 +59,16 @@ function manifestFixture(root: string) {
   const manifest = { marketingVersion: '2.6.0', variants };
   writeFileSync(join(root, 'app-stores/apple/creative-assets.json'), JSON.stringify(manifest));
   return manifest;
+}
+function summarize(root: string) {
+  const output = join(root, 'summary');
+  const result = spawnSync('bash', ['-c', step('Summarize creative results').run!], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, CREATIVE_ACTION: 'upload-and-place', RUNNER_TEMP: root, GITHUB_STEP_SUMMARY: output },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return readFileSync(output, 'utf8');
 }
 function selection(event: string, action = 'plan', variant = 'all', placement = 'all') {
   const root = directory();
@@ -190,17 +204,106 @@ describe('merged store video upload workflow', () => {
       writeFileSync(join(root, `creative-assets-${action}-report.json`), JSON.stringify(report));
     for (const action of ['promotion', 'fetch'])
       writeFileSync(join(root, `creative-${action}-report.json`), JSON.stringify({ objects: 60, changed: 60 }));
-    const summary = join(root, 'summary');
-    const result = spawnSync('bash', ['-c', step('Summarize creative results').run!], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, CREATIVE_ACTION: 'upload-and-place', RUNNER_TEMP: root, GITHUB_STEP_SUMMARY: summary },
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const content = readFileSync(summary, 'utf8');
+    const content = summarize(root);
     expect(content.match(/\| 20 \|/g)).toHaveLength(4);
     expect(content).not.toContain('| 60 |');
     expect(content).toContain('Asset-review submission stays manual');
+  });
+  it.each([
+    undefined,
+    '{',
+    'null',
+    '{}',
+    '{"variants":null}',
+    '{"variants":[]}',
+    '{"variants":{"kilter":null}}',
+    '{"variants":{"kilter":{"assets":{}}}}',
+  ])('summarizes an unavailable or malformed manifest without masking the upstream failure (%s)', (contents) => {
+    const root = directory();
+    if (contents !== undefined) {
+      mkdirSync(join(root, 'app-stores/apple'), { recursive: true });
+      writeFileSync(join(root, 'app-stores/apple/creative-assets.json'), contents);
+    }
+    for (const action of ['promotion', 'fetch'])
+      writeFileSync(join(root, `creative-${action}-report.json`), JSON.stringify({ objects: 60, changed: 60 }));
+    const content = summarize(root);
+    expect(content).toContain('| Promoted or already approved | 0 |');
+    expect(content).toContain('| Downloaded and SHA256 verified | 0 |');
+    expect(content).toContain('Asset-review submission stays manual');
+  });
+  it.each([
+    null,
+    true,
+    {},
+    { objects: 0, changed: 0 },
+    { objects: 59, changed: 59 },
+    { objects: 61, changed: 61 },
+    { objects: 60 },
+    { objects: 60, changed: -1 },
+    { objects: 60, changed: 61 },
+    { objects: 60, changed: 0.5 },
+  ])('does not claim storage completion for an invalid or incomplete report (%j)', (report) => {
+    const root = directory();
+    manifestFixture(root);
+    for (const action of ['promotion', 'fetch'])
+      writeFileSync(join(root, `creative-${action}-report.json`), JSON.stringify(report));
+    const content = summarize(root);
+    expect(content).toContain('| Promoted or already approved | 0 |');
+    expect(content).toContain('| Downloaded and SHA256 verified | 0 |');
+  });
+  it('accepts already approved objects but requires every download to be verified', () => {
+    const root = directory();
+    manifestFixture(root);
+    writeFileSync(join(root, 'creative-promotion-report.json'), JSON.stringify({ objects: 60, changed: 0 }));
+    writeFileSync(join(root, 'creative-fetch-report.json'), JSON.stringify({ objects: 60, changed: 59 }));
+    const content = summarize(root);
+    expect(content).toContain('| Promoted or already approved | 20 |');
+    expect(content).toContain('| Downloaded and SHA256 verified | 0 |');
+  });
+  it.each([null, true, {}, '{'])('handles non-array or malformed ASC reports (%j)', (report) => {
+    const root = directory();
+    manifestFixture(root);
+    for (const action of ['upload', 'place'])
+      writeFileSync(
+        join(root, `creative-assets-${action}-report.json`),
+        report === '{' ? report : JSON.stringify(report),
+      );
+    const content = summarize(root);
+    expect(content).toContain('| Uploaded or already in Asset Library | 0 |');
+    expect(content).toContain('| Placed or already assigned | 0 |');
+  });
+  it('ignores malformed ASC entries and header assets when counting videos', () => {
+    const root = directory();
+    manifestFixture(root);
+    const entries = [
+      null,
+      true,
+      {},
+      { placement: 'search-results' },
+      { placement: 'search-results', fileName: '' },
+      { placement: 'search-results', fileName: 3 },
+      { placement: 'search-results', fileName: ' ' },
+      { placement: 'header', fileName: 'header.png' },
+      { placement: 'search-results', fileName: 'video.mp4' },
+    ];
+    for (const action of ['upload', 'place'])
+      writeFileSync(join(root, `creative-assets-${action}-report.json`), JSON.stringify(entries));
+    const content = summarize(root);
+    expect(content).toContain('| Uploaded or already in Asset Library | 1 |');
+    expect(content).toContain('| Placed or already assigned | 1 |');
+  });
+  it('rejects missing inventory fields and conflicting destination hashes', () => {
+    const root = directory();
+    const manifest = manifestFixture(root);
+    for (const action of ['promotion', 'fetch'])
+      writeFileSync(join(root, `creative-${action}-report.json`), JSON.stringify({ objects: 60, changed: 60 }));
+    manifest.variants.kilter.assets[0].provenanceSha256 = '';
+    writeFileSync(join(root, 'app-stores/apple/creative-assets.json'), JSON.stringify(manifest));
+    expect(summarize(root)).toContain('| Promoted or already approved | 0 |');
+    manifest.variants.kilter.assets[0].provenanceSha256 = 'b'.repeat(64);
+    manifest.variants.kilter.assets[0].poster = manifest.variants.kilter.assets[0].file;
+    writeFileSync(join(root, 'app-stores/apple/creative-assets.json'), JSON.stringify(manifest));
+    expect(summarize(root)).toContain('| Downloaded and SHA256 verified | 0 |');
   });
   it('preserves manual live/replacement approval and runs only the requested action', () => {
     const result = lane('place', { ALLOW_LIVE: 'true', ALLOW_REPLACE: 'true', CREATIVE_PLACEMENT: 'search' });
