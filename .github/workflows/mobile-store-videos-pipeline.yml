@@ -43,10 +43,13 @@ jobs:
           SCREENSHOT_USER_PASSWORD: ${{ secrets.SCREENSHOT_USER_PASSWORD }}
           SHOWCASE_SECONDARY_EMAIL: ${{ secrets.SHOWCASE_SECONDARY_EMAIL }}
           SHOWCASE_SECONDARY_PASSWORD: ${{ secrets.SHOWCASE_SECONDARY_PASSWORD }}
+          STORE_CREATIVES_R2_AWS_ENDPOINT_URL: ${{ secrets.STORE_CREATIVES_R2_AWS_ENDPOINT_URL }}
+          STORE_CREATIVES_R2_AWS_ACCESS_KEY_ID: ${{ secrets.STORE_CREATIVES_R2_AWS_ACCESS_KEY_ID }}
+          STORE_CREATIVES_R2_AWS_SECRET_ACCESS_KEY: ${{ secrets.STORE_CREATIVES_R2_AWS_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          for name in SCREENSHOT_USER_EMAIL SCREENSHOT_USER_PASSWORD SHOWCASE_SECONDARY_EMAIL SHOWCASE_SECONDARY_PASSWORD; do
-            [ -n "${!name:-}" ] || { echo "::error::Missing $name; configure the dedicated recording accounts before dispatch."; exit 1; }
+          for name in SCREENSHOT_USER_EMAIL SCREENSHOT_USER_PASSWORD SHOWCASE_SECONDARY_EMAIL SHOWCASE_SECONDARY_PASSWORD STORE_CREATIVES_R2_AWS_ENDPOINT_URL STORE_CREATIVES_R2_AWS_ACCESS_KEY_ID STORE_CREATIVES_R2_AWS_SECRET_ACCESS_KEY; do
+            [ -n "${!name:-}" ] || { echo "::error::Missing $name; configure recording accounts and video storage before dispatch."; exit 1; }
           done
           node -e 'const fs=require("node:fs"); const manifest=JSON.parse(fs.readFileSync("app-stores/apple/live-activity-captures/manifest.json","utf8")); for(const target of ["kilter","tension"]) { const source=manifest.footage?.[target]; if(!source || source.boardFamily!==target || !/^[a-f0-9]{64}$/.test(source.sha256) || source.key!==`sources/live-activity/${source.sha256}.zip`) throw new Error(`Missing reviewed retained ${target} footage; import one physical take before recording.`); }'
 
@@ -269,7 +272,7 @@ jobs:
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: '22.x'
-          cache: true
+          cache: false
       - name: Recheck the open train immediately before publishing
         id: final-gate
         env:

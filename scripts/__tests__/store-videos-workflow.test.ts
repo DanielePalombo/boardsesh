@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { SHOWCASE_TAKES } from '../lib/showcase-video/takes';
@@ -61,6 +62,34 @@ describe('store video workflow handoff', () => {
     expect(entry.jobs.train.if).toContain('github.event.workflow_run.head_repository.full_name == github.repository');
   });
 
+  it.each([
+    { scenario: 'unset enable flag', enabled: undefined, expected: false },
+    { scenario: 'disabled automatic recording', enabled: 'false', expected: false },
+    { scenario: 'enabled trusted draft', enabled: 'true', expected: true },
+    { scenario: 'failed draft', enabled: 'true', conclusion: 'failure', expected: false },
+    { scenario: 'unrelated draft', enabled: 'true', title: 'Mobile Store Draft (main)', expected: false },
+    { scenario: 'foreign repository', enabled: 'true', repository: 'someone/boardsesh', expected: false },
+    { scenario: 'manual dispatch while disabled', enabled: 'false', eventName: 'workflow_dispatch', expected: true },
+    { scenario: 'manual dispatch without flag', enabled: undefined, eventName: 'workflow_dispatch', expected: true },
+  ])('gates $scenario before credentials or macOS recording', (scenario) => {
+    const condition = workflow('mobile-store-videos').jobs.train.if!;
+    const admitted: unknown = runInNewContext(condition, {
+      vars: { STORE_VIDEOS_ENABLED: scenario.enabled },
+      github: {
+        event_name: scenario.eventName ?? 'workflow_run',
+        repository: 'boardsesh/boardsesh',
+        event: {
+          workflow_run: {
+            conclusion: scenario.conclusion ?? 'success',
+            display_title: scenario.title ?? 'Mobile Store Draft (release/next)',
+            head_repository: { full_name: scenario.repository ?? 'boardsesh/boardsesh' },
+          },
+        },
+      },
+    });
+    expect(admitted).toBe(scenario.expected);
+  });
+
   it('checks closed trains without store secrets, dependency installation or environment approval', () => {
     const { train, editable, pipeline } = workflow('mobile-store-videos').jobs;
     expect(train.environment).toBeUndefined();
@@ -98,6 +127,15 @@ describe('store video workflow handoff', () => {
     const { preflight, app, record, crew, render } = pipeline.jobs;
     expect(app.needs).toBe('preflight');
     expect(JSON.stringify(preflight)).toContain('Missing reviewed retained');
+    const prerequisites = preflight.steps?.find((step) => step.run?.includes('for name in'));
+    for (const credential of [
+      'STORE_CREATIVES_R2_AWS_ENDPOINT_URL',
+      'STORE_CREATIVES_R2_AWS_ACCESS_KEY_ID',
+      'STORE_CREATIVES_R2_AWS_SECRET_ACCESS_KEY',
+    ]) {
+      expect(prerequisites?.env?.[credential]).toBe(`\u0024{{ secrets.${credential} }}`);
+      expect(prerequisites?.run).toContain(credential);
+    }
     expect(record.strategy?.['max-parallel']).toBe(3);
     expect(record.strategy?.matrix.kind).toHaveLength(5);
     for (const kind of STORE_SEARCH_VARIANTS) {

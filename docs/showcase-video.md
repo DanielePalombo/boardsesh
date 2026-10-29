@@ -43,8 +43,13 @@ are not recorded as measurements. This dispatch does not write to R2 or Apple.
 
 ### Open-train Search Results pipeline
 
-**Mobile Store Videos** follows successful **Mobile Store Draft Submission**
-runs for `release/next`, including version-only releases. The draft publishes
+**Mobile Store Videos** stays dormant for automatic runs until the repository
+variable `STORE_VIDEOS_ENABLED` is exactly `true`. Keep it unset while retained
+footage, the dedicated crew account or video storage credentials are missing.
+Manual dispatch remains available and runs the same strict prerequisite checks.
+
+Once enabled, it follows successful **Mobile Store Draft Submission** runs for
+`release/next`, including version-only releases. The draft publishes
 its pinned iOS source, marketing version and build as an Actions artifact.
 The dependent workflow uses that artifact rather than the fingerprint tag or
 the draft run's `head_branch` (which is `main` for a chained workflow run).
@@ -54,7 +59,11 @@ A sparse, dependency-free Ubuntu job checks `isVersionTaken` and
 `readMarketingVersion` before Production environment approval. A closed train
 skips recording. The next gate requires an editable iOS version with that exact
 marketing version. Reviewed Kilter and Tension physical source ZIPs and both
-recording accounts must exist before any macOS job starts.
+recording accounts and all three `STORE_CREATIVES_R2_AWS_*` secrets must exist
+before any macOS job starts. After importing and reviewing both physical takes,
+configuring those credentials, and verifying a manual twenty-video run, enable
+automatic recording with `gh variable set STORE_VIDEOS_ENABLED --body true`.
+Unset the variable or set it to `false` to suspend automatic recording.
 
 Five variant jobs record the required ordinary takes in all four locales,
 with at most three macOS jobs running together. One crew job then records
